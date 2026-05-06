@@ -69,7 +69,7 @@ export default function LoginPage() {
             <h1 className={styles.brandTitle}><span className={styles.shimmer}>INTERACT GLOBAL</span></h1>
             <h2 className={styles.brandSub}>HRM PLATFORM</h2>
           </div>
-          <p className={styles.brandText}>Secure, fast and smart employee management.</p>
+          <p className={styles.brandText}>Secure, Fast And Smart Employee Management.</p>
         </div>
         {/* Decorative animations are in CSS via ::before/::after */}
       </section>
