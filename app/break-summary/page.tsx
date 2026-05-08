@@ -130,7 +130,10 @@ export default function BreakSummaryPage() {
         const exceedToday = dailySeconds > 3600 ? dailySeconds - 3600 : 0;
         return {
           ...b,
-          date_display: b.date
+          // Use attendance session clock-in date for overnight readability.
+          date_display: b.session_clock_in
+            ? getDateStringInTimeZone(b.session_clock_in, SERVER_TIMEZONE)
+            : b.date
             ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE)
             : b.break_start
             ? getDateStringInTimeZone(b.break_start, SERVER_TIMEZONE)

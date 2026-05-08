@@ -110,7 +110,12 @@ export default function PrayerBreakSummaryPage() {
         const exceedToday = dailySeconds > 1800 ? dailySeconds - 1800 : 0;
         return {
           ...p,
-          date_display: p.date ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE) : (p.prayer_break_start ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : ""),
+          // Use attendance session clock-in date for overnight readability.
+          date_display: p.session_clock_in
+            ? getDateStringInTimeZone(p.session_clock_in, SERVER_TIMEZONE)
+            : p.date
+            ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE)
+            : (p.prayer_break_start ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : ""),
           prayer_start_display: p.prayer_break_start ? getTimeStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : "",
           prayer_end_display: p.prayer_break_end ? getTimeStringInTimeZone(p.prayer_break_end, SERVER_TIMEZONE) : (isRunning ? "Running..." : ""),
           total_prayer_time: formatDuration(sessionSeconds),

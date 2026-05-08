@@ -258,7 +258,12 @@ export default function EmployeeTimePage() {
       total_break_time_today: formatDuration(dailySeconds),
       exceed: sessionExceed > 0 ? formatDuration(sessionExceed) : "",
       exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-      date_display: b.date ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE) : (b.break_start ? getDateStringInTimeZone(b.break_start, SERVER_TIMEZONE) : ""),
+      // Show shift/session date for overnight readability (fallback to old behavior).
+      date_display: b.session_clock_in
+        ? getDateStringInTimeZone(b.session_clock_in, SERVER_TIMEZONE)
+        : b.date
+        ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE)
+        : (b.break_start ? getDateStringInTimeZone(b.break_start, SERVER_TIMEZONE) : ""),
       isRunning: isRunning
     };
   });
@@ -300,7 +305,12 @@ export default function EmployeeTimePage() {
       total_prayer_time_today: formatDuration(dailySeconds),
       exceed: sessionExceed > 0 ? formatDuration(sessionExceed) : "",
       exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-      date_display: p.date ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE) : (p.prayer_break_start ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : ""),
+      // Show shift/session date for overnight readability (fallback to old behavior).
+      date_display: p.session_clock_in
+        ? getDateStringInTimeZone(p.session_clock_in, SERVER_TIMEZONE)
+        : p.date
+        ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE)
+        : (p.prayer_break_start ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : ""),
       isRunning: isRunning
     };
   });

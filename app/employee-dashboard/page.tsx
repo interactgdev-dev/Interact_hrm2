@@ -49,12 +49,13 @@ import { ClockBreakPrayerWidget } from "../components/ClockBreakPrayer";
 export default function EmployeeDashboardPage() {
   const [employeeId, setEmployeeId] = React.useState<string>("");
   const [employeeName, setEmployeeName] = React.useState("");
+  const [calendarNow, setCalendarNow] = React.useState(() => new Date());
 
   const todayParts = React.useMemo(() => {
-    const parts = getParts(new Date(), SERVER_TIMEZONE);
+    const parts = getParts(calendarNow, SERVER_TIMEZONE);
     if (parts) return parts;
 
-    const fallback = new Date();
+    const fallback = calendarNow;
     return {
       year: fallback.getFullYear(),
       month: fallback.getMonth() + 1,
@@ -62,6 +63,28 @@ export default function EmployeeDashboardPage() {
       hour: fallback.getHours(),
       minute: fallback.getMinutes(),
       second: fallback.getSeconds(),
+    };
+  }, [calendarNow]);
+
+  React.useEffect(() => {
+    const syncNow = () => setCalendarNow(new Date());
+    const interval = setInterval(syncNow, 30000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") syncNow();
+    };
+    const onFocus = () => syncNow();
+    const onPageShow = () => syncNow();
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onPageShow);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onPageShow);
     };
   }, []);
 

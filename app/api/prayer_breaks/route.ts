@@ -48,6 +48,16 @@ export async function GET(req: NextRequest) {
         ORDER BY ea.clock_in DESC, ea.id DESC
         LIMIT 1
       ) AS attendance_session_id
+      ,(
+        SELECT ea.clock_in
+        FROM ${ATTENDANCE_TABLE} ea
+        WHERE ea.employee_id = pb.employee_id
+          AND ea.clock_in IS NOT NULL
+          AND pb.prayer_break_start >= ea.clock_in
+          AND (ea.clock_out IS NULL OR pb.prayer_break_start <= ea.clock_out)
+        ORDER BY ea.clock_in DESC, ea.id DESC
+        LIMIT 1
+      ) AS session_clock_in
       FROM prayer_breaks pb
       LEFT JOIN hrm_employees e ON pb.employee_id = e.id
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
@@ -80,6 +90,7 @@ export async function GET(req: NextRequest) {
       employee_name: row.employee_name || "",
       pseudonym: row.pseudonym || "",
       attendance_session_id: row.attendance_session_id ? Number(row.attendance_session_id) : null,
+      session_clock_in: row.session_clock_in ? new Date(row.session_clock_in + 'Z').toISOString() : null,
       prayer_break_start: row.prayer_break_start ? new Date(row.prayer_break_start + 'Z').toISOString() : null,
       prayer_break_end: row.prayer_break_end ? new Date(row.prayer_break_end + 'Z').toISOString() : null,
       prayer_break_duration: row.prayer_break_duration ? Number(row.prayer_break_duration) : null,

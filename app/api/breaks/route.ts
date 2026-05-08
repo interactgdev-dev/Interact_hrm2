@@ -50,6 +50,16 @@ export async function GET(req: NextRequest) {
         ORDER BY ea.clock_in DESC, ea.id DESC
         LIMIT 1
       ) AS attendance_session_id
+      ,(
+        SELECT ea.clock_in
+        FROM ${ATTENDANCE_TABLE} ea
+        WHERE ea.employee_id = b.employee_id
+          AND ea.clock_in IS NOT NULL
+          AND b.break_start >= ea.clock_in
+          AND (ea.clock_out IS NULL OR b.break_start <= ea.clock_out)
+        ORDER BY ea.clock_in DESC, ea.id DESC
+        LIMIT 1
+      ) AS session_clock_in
       FROM breaks b
       LEFT JOIN hrm_employees e ON b.employee_id = e.id
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
@@ -82,6 +92,7 @@ export async function GET(req: NextRequest) {
       employee_name: row.employee_name || "",
       pseudonym: row.pseudonym || "",
       attendance_session_id: row.attendance_session_id ? Number(row.attendance_session_id) : null,
+      session_clock_in: row.session_clock_in ? new Date(row.session_clock_in + 'Z').toISOString() : null,
       break_start: row.break_start ? new Date(row.break_start + 'Z').toISOString() : null,
       break_end: row.break_end ? new Date(row.break_end + 'Z').toISOString() : null,
       break_duration: row.break_duration ? Number(row.break_duration) : null,
