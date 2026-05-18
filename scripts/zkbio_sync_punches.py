@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -627,11 +628,17 @@ def main() -> int:
         "database": os.environ.get("DB_NAME", "interact_hrm"),
     }
     socket_path = os.environ.get("DB_SOCKET_PATH", "").strip()
+    if not socket_path and platform.system() != "Windows":
+        default_sock = "/var/run/mysqld/mysqld.sock"
+        if os.path.exists(default_sock):
+            socket_path = default_sock
     if socket_path:
-        # Ubuntu root often uses auth_socket/unix_socket; connect through local socket.
+        # Ubuntu: root@localhost often uses auth_socket via unix socket (same as lib/db.ts).
         db_cfg["unix_socket"] = socket_path
         db_cfg.pop("host", None)
         db_cfg.pop("port", None)
+        if not os.environ.get("DB_PASSWORD", "").strip():
+            db_cfg["password"] = ""
 
     try:
         conn = mysql.connector.connect(**db_cfg)
