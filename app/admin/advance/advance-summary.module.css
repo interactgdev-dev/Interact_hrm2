@@ -1,0 +1,86 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+.breakSummaryTableWrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+.breakSummaryTable {
+  width: 100%;
+}
+.breakSummaryContainer {
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 4px 24px rgba(0,82,204,0.08);
+  padding: 32px;
+  margin-bottom: 24px;
+  border: 1px solid #E2E8F0;
+  transition: box-shadow 0.3s;
+}
+.breakSummaryContainer:hover {
+  box-shadow: 0 8px 32px rgba(0,82,204,0.16);
+}
+.breakSummaryFilters {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.breakSummaryInput {
+  padding: 12px 16px;
+  border: 2px solid #E2E8F0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: 'Inter', sans-serif;
+  transition: all 0.3s;
+  background: #fff;
+}
+.breakSummaryInput:focus {
+  outline: none;
+  border-color: #0052CC;
+  box-shadow: 0 0 0 3px rgba(0,82,204,0.1);
+}
+.breakSummaryTableWrapper {
+  overflow-x: auto;
+  border-radius: 10px;
+  box-shadow: 0 2px 12px rgba(0,82,204,0.08);
+}
+.breakSummaryTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0;
+}
+.breakSummaryTable thead {
+  background: linear-gradient(135deg, #0052CC 0%, #00B8A9 100%) !important;
+}
+.breakSummaryTable th {
+  padding: 10px 6px !important;
+  text-align: left;
+  font-weight: 600 !important;
+  color: #fff !important;
+  border: none !important;
+  font-size: 12px !important;
+  letter-spacing: 0.3px;
+  background: transparent !important;
+  white-space: nowrap;
+}
+.breakSummaryTable td {
+  padding: 8px 6px !important;
+  border-bottom: 1px solid #E2E8F0 !important;
+  font-size: 13px !important;
+  color: #22223B !important;
+  background: #fff;
+  white-space: nowrap;
+}
+.breakSummaryTable tbody tr {
+  background: #fff;
+}
+.breakSummaryTable tbody tr:hover {
+  background: #F7FAFC !important;
+  transition: background 0.2s;
+}
+.breakSummaryNoRecords {
+  text-align: center;
+  color: #4A5568;
+  padding: 24px !important;
+  font-style: italic;
+}

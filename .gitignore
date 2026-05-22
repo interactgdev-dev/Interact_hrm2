@@ -1,0 +1,32 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next.js
+/.next/
+/out/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+scripts/zkbio-sync.local.env
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# typescript
+*.tsbuildinfo
+
+# IDE
+.vscode/
+
+# local diagnostics
+/mongo-*.txt
+
+# OS
+.DS_Store
+Thumbs.db
