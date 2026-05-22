@@ -1,0 +1,23 @@
+Overtime Salary Calculation Formula
+==================================
+
+1. Per Hour Salary:
+   Per Hour Salary = Base Salary / Total Work Days / Working Hours Per Day
+
+2. Overtime Salary:
+   Overtime Salary = Per Hour Salary × Overtime Hours
+
+Example:
+--------
+Base Salary: 65000
+Working Hours Per Day: 9
+Total Work Days: 20
+Overtime Hours: 22
+
+Step 1:
+Per Hour Salary = 65000 / 20 / 9 = 325
+
+Step 2:
+Overtime Salary = 361.11 × 22 = 7944.44
+
+Yani, agar kisi ne 22 ghantay overtime kiya hai, to usay 7944.44 rupees milenge overtime ki wajah se.
