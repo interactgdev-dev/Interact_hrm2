@@ -1,7 +1,9 @@
 // WebSocket server for real-time leave updates
 import { WebSocket, WebSocketServer } from "ws";
 
-let wss: WebSocketServer | null = null;
+type WsServer = InstanceType<typeof WebSocketServer>;
+
+let wss: WsServer | null = null;
 
 export default function handler(req: any, res: any) {
   if (!res.socket.server.wss) {
