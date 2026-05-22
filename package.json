@@ -25,6 +25,7 @@
     "server-only": "^0.0.1",
     "uuid": "^13.0.0",
     "ws": "^8.18.3",
+    "@types/ws": "^8.18.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -33,7 +34,6 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/react-modal": "^3.16.3",
-    "@types/ws": "^8.18.1",
     "baseline-browser-mapping": "^2.10.11",
     "eslint": "^9",
     "eslint-config-next": "16.0.5",
