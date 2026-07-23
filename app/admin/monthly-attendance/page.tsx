@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import LayoutDashboard from "../../layout-dashboard";
 import styles from "../../break-summary/break-summary.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
@@ -230,6 +230,8 @@ export default function MonthlyAttendancePage() {
   const [tardyNotesByAttendanceId, setTardyNotesByAttendanceId] = useState<Record<string, string>>({});
   const [departments, setDepartments] = useState<any[]>([]);
   const [searchName, setSearchName] = useState("");
+  /** Debounced via React — typing stays smooth; heavy filter runs on deferred value */
+  const deferredSearchName = useDeferredValue(searchName);
   const [selectedDepartment, setSelectedDepartment] = useState("");
   
   // Set default dates - start of current month to today
@@ -248,13 +250,20 @@ export default function MonthlyAttendancePage() {
   const [importedSnapshot, setImportedSnapshot] = useState<ImportedMonthlySnapshot | null>(null);
   const [tungstenCtx, setTungstenCtx] = useState<TungstenPunchContext | null>(null);
   const [pairingNow, setPairingNow] = useState(() => Date.now());
+  /** Collapsed by default — full month tables for every employee freeze the browser */
+  const [expandedEmployeeIds, setExpandedEmployeeIds] = useState<Record<string, boolean>>({});
+  const fetchGenRef = useRef(0);
   const importInputRef = useRef<HTMLInputElement>(null);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
   const showingImported =
     Boolean(importedSnapshot?.month && importedSnapshot.month === selectedMonth && importedSnapshot.employees.length);
 
-  // Re-pair T.Punch out as new ZKBio punches sync in after clock-out.
+  function toggleEmployeeExpanded(employeeId: string) {
+    setExpandedEmployeeIds((prev) => ({ ...prev, [employeeId]: !prev[employeeId] }));
+  }
+
+  // Re-pair T.Punch out as new ZKBio punches sync (background only — never blocks first paint)
   useEffect(() => {
     if (showingImported) return;
     const refreshPairing = () => {
@@ -263,7 +272,7 @@ export default function MonthlyAttendancePage() {
         .then(setTungstenCtx)
         .catch(() => {});
     };
-    const id = setInterval(refreshPairing, 30_000);
+    const id = setInterval(refreshPairing, 60_000);
     return () => clearInterval(id);
   }, [fromDate, toDate, selectedDepartment, showingImported]);
 
@@ -279,8 +288,9 @@ export default function MonthlyAttendancePage() {
       .catch(err => console.error('Error fetching departments:', err));
   }, []);
 
-  // Fetch attendance records + Tungsten punch context (Employee Report pairing)
+  // Fetch attendance first (unblocks UI), then tardy/leaves/tungsten in background
   const fetchAttendance = async () => {
+    const gen = ++fetchGenRef.current;
     setLoading(true);
     let url = "/api/attendance";
     const params = new URLSearchParams();
@@ -290,7 +300,6 @@ export default function MonthlyAttendancePage() {
     if (attFromDate) params.append("fromDate", attFromDate);
     if (attToDate) params.append("toDate", attToDate);
     if (selectedDepartment) params.append("departmentName", selectedDepartment);
-    if (searchName) params.append("employeeName", searchName);
 
     if (params.toString()) {
       url += "?" + params.toString();
@@ -299,7 +308,11 @@ export default function MonthlyAttendancePage() {
     try {
       const res = await fetch(url, { cache: "no-store" });
       const data = await res.json();
-      if (!data.success) return;
+      if (gen !== fetchGenRef.current) return;
+      if (!data.success) {
+        setLoading(false);
+        return;
+      }
 
       const empShiftMap: Record<string, { start: string; end: string; seconds: number }> = {};
       (data.attendance || []).forEach((record: any) => {
@@ -353,67 +366,74 @@ export default function MonthlyAttendancePage() {
             (r.department_name || "").toLowerCase() === selectedDepartment.toLowerCase(),
         );
       }
-      if (searchName) {
-        records = records.filter((r: any) =>
-          (r.employee_name || "").toLowerCase().includes(searchName.toLowerCase()),
-        );
-      }
-      setAttendance(records);
 
-      if (fromDate && toDate) {
-        try {
-          const noteRes = await fetch(
-            `/api/tardy-notes?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`,
-            { cache: "no-store" }
-          );
-          const noteData = await noteRes.json();
-          if (noteData.success && Array.isArray(noteData.notes)) {
-            const map: Record<string, Record<string, string>> = {};
-            const byAttendanceId: Record<string, string> = {};
-            noteData.notes.forEach(
-              (n: {
-                employee_id: string;
-                attendance_date: string;
-                attendance_id?: number | null;
-                note_label: string;
-              }) => {
-                const eid = String(n.employee_id);
-                const dk = String(n.attendance_date).slice(0, 10);
-                if (n.attendance_id) {
-                  byAttendanceId[String(n.attendance_id)] = n.note_label;
-                  return;
-                }
-                if (!map[eid]) map[eid] = {};
-                map[eid][dk] = n.note_label;
-              }
-            );
-            setTardyNotes(map);
-            setTardyNotesByAttendanceId(byAttendanceId);
-          } else {
-            setTardyNotes({});
-            setTardyNotesByAttendanceId({});
-          }
-        } catch {
-          setTardyNotes({});
-          setTardyNotesByAttendanceId({});
-        }
-      }
+      setAttendance(records);
+      setLoading(false); // Show list immediately — do not wait for ZKBio / notes
 
       const uniqueEmployees = [...new Set(records.map((r: any) => String(r.employee_id)))] as string[];
       if (uniqueEmployees.length > 0) {
-        fetchApprovedLeaves(uniqueEmployees, fromDate, toDate);
+        void fetchApprovedLeaves(uniqueEmployees, fromDate, toDate);
       }
 
-      const ctx = await loadTungstenPunchContext(
-        fromDate,
-        toDate,
-        selectedDepartment || undefined,
-      );
-      setTungstenCtx(ctx);
+      // Background enrichment (T.Punch pairing is the slow part)
+      void (async () => {
+        if (fromDate && toDate) {
+          try {
+            const noteRes = await fetch(
+              `/api/tardy-notes?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`,
+              { cache: "no-store" }
+            );
+            const noteData = await noteRes.json();
+            if (gen !== fetchGenRef.current) return;
+            if (noteData.success && Array.isArray(noteData.notes)) {
+              const map: Record<string, Record<string, string>> = {};
+              const byAttendanceId: Record<string, string> = {};
+              noteData.notes.forEach(
+                (n: {
+                  employee_id: string;
+                  attendance_date: string;
+                  attendance_id?: number | null;
+                  note_label: string;
+                }) => {
+                  const eid = String(n.employee_id);
+                  const dk = String(n.attendance_date).slice(0, 10);
+                  if (n.attendance_id) {
+                    byAttendanceId[String(n.attendance_id)] = n.note_label;
+                    return;
+                  }
+                  if (!map[eid]) map[eid] = {};
+                  map[eid][dk] = n.note_label;
+                }
+              );
+              setTardyNotes(map);
+              setTardyNotesByAttendanceId(byAttendanceId);
+            } else {
+              setTardyNotes({});
+              setTardyNotesByAttendanceId({});
+            }
+          } catch {
+            if (gen === fetchGenRef.current) {
+              setTardyNotes({});
+              setTardyNotesByAttendanceId({});
+            }
+          }
+        }
+
+        try {
+          const ctx = await loadTungstenPunchContext(
+            fromDate,
+            toDate,
+            selectedDepartment || undefined,
+          );
+          if (gen !== fetchGenRef.current) return;
+          setTungstenCtx(ctx);
+        } catch (err) {
+          console.error("Tungsten context load failed:", err);
+        }
+      })();
     } catch (err) {
       console.error("Error fetching attendance:", err);
-    } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) setLoading(false);
     }
   };
 
@@ -498,15 +518,16 @@ export default function MonthlyAttendancePage() {
     setImportedSnapshot(loaded);
   }, [selectedMonth]);
 
-  // Sync filters with page: fetch data whenever any filter changes (skip when showing imported Excel)
+  // Fetch when month/dept changes — NOT on every search keystroke (that was freezing the UI)
   useEffect(() => {
     if (showingImported) {
       setTungstenCtx(null);
       setLoading(false);
       return;
     }
+    setExpandedEmployeeIds({});
     fetchAttendance();
-  }, [fromDate, toDate, selectedDepartment, searchName, showingImported]);
+  }, [fromDate, toDate, selectedDepartment, showingImported]);
 
   useEffect(() => {
     if (!selectedMonth) return;
@@ -1171,7 +1192,7 @@ export default function MonthlyAttendancePage() {
     await downloadDeductionSummaryExcel(blocks, fileName);
   }
 
-  const monthInfo = React.useMemo(() => {
+  const monthInfo = useMemo(() => {
     if (!selectedMonth) return { label: "", days: [] as { day: number; dateKey: string; weekday: string }[] };
     const [yearStr, monthStr] = selectedMonth.split("-");
     const year = Number(yearStr);
@@ -1195,17 +1216,14 @@ export default function MonthlyAttendancePage() {
     return { label, days };
   }, [selectedMonth]);
 
-  const attendanceByEmployee = React.useMemo((): MonthlyAttendanceEmployeeRow[] => {
+  /** Heavy build — only when attendance/import/dept data changes (not on each search key). */
+  const attendanceByEmployeeAll = useMemo((): MonthlyAttendanceEmployeeRow[] => {
     if (showingImported && importedSnapshot) {
       let employees = importedSnapshotToAttendanceEmployees(importedSnapshot);
       if (selectedDepartment) {
         employees = employees.filter(
           (e) => (e.departmentName || "").toLowerCase() === selectedDepartment.toLowerCase(),
         );
-      }
-      if (searchName.trim()) {
-        const term = searchName.trim().toLowerCase();
-        employees = employees.filter((e) => (e.employeeName || "").toLowerCase().includes(term));
       }
       return employees;
     }
@@ -1281,9 +1299,21 @@ export default function MonthlyAttendancePage() {
     });
 
     return Object.values(map).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
-  }, [attendance, showingImported, importedSnapshot, selectedDepartment, searchName]);
+  }, [attendance, showingImported, importedSnapshot, selectedDepartment]);
 
-  const sessionsByEmployeeId = React.useMemo(() => {
+  /** Cheap name / pseudo / ID filter — deferred so typing does not block the input */
+  const attendanceByEmployee = useMemo(() => {
+    const term = deferredSearchName.trim().toLowerCase();
+    if (!term) return attendanceByEmployeeAll;
+    return attendanceByEmployeeAll.filter((e) => {
+      const name = (e.employeeName || "").toLowerCase();
+      const pseudo = (e.pseudonym || "").toLowerCase();
+      const id = String(e.employeeId || "").toLowerCase();
+      return name.includes(term) || pseudo.includes(term) || id.includes(term);
+    });
+  }, [attendanceByEmployeeAll, deferredSearchName]);
+
+  const sessionsByEmployeeId = useMemo(() => {
     const out = new Map<string, EmployeeReportSession[]>();
     if (showingImported) return out;
     const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
@@ -1297,7 +1327,9 @@ export default function MonthlyAttendancePage() {
       list.push(record);
       recordsByEmployeeId.set(id, list);
     });
-    attendanceByEmployee.forEach((emp) => {
+    // Only pair Tungsten for expanded cards — pairing everyone on load freezes the UI
+    attendanceByEmployeeAll.forEach((emp) => {
+      if (!expandedEmployeeIds[emp.employeeId]) return;
       const allRecords = recordsByEmployeeId.get(emp.employeeId) || [];
       out.set(
         emp.employeeId,
@@ -1313,7 +1345,33 @@ export default function MonthlyAttendancePage() {
       );
     });
     return out;
-  }, [attendance, attendanceByEmployee, tungstenCtx, showingImported, fromDate, toDate, pairingNow]);
+  }, [
+    attendance,
+    attendanceByEmployeeAll,
+    expandedEmployeeIds,
+    tungstenCtx,
+    showingImported,
+    fromDate,
+    toDate,
+    pairingNow,
+  ]);
+
+  // Narrow search → auto-expand matched employees so results are one click less
+  useEffect(() => {
+    const term = deferredSearchName.trim();
+    if (!term || attendanceByEmployee.length === 0 || attendanceByEmployee.length > 8) return;
+    setExpandedEmployeeIds((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      attendanceByEmployee.forEach((e) => {
+        if (!next[e.employeeId]) {
+          next[e.employeeId] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [deferredSearchName, attendanceByEmployee]);
 
   // Extra Hours = sum of OT values shown in the table for this month (not hidden records).
   function getEmployeeTotalOvertime(emp: any) {
@@ -1374,7 +1432,7 @@ export default function MonthlyAttendancePage() {
         <div className={styles.breakSummaryFilters}>
           <input
             type="text"
-            placeholder="Search by name..."
+            placeholder="Search by name or pseudo name..."
             value={searchName}
             onChange={(e) => setSearchName(e.target.value)}
             className={styles.breakSummaryInput}
@@ -1441,7 +1499,9 @@ export default function MonthlyAttendancePage() {
             {attendanceByEmployee.length === 0 ? (
               <div className={styles.breakSummaryNoRecords}>No attendance records found</div>
             ) : (
-              attendanceByEmployee.map((employee) => (
+              attendanceByEmployee.map((employee) => {
+                const isExpanded = Boolean(expandedEmployeeIds[employee.employeeId]);
+                return (
                 <div
                   key={employee.employeeId}
                   style={{
@@ -1455,7 +1515,7 @@ export default function MonthlyAttendancePage() {
                     overflow: "hidden",
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: isExpanded ? 8 : 0 }}>
                     <div>
                       <EmployeeTableNameCell
                         name={employee.employeeName}
@@ -1477,6 +1537,15 @@ export default function MonthlyAttendancePage() {
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                       <div style={{ fontWeight: 700, color: "#611f69", fontSize: "1rem" }}>Emp. ID {employee.employeeId}</div>
                       <button
+                        type="button"
+                        title={isExpanded ? "Hide month table" : "Show month table"}
+                        className={styles.breakSummaryXLSButton}
+                        style={{ padding: "6px 12px", fontSize: 12, background: isExpanded ? "#64748b" : undefined }}
+                        onClick={() => toggleEmployeeExpanded(employee.employeeId)}
+                      >
+                        {isExpanded ? "Hide details" : "View details"}
+                      </button>
+                      <button
                         title="Export this employee's month record as XLS"
                         className={styles.breakSummaryXLSButton}
                         style={{ padding: "6px 12px", fontSize: 12 }}
@@ -1486,6 +1555,7 @@ export default function MonthlyAttendancePage() {
                       </button>
                     </div>
                   </div>
+                  {isExpanded ? (
                   <div className={styles.breakSummaryTableWrapper}>
                     <table className={styles.breakSummaryTable} style={{ minWidth: 1200 }}>
                       <thead>
@@ -1703,8 +1773,14 @@ export default function MonthlyAttendancePage() {
 
                     </table>
                   </div>
+                  ) : (
+                    <p style={{ margin: "8px 0 0", fontSize: 12, color: "#94a3b8", paddingLeft: 4 }}>
+                      Click <strong>View details</strong> to load this employee&apos;s month table.
+                    </p>
+                  )}
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         )}

@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
 import LayoutDashboard from "../../layout-dashboard";
 import styles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
@@ -20,11 +20,6 @@ import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
-}
-
-function getMonthStartDateString(date: Date = new Date()) {
-  const d = getDateStringInTimeZone(date, SERVER_TIMEZONE);
-  return `${d.slice(0, 7)}-01`;
 }
 
 function formatDateOnly(dateValue: string | null | undefined) {
@@ -90,14 +85,17 @@ export default function ManageAttendancePage() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [searchName, setSearchName] = useState("");
+  const deferredSearchName = useDeferredValue(searchName);
   const [selectedDepartment, setSelectedDepartment] = useState("");
-  const [fromDate, setFromDate] = useState(getMonthStartDateString());
-  const [toDate, setToDate] = useState(getLocalDateString()); // Default to today
+  /** Default: current day only — expand range when user picks dates */
+  const today = getLocalDateString();
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRecord, setNewRecord] = useState<Partial<AttendanceRecord>>({
     employee_id: "",
-    date: getLocalDateString(),
+    date: today,
     clock_in: null,
     clock_out: null
   });
@@ -127,34 +125,21 @@ export default function ManageAttendancePage() {
       .catch(err => console.error('Error fetching departments:', err));
   }, []);
 
-  // Fetch attendance records from /api/attendance (like /time page)
+  // Fetch attendance for selected date range only (not on every search keystroke)
   const fetchAttendance = () => {
     setLoading(true);
     let url = "/api/attendance";
     const params = new URLSearchParams();
-    const effectiveFromDate = fromDate || toDate;
-    if (effectiveFromDate) params.append("fromDate", effectiveFromDate);
-    if (toDate) params.append("toDate", toDate);
-    if (params.toString()) url += `?${params.toString()}`;
-    fetch(url)
+    const effectiveFromDate = fromDate || toDate || today;
+    const effectiveToDate = toDate || fromDate || today;
+    params.append("fromDate", effectiveFromDate);
+    params.append("toDate", effectiveToDate);
+    url += `?${params.toString()}`;
+    fetch(url, { cache: "no-store" })
       .then(res => res.json())
       .then(data => {
         if (data.success) {
-          let records = data.attendance || [];
-          // Filter by name if search is active
-          if (searchName) {
-            records = records.filter((r: AttendanceRecord) =>
-              r.employee_name?.toLowerCase().includes(searchName.toLowerCase())
-            );
-          }
-          // Filter by department if selected
-          if (selectedDepartment) {
-            records = records.filter((r: AttendanceRecord) =>
-              r.department_name === selectedDepartment
-            );
-          }
-          // Format date to remove time portion
-          records = records.map((r: AttendanceRecord) => ({
+          const records = (data.attendance || []).map((r: AttendanceRecord) => ({
             ...r,
             date: formatDateOnly(r.clock_in || r.clock_out || r.date),
             isEditing: false
@@ -173,16 +158,24 @@ export default function ManageAttendancePage() {
 
   useEffect(() => {
     fetchAttendance();
-  }, [fromDate, toDate, searchName, selectedDepartment]);
+  }, [fromDate, toDate]);
 
-  const sortedAttendance = [...attendance].sort(compareAttendanceRows);
-  
-  let filteredAttendance = sortedAttendance;
-  
-  // Filter by search name only if actively searching
-  if (searchName) {
-    filteredAttendance = filteredAttendance.filter(a => a.employee_name?.toLowerCase().includes(searchName.toLowerCase()));
-  }
+  const filteredAttendance = useMemo(() => {
+    let rows = [...attendance].sort(compareAttendanceRows);
+    if (selectedDepartment) {
+      rows = rows.filter((a) => a.department_name === selectedDepartment);
+    }
+    const term = deferredSearchName.trim().toLowerCase();
+    if (term) {
+      rows = rows.filter(
+        (a) =>
+          a.employee_name?.toLowerCase().includes(term) ||
+          String(a.employee_id || "").includes(term) ||
+          (a.pseudonym || "").toLowerCase().includes(term)
+      );
+    }
+    return rows;
+  }, [attendance, deferredSearchName, selectedDepartment]);
 
   // Toggle edit mode
   const toggleEdit = (id: number) => {
@@ -487,7 +480,7 @@ export default function ManageAttendancePage() {
         <div className={styles.breakSummaryFilters}>
           <input
             type="text"
-            placeholder="Search employee name..."
+            placeholder="Search by name or pseudo name..."
             value={searchName}
             onChange={e => setSearchName(e.target.value)}
             className={styles.breakSummaryInput}

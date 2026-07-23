@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
 import LayoutDashboard from "../../layout-dashboard";
 import styles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
@@ -14,6 +14,19 @@ import {
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
 import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
+
+function getLocalDateString(date: Date = new Date()) {
+  return getDateStringInTimeZone(date, SERVER_TIMEZONE);
+}
+
+function formatDateOnly(dateValue: string | null | undefined) {
+  if (!dateValue) return "";
+  const dateOnlyMatch = /^\d{4}-\d{2}-\d{2}$/.exec(dateValue);
+  if (dateOnlyMatch) return dateValue;
+  const parsed = new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return dateValue;
+  return getDateStringInTimeZone(parsed, SERVER_TIMEZONE);
+}
 
 // Helper to format duration
 function formatDuration(seconds: number) {
@@ -44,26 +57,29 @@ interface BreakRecord {
 }
 
 export default function ManageBreaksPage() {
-  const [breaks, setBreaks] = useState<BreakRecord[]>([]);
+  const [allBreaks, setAllBreaks] = useState<BreakRecord[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [searchName, setSearchName] = useState("");
+  const deferredSearchName = useDeferredValue(searchName);
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [selectedBreakType, setSelectedBreakType] = useState<string>("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState(new Date().toISOString().split('T')[0]); // Default to today
+  /** Default: current day only — expand range when user picks dates */
+  const today = getLocalDateString();
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRecord, setNewRecord] = useState<Partial<BreakRecord>>({
     employee_id: "",
-    date: new Date().toISOString().split('T')[0],
+    date: today,
     break_type: 'break',
     break_start: null,
     break_end: null
   });
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
-  // Fetch all employees
+  // Fetch all employees once
   useEffect(() => {
     fetch("/api/employee-list")
       .then(res => res.json())
@@ -87,113 +103,71 @@ export default function ManageBreaksPage() {
       .catch(err => console.error('Error fetching departments:', err));
   }, []);
 
-  // Fetch break records
+  // Fetch break records for selected date range only (API-filtered)
   const fetchBreaks = async () => {
     setLoading(true);
     try {
-      // Fetch regular breaks
-      let breaksUrl = "/api/breaks";
-      const breaksRes = await fetch(breaksUrl);
-      const breaksData = await breaksRes.json();
-      
-      // Fetch prayer breaks
-      let prayerBreaksUrl = "/api/prayer_breaks";
-      const prayerBreaksRes = await fetch(prayerBreaksUrl);
-      const prayerBreaksData = await prayerBreaksRes.json();
+      const effectiveFromDate = fromDate || toDate || today;
+      const effectiveToDate = toDate || fromDate || today;
+      const params = new URLSearchParams({
+        fromDate: effectiveFromDate,
+        toDate: effectiveToDate,
+      });
+      const qs = `?${params.toString()}`;
 
-      // Fetch employee list to enrich with pseudonym and department
-      const empListRes = await fetch("/api/employee-list");
-      const empListData = await empListRes.json();
-      const empMap = new Map();
-      if (empListData.success) {
-        empListData.employees.forEach((emp: any) => {
-          empMap.set(emp.id.toString(), {
-            pseudonym: emp.pseudonym || '-',
-            department_name: emp.department_name || '-'
-          });
-        });
-      }
+      const [breaksRes, prayerBreaksRes] = await Promise.all([
+        fetch(`/api/breaks${qs}`, { cache: "no-store" }),
+        fetch(`/api/prayer_breaks${qs}`, { cache: "no-store" }),
+      ]);
+      const [breaksData, prayerBreaksData] = await Promise.all([
+        breaksRes.json(),
+        prayerBreaksRes.json(),
+      ]);
 
-      // Process regular breaks
       let regularBreaks: BreakRecord[] = [];
       if (breaksData.success && breaksData.breaks) {
-        regularBreaks = breaksData.breaks.map((b: any) => {
-          const empData = empMap.get(b.employee_id.toString());
-          return {
-            id: b.id,
-            employee_id: b.employee_id.toString(),
-            employee_name: b.employee_name || "",
-            pseudonym: empData?.pseudonym || b.pseudonym || '-',
-            department_name: empData?.department_name || b.department_name || '-',
-            date: b.date || (b.break_start ? new Date(b.break_start).toISOString().split('T')[0] : ""),
-            break_type: 'break' as const,
-            break_start: b.break_start,
-            break_end: b.break_end,
-            break_duration: b.break_duration,
-            isEditing: false
-          };
-        });
+        regularBreaks = breaksData.breaks.map((b: any) => ({
+          id: b.id,
+          employee_id: String(b.employee_id),
+          employee_name: b.employee_name || "",
+          pseudonym: b.pseudonym || '-',
+          department_name: b.department_name || '-',
+          date: formatDateOnly(b.date || b.break_start),
+          break_type: 'break' as const,
+          break_start: b.break_start,
+          break_end: b.break_end,
+          break_duration: b.break_duration,
+          isEditing: false
+        }));
       }
 
-      // Process prayer breaks
       let prayerBreaks: BreakRecord[] = [];
       if (prayerBreaksData.success && prayerBreaksData.prayer_breaks) {
-        prayerBreaks = prayerBreaksData.prayer_breaks.map((pb: any) => {
-          const empData = empMap.get(pb.employee_id.toString());
-          return {
-            id: pb.id,
-            employee_id: pb.employee_id.toString(),
-            employee_name: pb.employee_name || "",
-            pseudonym: empData?.pseudonym || pb.pseudonym || '-',
-            department_name: empData?.department_name || pb.department_name || '-',
-            date: pb.date || (pb.prayer_break_start ? new Date(pb.prayer_break_start).toISOString().split('T')[0] : ""),
-            break_type: 'prayer' as const,
-            break_start: pb.prayer_break_start,
-            break_end: pb.prayer_break_end,
-            break_duration: pb.prayer_break_duration,
-            isEditing: false
-          };
-        });
+        prayerBreaks = prayerBreaksData.prayer_breaks.map((pb: any) => ({
+          id: pb.id,
+          employee_id: String(pb.employee_id),
+          employee_name: pb.employee_name || "",
+          pseudonym: pb.pseudonym || '-',
+          department_name: pb.department_name || '-',
+          date: formatDateOnly(pb.date || pb.prayer_break_start),
+          break_type: 'prayer' as const,
+          break_start: pb.prayer_break_start,
+          break_end: pb.prayer_break_end,
+          break_duration: pb.prayer_break_duration,
+          isEditing: false
+        }));
       }
 
-      // Combine both break types
-      let allBreaks = [...regularBreaks, ...prayerBreaks];
-
-      // Apply filters
-      if (fromDate && toDate) {
-        allBreaks = allBreaks.filter(b => {
-          const breakDate = b.date;
-          return breakDate >= fromDate && breakDate <= toDate;
-        });
-      }
-
-      if (searchName) {
-        allBreaks = allBreaks.filter(b =>
-          b.employee_name?.toLowerCase().includes(searchName.toLowerCase())
-        );
-      }
-
-      if (selectedDepartment) {
-        allBreaks = allBreaks.filter(b =>
-          b.department_name === selectedDepartment
-        );
-      }
-
-      if (selectedBreakType) {
-        allBreaks = allBreaks.filter(b => b.break_type === selectedBreakType);
-      }
-
-      // Sort by latest start time
-      allBreaks.sort((a, b) => {
+      const combined = [...regularBreaks, ...prayerBreaks].sort((a, b) => {
         const aTime = new Date(a.break_start || a.date).getTime();
         const bTime = new Date(b.break_start || b.date).getTime();
         return bTime - aTime;
       });
 
-      setBreaks(allBreaks);
+      setAllBreaks(combined);
     } catch (error) {
       console.error("Error fetching breaks:", error);
-      setBreaks([]);
+      setAllBreaks([]);
     } finally {
       setLoading(false);
     }
@@ -201,18 +175,55 @@ export default function ManageBreaksPage() {
 
   useEffect(() => {
     fetchBreaks();
-  }, [fromDate, toDate, searchName, selectedDepartment, selectedBreakType]);
+  }, [fromDate, toDate]);
+
+  const breaks = useMemo(() => {
+    const empMap = new Map<string, { pseudonym: string; department_name: string }>();
+    employees.forEach((emp: any) => {
+      empMap.set(String(emp.id), {
+        pseudonym: emp.pseudonym || '-',
+        department_name: emp.department_name || '-',
+      });
+    });
+
+    let rows = allBreaks.map((b) => {
+      const emp = empMap.get(b.employee_id);
+      if (!emp) return b;
+      return {
+        ...b,
+        pseudonym: emp.pseudonym !== '-' ? emp.pseudonym : b.pseudonym,
+        department_name: emp.department_name !== '-' ? emp.department_name : b.department_name,
+      };
+    });
+
+    const term = deferredSearchName.trim().toLowerCase();
+    if (term) {
+      rows = rows.filter(
+        (b) =>
+          b.employee_name?.toLowerCase().includes(term) ||
+          String(b.employee_id || "").includes(term) ||
+          (b.pseudonym || "").toLowerCase().includes(term)
+      );
+    }
+    if (selectedDepartment) {
+      rows = rows.filter((b) => b.department_name === selectedDepartment);
+    }
+    if (selectedBreakType) {
+      rows = rows.filter((b) => b.break_type === selectedBreakType);
+    }
+    return rows;
+  }, [allBreaks, employees, deferredSearchName, selectedDepartment, selectedBreakType]);
 
   // Toggle edit mode
   const toggleEdit = (id: number) => {
-    setBreaks(prev =>
+    setAllBreaks(prev =>
       prev.map(b => (b.id === id ? { ...b, isEditing: !b.isEditing } : b))
     );
   };
 
   // Update field value
   const updateField = (id: number, field: keyof BreakRecord, value: any) => {
-    setBreaks(prev =>
+    setAllBreaks(prev =>
       prev.map(b => (b.id === id ? { ...b, [field]: value } : b))
     );
   };
@@ -528,7 +539,7 @@ export default function ManageBreaksPage() {
         <div className={styles.breakSummaryFilters}>
           <input
             type="text"
-            placeholder="Search employee name..."
+            placeholder="Search by name or pseudo name..."
             value={searchName}
             onChange={e => setSearchName(e.target.value)}
             className={styles.breakSummaryInput}

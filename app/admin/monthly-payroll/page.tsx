@@ -60,6 +60,9 @@ type CommissionAmountField =
 
 
 
+/** Extra work beyond assigned shift before OT is shown/counted (1 hour) — same as Monthly Attendance */
+const OVERTIME_MIN_SECONDS = 60 * 60;
+
 export default function MonthlyAttendancePage() {
     // Calculate total working days for the month (excluding leaves and off days)
     function getTotalWorkingDays(employee: any, monthInfo: any, approvedLeavesMap: any) {
@@ -118,11 +121,30 @@ export default function MonthlyAttendancePage() {
     return 9;
   }
 
-  // Calculate overtime in seconds (actual - shift duration)
+  // Calculate overtime in seconds (actual - shift duration) — match Monthly Attendance
   function calculateOvertime(totalSeconds: number, assignedShiftSeconds: number | null): number | null {
     if (!assignedShiftSeconds || assignedShiftSeconds <= 0) return null;
     const overtime = totalSeconds - assignedShiftSeconds;
-    return overtime > 0 ? overtime : 0;
+    // Only count/show overtime if >= 1 hour beyond assigned shift
+    if (overtime >= OVERTIME_MIN_SECONDS) return overtime;
+    return null;
+  }
+
+  /** Sum OT the same way Monthly Attendance Extra Hours does: floor each day to h/m then add minutes */
+  function sumEmployeeOvertimeMinutes(employee: any, days: { dateKey: string }[] | undefined): number {
+    let totalMinutes = 0;
+    if (!days?.length) return 0;
+    days.forEach((day) => {
+      const records = employee.byDate?.[day.dateKey] || [];
+      (records as any[]).forEach((record) => {
+        const label = formatDurationHM(record.overtime);
+        if (!label || label === "-") return;
+        const match = label.match(/(\d+)\s*h\s*(\d+)\s*m/i);
+        if (!match) return;
+        totalMinutes += parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+      });
+    });
+    return totalMinutes;
   }
 
   function formatDurationHM(seconds: number | null) {
@@ -1024,28 +1046,17 @@ export default function MonthlyAttendancePage() {
     });
   }, [attendance, allEmployees, salaryMap, allowOvertimeMap, paidHoursPerDayMap]);
 
-  // Calculate total overtime (extra hours) for the SELECTED MONTH ONLY for an employee
+  // Calculate total overtime (extra hours) for the SELECTED MONTH — same rules as Monthly Attendance
   function getEmployeeTotalOvertime(emp: any) {
     // If employee doesn't have overtime allowed, show "--"
     if (!emp.allowOvertime) {
       return "--";
     }
-    
-    let totalSeconds = 0;
-    // Only sum overtime for dates in the selected month
-    if (monthInfo.days && monthInfo.days.length > 0) {
-      monthInfo.days.forEach((day) => {
-        const records = emp.byDate[day.dateKey] || [];
-        (records as any[]).forEach((record) => {
-          if (record.overtime && typeof record.overtime === 'number' && record.overtime > 0) {
-            totalSeconds += record.overtime;
-          }
-        });
-      });
-    }
-    if (totalSeconds <= 0) return "-";
-    const h = Math.floor(totalSeconds / 3600).toString().padStart(2, "0");
-    const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, "0");
+
+    const totalMinutes = sumEmployeeOvertimeMinutes(emp, monthInfo.days);
+    if (totalMinutes <= 0) return "-";
+    const h = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
+    const m = (totalMinutes % 60).toString().padStart(2, "0");
     return `${h}h ${m}m`;
   }
 
@@ -1133,21 +1144,11 @@ export default function MonthlyAttendancePage() {
     if (!employee.allowOvertime) {
       otHoursLabel = "--";
     } else if (hasAttendance) {
-      let totalOvertimeSeconds = 0;
-      if (monthInfo.days?.length) {
-        monthInfo.days.forEach((day: any) => {
-          const records = employee.byDate[day.dateKey] || [];
-          (records as any[]).forEach((record) => {
-            if (record.overtime && typeof record.overtime === "number" && record.overtime > 0) {
-              totalOvertimeSeconds += record.overtime;
-            }
-          });
-        });
-      }
-      const otH = Math.floor(totalOvertimeSeconds / 3600);
-      const otM = Math.floor((totalOvertimeSeconds % 3600) / 60);
+      const totalMinutes = sumEmployeeOvertimeMinutes(employee, monthInfo.days);
+      const otH = Math.floor(totalMinutes / 60);
+      const otM = totalMinutes % 60;
       otHours = otH + otM / 60;
-      otHoursLabel = totalOvertimeSeconds > 0 ? formatOtHoursLabel(otHours) : "0h 00m";
+      otHoursLabel = totalMinutes > 0 ? formatOtHoursLabel(otHours) : "0h 00m";
     }
 
     let otSalary = 0;

@@ -514,14 +514,14 @@ export default function ShiftManagementPage() {
   };
 
   const filteredEmployees = employees.filter((emp) => {
-    // Filter by search text
-    const matchesSearch = 
-      emp.first_name?.toLowerCase().includes(search.toLowerCase()) ||
-      emp.last_name?.toLowerCase().includes(search.toLowerCase()) ||
-      emp.id?.toString().includes(search) ||
-      `${emp.first_name} ${emp.last_name}`
-        .toLowerCase()
-        .includes(search.toLowerCase());
+    const term = search.trim().toLowerCase();
+    const matchesSearch =
+      !term ||
+      emp.first_name?.toLowerCase().includes(term) ||
+      emp.last_name?.toLowerCase().includes(term) ||
+      emp.id?.toString().includes(term) ||
+      (emp.pseudonym || "").toLowerCase().includes(term) ||
+      `${emp.first_name || ""} ${emp.last_name || ""}`.toLowerCase().includes(term);
     
     // Filter by selected department if a department is selected
     if (selectedScope.startsWith("dept-")) {
@@ -561,7 +561,7 @@ export default function ShiftManagementPage() {
         <div className={styles.searchContainer}>
           <input
             type="text"
-            placeholder="Search employees by name or ID..."
+            placeholder="Search by name, pseudo name, or ID..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className={styles.searchInput}
@@ -652,11 +652,16 @@ export default function ShiftManagementPage() {
 
                     <div className={styles.dropdownGroup}>Employees</div>
                     {employees
-                      .filter(emp =>
-                        emp.first_name?.toLowerCase().includes(targetSearch) ||
-                        emp.last_name?.toLowerCase().includes(targetSearch) ||
-                        emp.id?.toString().includes(targetSearch)
-                      )
+                      .filter(emp => {
+                        const term = targetSearch.toLowerCase();
+                        return (
+                          emp.first_name?.toLowerCase().includes(term) ||
+                          emp.last_name?.toLowerCase().includes(term) ||
+                          emp.id?.toString().includes(term) ||
+                          (emp.pseudonym || "").toLowerCase().includes(term) ||
+                          `${emp.first_name || ""} ${emp.last_name || ""}`.toLowerCase().includes(term)
+                        );
+                      })
                       .map((emp, idx) => (
                         <div
                           key={`target-emp-${emp.id}-${idx}`}
@@ -831,11 +836,16 @@ export default function ShiftManagementPage() {
 
                       <div className={styles.dropdownGroup}>Employees</div>
                       {employees
-                        .filter(emp =>
-                          emp.first_name?.toLowerCase().includes(overtimeTargetSearch) ||
-                          emp.last_name?.toLowerCase().includes(overtimeTargetSearch) ||
-                          emp.id?.toString().includes(overtimeTargetSearch)
-                        )
+                        .filter(emp => {
+                          const term = overtimeTargetSearch.toLowerCase();
+                          return (
+                            emp.first_name?.toLowerCase().includes(term) ||
+                            emp.last_name?.toLowerCase().includes(term) ||
+                            emp.id?.toString().includes(term) ||
+                            (emp.pseudonym || "").toLowerCase().includes(term) ||
+                            `${emp.first_name || ""} ${emp.last_name || ""}`.toLowerCase().includes(term)
+                          );
+                        })
                         .map((emp, idx) => (
                           <div
                             key={`ot-emp-${emp.id}-${idx}`}
