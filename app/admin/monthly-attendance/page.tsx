@@ -578,13 +578,66 @@ export default function MonthlyAttendancePage() {
     return getTimeStringInTimeZone(timeString, SERVER_TIMEZONE);
   }
 
-  function findRecordForSession(dayRecords: any[], session: EmployeeReportSession) {
+  function findRecordForSession(
+    dayRecords: any[],
+    session: EmployeeReportSession,
+    usedIds?: Set<string | number>
+  ) {
     if (!dayRecords.length) return undefined;
+    const isUsed = (r: any) =>
+      r?.id != null && usedIds != null && usedIds.has(r.id);
+
     const matched = dayRecords.find((r) => {
+      if (isUsed(r)) return false;
       if (!r.clock_in || session.hrmClockIn === "-") return false;
       return getTimeStringInTimeZone(r.clock_in, SERVER_TIMEZONE) === session.hrmClockIn;
     });
-    return matched ?? dayRecords[0];
+    if (matched) return matched;
+
+    // Next unused HRM row (never reuse the same attendance id on two session lines)
+    return dayRecords.find((r) => !isUsed(r));
+  }
+
+  /** Build table/export rows so every HRM attendance OT is visible (matches Extra Hours total). */
+  function getDaySessionRows(
+    dayKey: string,
+    dayRecords: any[],
+    daySessions: EmployeeReportSession[]
+  ): { session: EmployeeReportSession; record: any | undefined }[] {
+    const sessionFromRecord = (record: any): EmployeeReportSession => ({
+      sessionDate: dayKey,
+      tungstenPunchIn: "-",
+      hrmClockIn: record?.clock_in
+        ? getTimeStringInTimeZone(record.clock_in, SERVER_TIMEZONE)
+        : "-",
+      hrmClockOut: record?.clock_out
+        ? getTimeStringInTimeZone(record.clock_out, SERVER_TIMEZONE)
+        : "-",
+      tungstenPunchOut: "-",
+    });
+
+    if (daySessions.length === 0) {
+      return dayRecords.map((record) => ({
+        session: sessionFromRecord(record),
+        record,
+      }));
+    }
+
+    const usedIds = new Set<string | number>();
+    const rows = daySessions.map((session) => {
+      const record = findRecordForSession(dayRecords, session, usedIds);
+      if (record?.id != null) usedIds.add(record.id);
+      return { session, record };
+    });
+
+    dayRecords.forEach((record) => {
+      if (record?.id != null && usedIds.has(record.id)) return;
+      if (record?.id == null && rows.some((row) => row.record === record)) return;
+      rows.push({ session: sessionFromRecord(record), record });
+      if (record?.id != null) usedIds.add(record.id);
+    });
+
+    return rows;
   }
 
   function formatDate(dateString: string) {
@@ -825,21 +878,13 @@ export default function MonthlyAttendancePage() {
         return;
       }
 
-      const sessionsToExport =
-        daySessions.length > 0
-          ? daySessions
-          : [
-              {
-                sessionDate: day.dateKey,
-                tungstenPunchIn: "-",
-                hrmClockIn: "-",
-                hrmClockOut: "-",
-                tungstenPunchOut: "-",
-              },
-            ];
+      const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
 
-      sessionsToExport.forEach((session) => {
-        const record = findRecordForSession(dayRecords, session);
+      if (sessionsToExport.length === 0) {
+        // handled above when no sessions and no records
+      }
+
+      sessionsToExport.forEach(({ session, record }) => {
         const statusLabel = normalizeAttendanceStatus(meta?.statusLabel || "");
         dataRows.push({
           cells: [
@@ -1092,21 +1137,9 @@ export default function MonthlyAttendancePage() {
 
         const deduction = meta?.deduction || "";
         const tardyCount = meta?.runningLate ?? "";
-        const sessionsToExport =
-          daySessions.length > 0
-            ? daySessions
-            : [
-                {
-                  sessionDate: day.dateKey,
-                  tungstenPunchIn: "-",
-                  hrmClockIn: "-",
-                  hrmClockOut: "-",
-                  tungstenPunchOut: "-",
-                },
-              ];
+        const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
 
-        sessionsToExport.forEach((session) => {
-          const record = findRecordForSession(dayRecords, session);
+        sessionsToExport.forEach(({ session, record }) => {
           pushDeductionSummaryRow(rows, employee, day.dateKey, statusLabel, deduction, tardyCount, {
             session,
             record,
@@ -1552,21 +1585,13 @@ export default function MonthlyAttendancePage() {
                           }
 
                           const recordStatus = normalizeAttendanceStatus(meta?.statusLabel || "-");
-                          const sessionsToShow =
-                            daySessions.length > 0
-                              ? daySessions
-                              : [
-                                  {
-                                    sessionDate: day.dateKey,
-                                    tungstenPunchIn: "-",
-                                    hrmClockIn: "-",
-                                    hrmClockOut: "-",
-                                    tungstenPunchOut: "-",
-                                  },
-                                ];
+                          const sessionsToShow = getDaySessionRows(
+                            day.dateKey,
+                            dayRecords,
+                            daySessions
+                          );
 
-                          return sessionsToShow.map((session, index) => {
-                            const record = findRecordForSession(dayRecords, session);
+                          return sessionsToShow.map(({ session, record }, index) => {
                             return (
                               <tr
                                 key={`${employee.employeeId}-${day.dateKey}-session-${index}`}
