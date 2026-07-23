@@ -1315,24 +1315,42 @@ export default function MonthlyAttendancePage() {
     return out;
   }, [attendance, attendanceByEmployee, tungstenCtx, showingImported, fromDate, toDate, pairingNow]);
 
-  // Calculate total overtime (extra hours) for the month for an employee
+  // Extra Hours = sum of OT values shown in the table for this month (not hidden records).
   function getEmployeeTotalOvertime(emp: any) {
     if (emp.isImported && emp.importedFooter?.extraHours) {
       const v = emp.importedFooter.extraHours.trim();
       return v && v !== "-" ? v : "-";
     }
-    let totalSeconds = 0;
-    Object.values(emp.byDate).forEach((records) => {
-      (records as any[]).forEach((record) => {
-        // Only add overtime if >= 1 hour beyond assigned shift
-        if (record.overtime && typeof record.overtime === "number" && record.overtime >= OVERTIME_MIN_SECONDS) {
-          totalSeconds += record.overtime;
-        }
+    const employeeSessions = sessionsByEmployeeId.get(emp.employeeId) || [];
+    const countedKeys = new Set<string>();
+    let totalMinutes = 0;
+
+    (monthInfo.days || []).forEach((day: { dateKey: string }) => {
+      const dayRecords = emp.byDate?.[day.dateKey] || [];
+      const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
+      const rows = getDaySessionRows(day.dateKey, dayRecords, daySessions);
+
+      rows.forEach(({ record }) => {
+        if (!record) return;
+        const key =
+          record.id != null
+            ? `id:${record.id}`
+            : `row:${day.dateKey}:${record.clock_in || ""}:${record.clock_out || ""}`;
+        if (countedKeys.has(key)) return;
+        countedKeys.add(key);
+
+        // Same text the OT column shows — footer must match a manual sum of that column
+        const label = formatDurationHM(record.overtime);
+        if (!label || label === "-") return;
+        const match = label.match(/(\d+)\s*h\s*(\d+)\s*m/i);
+        if (!match) return;
+        totalMinutes += parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
       });
     });
-    if (totalSeconds <= 0) return "-";
-    const h = Math.floor(totalSeconds / 3600).toString().padStart(2, "0");
-    const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, "0");
+
+    if (totalMinutes <= 0) return "-";
+    const h = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
+    const m = (totalMinutes % 60).toString().padStart(2, "0");
     return `${h}h ${m}m`;
   }
 
