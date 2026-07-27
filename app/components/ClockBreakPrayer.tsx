@@ -876,14 +876,12 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
               <div style={{ fontSize: "1rem", fontWeight: 500, color: "#2d3436" }}>{formatTime(breakTimer)}</div>
             </div>
           ) : null}
-          {!isTodayStatus ? (
-            <BreakSummary
-              employeeId={employeeId}
-              isOnBreak={isOnBreak}
-              liveBreakSeconds={breakTimer}
-              variant={variant}
-            />
-          ) : null}
+          <BreakSummary
+            employeeId={employeeId}
+            isOnBreak={isOnBreak}
+            liveBreakSeconds={breakTimer}
+            variant={variant}
+          />
         </div>
       )}
 
