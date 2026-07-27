@@ -574,7 +574,6 @@ export default function EmployeeDashboardPage() {
   const monthAttendanceStats = React.useMemo(() => {
     let present = 0;
     let absent = 0;
-    let halfDays = 0;
     const y = todayParts.year;
     const m = todayParts.month;
     for (let d = 1; d <= todayParts.day; d++) {
@@ -586,13 +585,11 @@ export default function EmployeeDashboardPage() {
         if (key < todayKey) absent++;
         continue;
       }
-      const h = workHours(row);
-      if (h > 0 && h < 4) halfDays++;
-      else present++;
+      present++;
     }
-    const total = present + absent + halfDays;
+    const total = present + absent;
     const pct = total > 0 ? Math.round((present / total) * 100) : 0;
-    return { present, absent, halfDays, pct };
+    return { present, absent, pct };
   }, [attendanceByDate, todayParts.year, todayParts.month, todayParts.day, todayKey, liveTick]);
 
   const clockedInLabel = React.useMemo(() => {

@@ -93,7 +93,6 @@ export type DashboardHomeViewProps = {
   monthAttendanceStats: {
     present: number;
     absent: number;
-    halfDays: number;
     pct: number;
   };
   leaveBalance: {
@@ -172,10 +171,6 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
                 <div className={styles.attStat}>
                   <span className={`${styles.dot} ${styles.dotRed}`} />
                   {monthAttendanceStats.absent} Absent
-                </div>
-                <div className={styles.attStat}>
-                  <span className={`${styles.dot} ${styles.dotGreen}`} />
-                  {monthAttendanceStats.halfDays} Half Days
                 </div>
               </div>
             </div>
