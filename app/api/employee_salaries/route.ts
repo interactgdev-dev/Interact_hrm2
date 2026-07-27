@@ -8,6 +8,11 @@ function parseAmount(value: unknown): number | null {
 }
 
 function salaryFields(body: any) {
+  const fuelRaw = body.fuel_allowance ?? body.fuelAllowance;
+  const ctdRaw =
+    body.company_transport_deduction ??
+    body.companyTransportDeduction ??
+    body.ctd;
   return {
     employee_id: body.employee_id ?? body.employeeId,
     component: body.component ?? null,
@@ -21,6 +26,11 @@ function salaryFields(body: any) {
     accountType: body.accountType ?? body.account_type ?? null,
     routingNumber: body.routingNumber ?? body.routing_number ?? null,
     depositAmount: parseAmount(body.depositAmount ?? body.deposit_amount),
+    fuelAllowance: fuelRaw === undefined ? undefined : parseAmount(fuelRaw),
+    companyTransportDeduction: ctdRaw === undefined ? undefined : parseAmount(ctdRaw),
+    allowancesOnly: Boolean(
+      body.allowancesOnly ?? body.allowances_only ?? body.fuelOnly ?? body.fuel_only
+    ),
   };
 }
 
@@ -48,7 +58,6 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
-    // Support nested payload from older salary page: { details: { employeeId, salary } }
     const nested = body?.details?.salary
       ? { employee_id: body.details.employeeId ?? body.details.employee_id, ...body.details.salary }
       : body;
@@ -58,50 +67,75 @@ export async function PUT(req: NextRequest) {
     }
 
     const [existing]: any = await pool.execute(
-      "SELECT id FROM employee_salaries WHERE employee_id = ? ORDER BY id DESC LIMIT 1",
+      "SELECT id, fuel_allowance, company_transport_deduction FROM employee_salaries WHERE employee_id = ? ORDER BY id DESC LIMIT 1",
       [f.employee_id]
     );
 
     if (existing && existing.length > 0) {
-      await pool.execute(
-        `UPDATE employee_salaries SET
-           component = ?, pay_grade = ?, pay_frequency = ?, currency = ?, amount = ?, comments = ?,
-           direct_deposit = ?, account_number = ?, account_type = ?, routing_number = ?, deposit_amount = ?
-         WHERE id = ?`,
-        [
-          f.component,
-          f.payGrade,
-          f.payFrequency,
-          f.currency,
-          f.amount,
-          f.comments,
-          f.directDeposit,
-          f.accountNumber,
-          f.accountType,
-          f.routingNumber,
-          f.depositAmount,
-          existing[0].id,
-        ]
-      );
+      if (f.allowancesOnly) {
+        await pool.execute(
+          `UPDATE employee_salaries SET fuel_allowance = ?, company_transport_deduction = ? WHERE id = ?`,
+          [
+            f.fuelAllowance ?? null,
+            f.companyTransportDeduction ?? null,
+            existing[0].id,
+          ]
+        );
+      } else {
+        const fuel =
+          f.fuelAllowance !== undefined
+            ? f.fuelAllowance
+            : existing[0].fuel_allowance ?? null;
+        const ctd =
+          f.companyTransportDeduction !== undefined
+            ? f.companyTransportDeduction
+            : existing[0].company_transport_deduction ?? null;
+        await pool.execute(
+          `UPDATE employee_salaries SET
+             component = ?, pay_grade = ?, pay_frequency = ?, currency = ?, amount = ?, comments = ?,
+             direct_deposit = ?, account_number = ?, account_type = ?, routing_number = ?, deposit_amount = ?,
+             fuel_allowance = ?, company_transport_deduction = ?
+           WHERE id = ?`,
+          [
+            f.component,
+            f.payGrade,
+            f.payFrequency,
+            f.currency,
+            f.amount,
+            f.comments,
+            f.directDeposit,
+            f.accountNumber,
+            f.accountType,
+            f.routingNumber,
+            f.depositAmount,
+            fuel,
+            ctd,
+            existing[0].id,
+          ]
+        );
+      }
     } else {
       await pool.execute(
         `INSERT INTO employee_salaries
            (employee_id, component, pay_grade, pay_frequency, currency, amount, comments,
-            direct_deposit, account_number, account_type, routing_number, deposit_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            direct_deposit, account_number, account_type, routing_number, deposit_amount,
+            fuel_allowance, company_transport_deduction)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           f.employee_id,
-          f.component,
-          f.payGrade,
-          f.payFrequency,
-          f.currency,
-          f.amount,
-          f.comments,
-          f.directDeposit,
-          f.accountNumber,
-          f.accountType,
-          f.routingNumber,
-          f.depositAmount,
+          f.allowancesOnly ? null : f.component,
+          f.allowancesOnly ? null : f.payGrade,
+          f.allowancesOnly ? null : f.payFrequency,
+          f.allowancesOnly ? null : f.currency,
+          f.allowancesOnly ? null : f.amount,
+          f.allowancesOnly ? null : f.comments,
+          f.allowancesOnly ? 0 : f.directDeposit,
+          f.allowancesOnly ? null : f.accountNumber,
+          f.allowancesOnly ? null : f.accountType,
+          f.allowancesOnly ? null : f.routingNumber,
+          f.allowancesOnly ? null : f.depositAmount,
+          f.fuelAllowance ?? null,
+          f.companyTransportDeduction ?? null,
         ]
       );
     }
@@ -112,67 +146,6 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const nested = body?.details?.salary
-      ? { employee_id: body.details.employeeId ?? body.details.employee_id, ...body.details.salary }
-      : body;
-    const f = salaryFields(nested);
-    if (!f.employee_id) {
-      return NextResponse.json({ success: false, error: "employee_id is required" }, { status: 400 });
-    }
-
-    // Prefer upsert so re-save / edit-without-row both work
-    const [existing]: any = await pool.execute(
-      "SELECT id FROM employee_salaries WHERE employee_id = ? ORDER BY id DESC LIMIT 1",
-      [f.employee_id]
-    );
-
-    if (existing && existing.length > 0) {
-      await pool.execute(
-        `UPDATE employee_salaries SET
-           component = ?, pay_grade = ?, pay_frequency = ?, currency = ?, amount = ?, comments = ?,
-           direct_deposit = ?, account_number = ?, account_type = ?, routing_number = ?, deposit_amount = ?
-         WHERE id = ?`,
-        [
-          f.component,
-          f.payGrade,
-          f.payFrequency,
-          f.currency,
-          f.amount,
-          f.comments,
-          f.directDeposit,
-          f.accountNumber,
-          f.accountType,
-          f.routingNumber,
-          f.depositAmount,
-          existing[0].id,
-        ]
-      );
-    } else {
-      await pool.execute(
-        `INSERT INTO employee_salaries
-           (employee_id, component, pay_grade, pay_frequency, currency, amount, comments,
-            direct_deposit, account_number, account_type, routing_number, deposit_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          f.employee_id,
-          f.component,
-          f.payGrade,
-          f.payFrequency,
-          f.currency,
-          f.amount,
-          f.comments,
-          f.directDeposit,
-          f.accountNumber,
-          f.accountType,
-          f.routingNumber,
-          f.depositAmount,
-        ]
-      );
-    }
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    return NextResponse.json({ success: false, error: String(err) }, { status: 500 });
-  }
+  // Same upsert behavior as PUT
+  return PUT(req);
 }

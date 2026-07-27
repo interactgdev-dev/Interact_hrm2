@@ -57,7 +57,7 @@
   border-radius: 10px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-muted);
+  color: #334155;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
   border: none;
@@ -67,15 +67,16 @@
 }
 
 .navItem:hover {
-  background: #f8f5ff;
-  color: var(--color-text);
+  background: #ede9fe;
+  color: #4a1850;
 }
 
-.navItemActive {
-  background: linear-gradient(135deg, var(--brand-purple) 0%, var(--brand-purple-dark) 100%);
-  color: #fff !important;
+.navItemActive,
+.navItemActive:hover {
+  background: #611f69 !important;
+  color: #ffffff !important;
   font-weight: 600;
-  box-shadow: 0 4px 14px rgba(97, 31, 105, 0.22);
+  box-shadow: 0 4px 14px rgba(97, 31, 105, 0.28);
 }
 
 .formPanel {

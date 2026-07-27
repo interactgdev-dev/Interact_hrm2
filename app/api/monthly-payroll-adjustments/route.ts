@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
 /**
  * PUT { employee_id, month, ctd?, fuel_allowance?, unpaid_days? }
  * Upserts; only provided fields are overwritten (others kept).
- * NULL fuel_allowance / unpaid_days in DB = not set (UI uses system default).
+ * NULL ctd / fuel_allowance / unpaid_days in DB = not set (UI uses employee/system default).
  */
 export async function PUT(request: NextRequest) {
   try {
@@ -73,7 +73,11 @@ export async function PUT(request: NextRequest) {
         [employeeId, month]
       );
       const existing = existingRows?.[0];
-      const ctd = hasCtd ? parseMoney(body.ctd) : parseMoney(existing?.ctd);
+      const ctd = hasCtd
+        ? parseMoney(body.ctd)
+        : existing
+          ? existing.ctd
+          : null;
       const fuelAllowance = hasFuel
         ? parseMoney(body.fuel_allowance)
         : existing

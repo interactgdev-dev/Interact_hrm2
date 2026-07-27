@@ -213,13 +213,22 @@ export default function MonthlyAttendancePage() {
     return Number.isFinite(n) && n >= 0 ? n : 0;
   }
 
-  /** Fuel from DB / HR edit; default 0 (no static demo values). */
+  /** Monthly override if saved; otherwise employee default fuel from Allowances. */
   function getFuelAllowanceForEmployee(employee: { employeeId?: string }) {
     const empId = String(employee.employeeId ?? "");
     if (Object.prototype.hasOwnProperty.call(fuelByEmployee, empId)) {
       return fuelByEmployee[empId] ?? 0;
     }
-    return 0;
+    return defaultFuelByEmployee[empId] ?? 0;
+  }
+
+  /** Monthly override if saved; otherwise employee default CTD from Allowances. */
+  function getCtdForEmployee(employee: { employeeId?: string }) {
+    const empId = String(employee.employeeId ?? "");
+    if (Object.prototype.hasOwnProperty.call(ctdByEmployee, empId)) {
+      return ctdByEmployee[empId] ?? 0;
+    }
+    return defaultCtdByEmployee[empId] ?? 0;
   }
 
   /** System unpaid days from attendance deduction % (e.g. 400% → 4 days). */
@@ -546,13 +555,15 @@ export default function MonthlyAttendancePage() {
           data.adjustments.forEach(
             (row: {
               employee_id?: string | number;
-              ctd?: number;
+              ctd?: number | null;
               fuel_allowance?: number | null;
               unpaid_days?: number | null;
             }) => {
               const id = String(row.employee_id ?? "").trim();
               if (!id) return;
-              ctdMap[id] = parsePositiveMoney(row.ctd);
+              if (row.ctd !== null && row.ctd !== undefined) {
+                ctdMap[id] = parsePositiveMoney(row.ctd);
+              }
               if (row.fuel_allowance !== null && row.fuel_allowance !== undefined) {
                 fuelMap[id] = parsePositiveMoney(row.fuel_allowance);
               }
@@ -712,7 +723,7 @@ export default function MonthlyAttendancePage() {
         breakExceedDed: breakExceedDedByEmployee[emp.employeeId] ?? 0,
         kpisDed: kpisDedByEmployee[emp.employeeId] ?? 0,
         otherDed: otherDedByEmployee[emp.employeeId] ?? 0,
-        ctd: ctdByEmployee[emp.employeeId] ?? 0,
+        ctd: getCtdForEmployee(emp),
         fuelAllowance: getFuelAllowanceForEmployee(emp),
         unpaidDays: getUnpaidDaysForEmployee(emp),
       });
@@ -935,6 +946,9 @@ export default function MonthlyAttendancePage() {
   // New logic: Always show all employees from DB, merge attendance if present
   const [allEmployees, setAllEmployees] = React.useState<any[]>([]);
   const [salaryMap, setSalaryMap] = React.useState<Record<string, number>>({});
+  /** Default fuel / CTD from Add Employee → Allowances */
+  const [defaultFuelByEmployee, setDefaultFuelByEmployee] = React.useState<Record<string, number>>({});
+  const [defaultCtdByEmployee, setDefaultCtdByEmployee] = React.useState<Record<string, number>>({});
   const [advanceSalaryMap, setAdvanceSalaryMap] = React.useState<Record<string, number>>({});
   const [loanSalaryMap, setLoanSalaryMap] = React.useState<Record<string, number>>({});
   // Fetch advance salary for selected month
@@ -963,6 +977,8 @@ export default function MonthlyAttendancePage() {
       .then(data => {
         if (data.success && Array.isArray(data.salaries)) {
           const map: Record<string, number> = {};
+          const fuelDefaults: Record<string, number> = {};
+          const ctdDefaults: Record<string, number> = {};
           data.salaries.forEach((row: any) => {
             if (row.employee_id != null && row.amount !== undefined && row.amount !== null) {
               const amt = Number(row.amount);
@@ -970,8 +986,26 @@ export default function MonthlyAttendancePage() {
                 map[String(row.employee_id)] = amt;
               }
             }
+            if (row.employee_id != null && row.fuel_allowance != null && row.fuel_allowance !== "") {
+              const fuel = Number(row.fuel_allowance);
+              if (Number.isFinite(fuel) && fuel > 0) {
+                fuelDefaults[String(row.employee_id)] = fuel;
+              }
+            }
+            if (
+              row.employee_id != null &&
+              row.company_transport_deduction != null &&
+              row.company_transport_deduction !== ""
+            ) {
+              const ctd = Number(row.company_transport_deduction);
+              if (Number.isFinite(ctd) && ctd > 0) {
+                ctdDefaults[String(row.employee_id)] = ctd;
+              }
+            }
           });
           setSalaryMap(map);
+          setDefaultFuelByEmployee(fuelDefaults);
+          setDefaultCtdByEmployee(ctdDefaults);
         }
       });
   }, []);
@@ -1365,7 +1399,7 @@ export default function MonthlyAttendancePage() {
                   const breakVal = breakExceedDedByEmployee[empId] ?? 0;
                   const kpisVal = kpisDedByEmployee[empId] ?? 0;
                   const otherVal = otherDedByEmployee[empId] ?? 0;
-                  const ctdVal = ctdByEmployee[empId] ?? 0;
+                  const ctdVal = getCtdForEmployee(employee);
                   const fuelVal = getFuelAllowanceForEmployee(employee);
                   const unpaidVal = getUnpaidDaysForEmployee(employee);
                   const row = getPayrollBreakdown(employee, {
@@ -1478,7 +1512,7 @@ export default function MonthlyAttendancePage() {
                           onChange={(e) => setCtdAmount(empId, e.target.value)}
                           onBlur={(e) => saveCtdAmount(empId, e.target.value)}
                           style={manualInputStyle}
-                          title="CTD — saved for this month, totals update live"
+                          title="CTD — editable; default from Allowances, saved for this month when changed"
                         />
                       </td>
                       <td style={{ color: '#dc2626', fontWeight: 600 }}>{formatWithCommas(row.loanAdvance)}</td>

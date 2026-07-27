@@ -6,7 +6,9 @@ export async function GET(req: NextRequest) {
   try {
     const [rows]: any = await pool.execute(`
       SELECT e.id as employee_id, e.first_name, e.last_name, e.pseudonym, d.name AS department_name,
-        COALESCE(SUM(s.amount), 0) as amount
+        COALESCE(SUM(s.amount), 0) as amount,
+        MAX(s.fuel_allowance) as fuel_allowance,
+        MAX(s.company_transport_deduction) as company_transport_deduction
       FROM hrm_employees e
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
       LEFT JOIN departments d ON j.department_id = d.id

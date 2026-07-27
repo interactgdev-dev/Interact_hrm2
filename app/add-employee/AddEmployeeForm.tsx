@@ -11,6 +11,7 @@ const employeeTabs = [
   { name: "Contact Details" },
   { name: "Emergency Contacts" },
   { name: "Job Details" },
+  { name: "Allowances" },
   { name: "Salary" },
   { name: "Attachments" },
 ];
@@ -167,6 +168,40 @@ export default function AddEmployeeForm({
       const data = await res.json();
       if (data.success) {
         toastSuccess('Job details saved!');
+        setActiveTab('Allowances');
+      } else {
+        toastError('Save failed: ' + (data.error || 'Unknown'));
+      }
+    } catch (err) {
+      toastError('Save failed: ' + String(err));
+    }
+  };
+
+  // Allowances — defaults used by Monthly Payroll (Fuel + CTD)
+  const [fuelAllowance, setFuelAllowance] = useState("");
+  const [companyTransportDeduction, setCompanyTransportDeduction] = useState("");
+
+  const handleAllowancesSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!employeeId) {
+      toastInfo('Please save Personal Details first.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/employee_salaries', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employee_id: employeeId,
+          fuel_allowance: fuelAllowance === "" ? null : Number(fuelAllowance),
+          company_transport_deduction:
+            companyTransportDeduction === "" ? null : Number(companyTransportDeduction),
+          allowancesOnly: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toastSuccess('Allowances saved!');
         setActiveTab('Salary');
       } else {
         toastError('Save failed: ' + (data.error || 'Unknown'));
@@ -418,6 +453,15 @@ export default function AddEmployeeForm({
             routingNumber: data.salary.routing_number || "",
             depositAmount: data.salary.deposit_amount || ""
           }));
+          if (data.salary.fuel_allowance != null && data.salary.fuel_allowance !== "") {
+            setFuelAllowance(String(data.salary.fuel_allowance));
+          }
+          if (
+            data.salary.company_transport_deduction != null &&
+            data.salary.company_transport_deduction !== ""
+          ) {
+            setCompanyTransportDeduction(String(data.salary.company_transport_deduction));
+          }
         }
       })
       .catch(err => console.error('Error fetching salary details:', err));
@@ -958,6 +1002,49 @@ export default function AddEmployeeForm({
                   <div className={styles.field}>
                     <label className={styles.fieldLabel}>Location</label>
                     <input className={styles.input} type="text" placeholder="Location" value={jobDetails.location} onChange={e => setJobDetails(j => ({ ...j, location: e.target.value }))} />
+                  </div>
+                </div>
+                <div className={styles.actionsLeft}>
+                  <button type="submit" className={styles.saveBtn}>Save</button>
+                </div>
+              </form>
+            </div>
+          )}
+          {activeTab === "Allowances" && (
+            <div>
+              {employeeId && (
+                <div className={styles.employeeBadge}>
+                  Employee: {firstName} {lastName} (ID: {employeeId})
+                </div>
+              )}
+              <form className={styles.form} style={{ width: "100%" }} onSubmit={handleAllowancesSave}>
+                <p className={styles.note}>
+                  These defaults feed Monthly Payroll. You can still override Fuel Allowance and Company Transport Deduction (CTD) per month on the payroll page.
+                </p>
+                <div className={styles.row}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>Fuel Allowance</label>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="e.g. 5000"
+                      value={fuelAllowance}
+                      onChange={(e) => setFuelAllowance(e.target.value)}
+                    />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>Company Transport Deduction</label>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="e.g. 3000"
+                      value={companyTransportDeduction}
+                      onChange={(e) => setCompanyTransportDeduction(e.target.value)}
+                    />
                   </div>
                 </div>
                 <div className={styles.actionsLeft}>
