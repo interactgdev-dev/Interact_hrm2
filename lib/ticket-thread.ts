@@ -110,6 +110,25 @@ export function appendAdminMessage(
   ];
 }
 
+export function appendEmployeeMessage(
+  messages: TicketThreadMessage[],
+  author: string,
+  body: string
+): TicketThreadMessage[] {
+  const trimmed = body.trim();
+  if (!trimmed) return messages;
+  return [
+    ...messages,
+    {
+      id: genId(),
+      role: "employee",
+      author: author || "Employee",
+      body: trimmed,
+      created_at: new Date().toISOString(),
+    },
+  ];
+}
+
 export function latestAdminRemark(messages: TicketThreadMessage[]): string | null {
   const admins = messages.filter((m) => m.role === "admin");
   return admins.length ? admins[admins.length - 1].body : null;

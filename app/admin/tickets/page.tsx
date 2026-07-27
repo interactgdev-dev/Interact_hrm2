@@ -62,7 +62,8 @@ export default function AdminTicketsPage() {
         if (msg?.type === "ticket_update" || msg?.type === "ticket_created") {
           void fetchTickets({ silent: true });
           if (msg.ticket?.id && selected?.id === msg.ticket.id) {
-            setSelected(msg.ticket);
+            if (msg.ticket.deleted) setSelected(null);
+            else setSelected(msg.ticket);
           }
         }
       } catch {
@@ -115,6 +116,29 @@ export default function AdminTicketsPage() {
       return;
     }
     void patchTicket(id);
+  };
+
+  const handleDeleteTicket = async (t: Ticket) => {
+    const ok = window.confirm(
+      `Delete ticket ${t.ticket_number}?\nThis cannot be undone.`
+    );
+    if (!ok) return;
+    setProcessing(true);
+    try {
+      const res = await fetch(`/api/employee-tickets?id=${t.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        if (selected?.id === t.id) setSelected(null);
+        setTickets((prev) => prev.filter((x) => x.id !== t.id));
+        void fetchTickets({ silent: true });
+      } else {
+        toastError(data.error || "Delete failed");
+      }
+    } catch {
+      toastError("Delete failed");
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const openTicket = async (t: Ticket) => {
@@ -199,6 +223,51 @@ export default function AdminTicketsPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (ticket.ticket_type === "hrm_issue" || ticket.ticket_type === "custom") {
+      const images = Array.isArray(fd.image_paths) ? fd.image_paths.map(String) : [];
+      return (
+        <div className={adminStyles.detailCard}>
+          <div className={adminStyles.detailBlock}>
+            <span className={adminStyles.detailLabel}>
+              {ticket.ticket_type === "custom" ? "Custom query" : "Issue details"}
+            </span>
+            <p className={adminStyles.detailReason}>
+              {String(fd.reason || ticket.description || "No details provided")}
+            </p>
+          </div>
+          {images.length > 0 ? (
+            <div className={adminStyles.detailBlock}>
+              <span className={adminStyles.detailLabel}>Screenshots</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
+                {images.map((src, idx) => (
+                  <a
+                    key={`${src}-${idx}`}
+                    href={src}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: "block" }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt={`HRM issue attachment ${idx + 1}`}
+                      style={{
+                        maxWidth: 220,
+                        maxHeight: 160,
+                        objectFit: "cover",
+                        borderRadius: 8,
+                        border: "1px solid #e2e8f0",
+                      }}
+                    />
+                  </a>
+                ))}
+              </div>
             </div>
           ) : null}
         </div>
@@ -310,6 +379,27 @@ export default function AdminTicketsPage() {
                     </div>
                   </div>
                   <div className={adminStyles.actions}>
+                    <button
+                      type="button"
+                      className={adminStyles.btnDeleteIcon}
+                      title="Delete ticket"
+                      aria-label={`Delete ${t.ticket_number}`}
+                      disabled={processing}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleDeleteTicket(t);
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path
+                          d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
                     <button
                       type="button"
                       className={

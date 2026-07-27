@@ -6,7 +6,8 @@ export type TicketFormKind =
   | "loan"
   | "salary_slip"
   | "generic"
-  | "custom";
+  | "custom"
+  | "hrm_issue";
 
 export type TicketTypeOption = {
   value: string;
@@ -25,6 +26,8 @@ export const TICKET_CATEGORIES: { value: TicketCategory; label: string }[] = [
 const CATEGORY_TYPES: Record<Exclude<TicketCategory, "ESS">, TicketTypeOption[]> = {
   HR: [
     { value: "leave", label: "Leave", form: "leave" },
+    { value: "custom", label: "Custom", form: "custom" },
+    { value: "hrm_issue", label: "HRM Issue", form: "hrm_issue" },
     { value: "loan", label: "Loan", form: "loan" },
     { value: "advance_salary", label: "Advance salary", form: "advance" },
     { value: "salary_slip", label: "Salary slip", form: "salary_slip" },
@@ -59,8 +62,11 @@ const CATEGORY_TYPES: Record<Exclude<TicketCategory, "ESS">, TicketTypeOption[]>
 export const UNIVERSAL_TICKET_TYPES: TicketTypeOption[] = [
   { value: "leave", label: "Leave", form: "leave", universal: true },
   { value: "general_request", label: "General request", form: "generic", universal: true },
-  { value: "custom", label: "Custom ticket", form: "custom", universal: true },
+  { value: "custom", label: "Custom", form: "custom", universal: true },
 ];
+
+/** HR types currently enabled on Generate Ticket (department stays HR). */
+export const ENABLED_HR_TICKET_TYPES = ["leave", "custom", "hrm_issue"] as const;
 
 export function getTicketTypesForCategory(category: TicketCategory): TicketTypeOption[] {
   const key = category === "ESS" ? "HR" : category;

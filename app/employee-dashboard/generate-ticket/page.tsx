@@ -1,9 +1,9 @@
 "use client";
 
-import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  TICKET_CATEGORIES,
+  ENABLED_HR_TICKET_TYPES,
   categoryLabel,
   getTicketTypesForCategory,
   ticketTypeLabel,
@@ -68,6 +68,9 @@ export default function GenerateTicketPage() {
 
 function GenerateTicketPageInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const consumedOpenIdRef = useRef<string | null>(null);
   const [employeeId, setEmployeeId] = useState("");
   const [employeeName, setEmployeeName] = useState("Employee");
   const [category, setCategory] = useState<TicketCategory>("HR");
@@ -92,8 +95,34 @@ function GenerateTicketPageInner() {
   const [bereavementBalance, setBereavementBalance] = useState(3);
   const [employmentStatus, setEmploymentStatus] = useState("Permanent");
   const [documents, setDocuments] = useState<File[]>([]);
+  const [issueImages, setIssueImages] = useState<File[]>([]);
+  const [employeeReply, setEmployeeReply] = useState("");
+  const [replySending, setReplySending] = useState(false);
+  const [replyError, setReplyError] = useState("");
 
-  const typeOptions = useMemo(() => getTicketTypesForCategory(category), [category]);
+  const clearOpenQuery = useCallback(() => {
+    if (!searchParams?.get("open")) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("open");
+    const qs = params.toString();
+    const base = pathname || "/employee-dashboard/generate-ticket";
+    router.replace(qs ? `${base}?${qs}` : base, { scroll: false });
+  }, [searchParams, router, pathname]);
+
+  const closeTicketModal = useCallback(() => {
+    setSelectedTicket(null);
+    setEmployeeReply("");
+    setReplyError("");
+    clearOpenQuery();
+  }, [clearOpenQuery]);
+
+  const typeOptions = useMemo(
+    () =>
+      getTicketTypesForCategory(category).filter((t) =>
+        (ENABLED_HR_TICKET_TYPES as readonly string[]).includes(t.value)
+      ),
+    [category]
+  );
 
   const selectedType = useMemo(
     () => typeOptions.find((t) => t.value === ticketType),
@@ -132,6 +161,8 @@ function GenerateTicketPageInner() {
 
   const openTicket = useCallback(
     async (t: TicketRow) => {
+      setEmployeeReply("");
+      setReplyError("");
       if (!employeeId) {
         setSelectedTicket(t);
         return;
@@ -155,6 +186,46 @@ function GenerateTicketPageInner() {
     [employeeId]
   );
 
+  const handleEmployeeReply = useCallback(async () => {
+    if (!selectedTicket || !employeeId || !employeeReply.trim()) return;
+    if (selectedTicket.ticket_type === "leave") return;
+    if (isTicketClosed(selectedTicket.status)) {
+      setReplyError("This ticket is closed. You cannot reply.");
+      return;
+    }
+    setReplySending(true);
+    setReplyError("");
+    try {
+      const res = await fetch("/api/employee-tickets", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: selectedTicket.id,
+          reply: employeeReply.trim(),
+          from: "employee",
+          employee_id: employeeId,
+          author_name: employeeName,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setReplyError(data.error || "Could not send reply");
+        return;
+      }
+      setEmployeeReply("");
+      if (data.ticket) {
+        setSelectedTicket(data.ticket);
+        const lastAdmin = getLastAdminMessage(data.ticket.messages ?? []);
+        if (lastAdmin) saveTicketSeen(employeeId, data.ticket.id, lastAdmin.id);
+      }
+      void fetchHistory(employeeId);
+    } catch (err) {
+      setReplyError(err instanceof Error ? err.message : "Could not send reply");
+    } finally {
+      setReplySending(false);
+    }
+  }, [selectedTicket, employeeId, employeeName, employeeReply, fetchHistory]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const id = localStorage.getItem("employeeId") || localStorage.getItem("loginId") || "";
@@ -166,9 +237,19 @@ function GenerateTicketPageInner() {
 
   useEffect(() => {
     const openId = searchParams?.get("open");
-    if (!openId || history.length === 0) return;
+    if (!openId) {
+      // Allow a future toast deep-link (?open=) to open again after URL is cleared
+      consumedOpenIdRef.current = null;
+      return;
+    }
+    if (history.length === 0) return;
+    // Only auto-open once per ?open= id — do not re-open when history refreshes after creating a ticket
+    if (consumedOpenIdRef.current === openId) return;
     const match = history.find((t) => String(t.id) === openId);
-    if (match) void openTicket(match);
+    if (match) {
+      consumedOpenIdRef.current = openId;
+      void openTicket(match);
+    }
   }, [searchParams, history, openTicket]);
 
   useEffect(() => {
@@ -192,12 +273,6 @@ function GenerateTicketPageInner() {
   }, [employeeId, fetchHistory, selectedTicket?.id]);
 
   useEffect(() => {
-    // Only HR → Leave is enabled for now; keep that as the active default.
-    setCategory("HR");
-    setTicketType("leave");
-  }, [searchParams]);
-
-  useEffect(() => {
     setError("");
     setSuccess("");
     setSubject("");
@@ -207,6 +282,7 @@ function GenerateTicketPageInner() {
     setAmount("");
     setLeaveCategory("annual");
     setDocuments([]);
+    setIssueImages([]);
   }, [category, ticketType]);
 
   useEffect(() => {
@@ -219,7 +295,8 @@ function GenerateTicketPageInner() {
   );
 
   const detailsLabel = useMemo(() => {
-    if (formKind === "custom") return "Description";
+    if (formKind === "custom") return "Your query";
+    if (formKind === "hrm_issue") return "Describe the HRM issue";
     if (formKind === "leave") return "Reason for leave";
     if (formKind === "advance" || formKind === "loan") return "Reason / notes";
     if (formKind === "salary_slip") return "Additional notes (optional)";
@@ -238,6 +315,16 @@ function GenerateTicketPageInner() {
       (f) => f.type === "application/pdf" && f.size <= 100 * 1024 * 1024
     );
     setDocuments(validFiles);
+  };
+
+  const handleIssueImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const files = Array.from(e.target.files);
+    const validFiles = files.filter(
+      (f) =>
+        /^image\/(png|jpeg|jpg|webp|gif)$/i.test(f.type) && f.size <= 100 * 1024 * 1024
+    );
+    setIssueImages(validFiles);
   };
 
   const buildPayload = async () => {
@@ -285,7 +372,23 @@ function GenerateTicketPageInner() {
       base.reason = description;
     } else if (formKind === "custom") {
       if (!subject.trim()) throw new Error("Please enter a subject for your custom ticket.");
-      if (!description.trim()) throw new Error("Please describe your request.");
+      if (!description.trim()) throw new Error("Please write your custom query.");
+    } else if (formKind === "hrm_issue") {
+      if (!description.trim()) throw new Error("Please describe the HRM issue.");
+      let imagePaths: string[] = [];
+      if (issueImages.length > 0) {
+        const formData = new FormData();
+        formData.append("employee_id", employeeId || "");
+        issueImages.forEach((file) => formData.append("files", file));
+        const uploadRes = await fetch("/api/attachments", { method: "POST", body: formData });
+        const uploadData = await uploadRes.json();
+        if (!uploadData.success) {
+          throw new Error(uploadData.error || "Failed to upload image");
+        }
+        imagePaths = uploadData.files.map((f: { url: string }) => f.url);
+      }
+      base.image_paths = imagePaths;
+      base.reason = description;
     } else if (formKind === "generic") {
       if (!description.trim()) throw new Error("Please describe your issue or request.");
     }
@@ -294,8 +397,11 @@ function GenerateTicketPageInner() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (category !== "HR" || ticketType !== "leave") {
-      setError("Only HR Leave tickets are available right now.");
+    const allowed =
+      category === "HR" &&
+      (ENABLED_HR_TICKET_TYPES as readonly string[]).includes(ticketType);
+    if (!allowed) {
+      setError("Please select a valid HR request type (Leave, Custom, or HRM Issue).");
       return;
     }
     setSubmitting(true);
@@ -326,10 +432,15 @@ function GenerateTicketPageInner() {
       setSuccess(
         `Ticket ${data.ticket?.ticket_number || ""} submitted! Admin will review it shortly.`
       );
+      setSelectedTicket(null);
+      setEmployeeReply("");
+      setReplyError("");
+      clearOpenQuery();
       setDescription("");
       setSubject("");
       setAmount("");
       setDocuments([]);
+      setIssueImages([]);
       setStartDate("");
       setEndDate("");
       void fetchHistory(employeeId);
@@ -378,11 +489,14 @@ function GenerateTicketPageInner() {
               <select
                 id="ticket-type"
                 className={styles.select}
-                value="leave"
-                disabled
-                aria-readonly="true"
+                value={ticketType}
+                onChange={(e) => setTicketType(e.target.value)}
               >
-                <option value="leave">Leave</option>
+                {typeOptions.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -588,6 +702,54 @@ function GenerateTicketPageInner() {
               ) : null}
             </div>
           ) : null}
+
+          {formKind === "hrm_issue" ? (
+            <div className={styles.field}>
+              <label className={styles.label}>Attach image (optional)</label>
+              <div className={styles.fileRow}>
+                <input
+                  id="ticket-hrm-image-input"
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  multiple
+                  onChange={handleIssueImageChange}
+                  style={{ display: "none" }}
+                />
+                <button
+                  type="button"
+                  className={styles.fileBtn}
+                  onClick={() => document.getElementById("ticket-hrm-image-input")?.click()}
+                >
+                  Choose image
+                </button>
+                <span className={styles.fileHint}>Optional · PNG/JPG/WEBP/GIF · Max 100MB</span>
+              </div>
+              {issueImages.length > 0 ? (
+                <div className={styles.fileList}>
+                  {issueImages.map((f, idx) => (
+                    <div key={`${f.name}-${idx}`} className={styles.fileChip}>
+                      <span className={styles.fileChipName}>🖼️ {f.name}</span>
+                      <button
+                        type="button"
+                        className={styles.fileChipRemove}
+                        aria-label={`Remove ${f.name}`}
+                        title="Remove image"
+                        onClick={() => {
+                          setIssueImages((prev) => prev.filter((_, i) => i !== idx));
+                          const input = document.getElementById(
+                            "ticket-hrm-image-input"
+                          ) as HTMLInputElement | null;
+                          if (input) input.value = "";
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
             </div>
           ) : null}
 
@@ -637,7 +799,7 @@ function GenerateTicketPageInner() {
       </div>
 
       {selectedTicket ? (
-        <div className={styles.modalBackdrop} onClick={() => setSelectedTicket(null)}>
+        <div className={styles.modalBackdrop} onClick={closeTicketModal}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h2 className={styles.modalTitle}>{selectedTicket.ticket_number}</h2>
             <div className={styles.modalMeta}>
@@ -673,17 +835,41 @@ function GenerateTicketPageInner() {
                 ) : (
                   <p className={styles.empty}>No messages yet.</p>
                 )}
+
+                {isTicketClosed(selectedTicket.status) ? (
+                  <p className={styles.closedNotice}>
+                    This ticket is closed. You can read the conversation but cannot reply.
+                  </p>
+                ) : (
+                  <div className={styles.replyComposer}>
+                    <label className={styles.historyBodyLabel} htmlFor="employee-ticket-reply">
+                      Your reply
+                    </label>
+                    <textarea
+                      id="employee-ticket-reply"
+                      className={styles.textarea}
+                      rows={3}
+                      value={employeeReply}
+                      onChange={(e) => setEmployeeReply(e.target.value)}
+                      placeholder="Type your reply to HR…"
+                    />
+                    {replyError ? <div className={styles.alertError}>{replyError}</div> : null}
+                    <button
+                      type="button"
+                      className={styles.replySendBtn}
+                      disabled={replySending || !employeeReply.trim()}
+                      onClick={() => void handleEmployeeReply()}
+                    >
+                      {replySending ? "Sending…" : "Send reply"}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
-            {selectedTicket.ticket_type !== "leave" && isTicketClosed(selectedTicket.status) ? (
-              <p className={styles.closedNotice}>
-                This ticket is closed. You can read the conversation but cannot reply.
-              </p>
-            ) : null}
             <button
               type="button"
               className={styles.modalCloseBtn}
-              onClick={() => setSelectedTicket(null)}
+              onClick={closeTicketModal}
             >
               Close
             </button>

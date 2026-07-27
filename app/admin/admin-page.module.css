@@ -225,6 +225,31 @@
   color: #dc2626;
 }
 
+.btnDeleteIcon {
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: #fff;
+  color: #dc2626;
+  flex-shrink: 0;
+}
+
+.btnDeleteIcon:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #f87171;
+}
+
+.btnDeleteIcon:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .empty {
   text-align: center;
   padding: 40px;

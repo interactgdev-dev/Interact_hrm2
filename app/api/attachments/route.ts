@@ -22,9 +22,13 @@ export async function POST(req: NextRequest) {
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json({ success: false, error: `File ${file.name} exceeds 100MB limit` }, { status: 400 });
     }
-    const ext = path.extname(file.name);
-    if (ext.toLowerCase() !== ".pdf") {
-      return NextResponse.json({ success: false, error: "Only PDF files allowed" }, { status: 400 });
+    const ext = path.extname(file.name).toLowerCase();
+    const allowed = new Set([".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+    if (!allowed.has(ext)) {
+      return NextResponse.json(
+        { success: false, error: "Only PDF or image files (PNG, JPG, WEBP, GIF) are allowed" },
+        { status: 400 }
+      );
     }
     const uniqueName = uuidv4() + ext;
     const filePath = path.join(UPLOAD_DIR, uniqueName);

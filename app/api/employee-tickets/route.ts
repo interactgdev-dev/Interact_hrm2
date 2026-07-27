@@ -13,6 +13,7 @@ import {
 import { isTicketClosed } from "@/lib/ticket-status";
 import {
   appendAdminMessage,
+  appendEmployeeMessage,
   latestAdminRemark,
   seedEmployeeMessage,
 } from "@/lib/ticket-thread";
@@ -135,7 +136,12 @@ export async function POST(req: NextRequest) {
     }
 
     const desc = String(description || "").trim();
-    if (!desc && typeConfig.form === "generic") {
+    if (
+      !desc &&
+      (typeConfig.form === "generic" ||
+        typeConfig.form === "custom" ||
+        typeConfig.form === "hrm_issue")
+    ) {
       return NextResponse.json(
         { success: false, error: "Please describe your request" },
         { status: 400 }
@@ -202,15 +208,23 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     await ensureEmployeeTicketsTable();
-    const { id, status, reply, admin_remark, author_name } = await req.json();
+    const body = await req.json();
+    const { id, status, reply, admin_remark, author_name, from, employee_id } = body;
     if (!id) {
       return NextResponse.json({ success: false, error: "Invalid data" }, { status: 400 });
     }
 
     const replyText = String(reply ?? admin_remark ?? "").trim();
     const hasStatus = status && VALID_STATUSES.has(String(status));
+    const isEmployeeReply = String(from || "").toLowerCase() === "employee";
     if (!hasStatus && !replyText) {
       return NextResponse.json({ success: false, error: "Nothing to update" }, { status: 400 });
+    }
+    if (isEmployeeReply && hasStatus) {
+      return NextResponse.json(
+        { success: false, error: "Employees cannot change ticket status" },
+        { status: 403 }
+      );
     }
 
     const [existing]: any = await query(
@@ -237,7 +251,21 @@ export async function PATCH(req: NextRequest) {
           { status: 403 }
         );
       }
-      messages = appendAdminMessage(messages, String(author_name || "Admin"), replyText);
+      if (isEmployeeReply) {
+        if (!employee_id || String(employee_id) !== String(current.employee_id)) {
+          return NextResponse.json(
+            { success: false, error: "You can only reply to your own tickets" },
+            { status: 403 }
+          );
+        }
+        messages = appendEmployeeMessage(
+          messages,
+          String(author_name || current.employee_name || "Employee"),
+          replyText
+        );
+      } else {
+        messages = appendAdminMessage(messages, String(author_name || "Admin"), replyText);
+      }
     }
 
     const newStatus = (hasStatus ? String(status) : current.status) as TicketStatus;
@@ -266,6 +294,51 @@ export async function PATCH(req: NextRequest) {
       broadcastTicketUpdate();
     }
     return NextResponse.json({ success: true, ticket });
+  } catch (error) {
+    return NextResponse.json(
+      { success: false, error: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
+  }
+}
+
+/** DELETE ?id=123 — permanently remove a ticket (admin). */
+export async function DELETE(req: NextRequest) {
+  try {
+    await ensureEmployeeTicketsTable();
+    const { searchParams } = new URL(req.url);
+    let id = parseInt(searchParams.get("id") || "", 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      try {
+        const body = await req.json();
+        id = parseInt(String(body?.id ?? ""), 10);
+      } catch {
+        /* no body */
+      }
+    }
+    if (!Number.isFinite(id) || id <= 0) {
+      return NextResponse.json({ success: false, error: "Ticket id is required" }, { status: 400 });
+    }
+
+    const [existing]: any = await query(
+      `SELECT id, ticket_number FROM ${EMPLOYEE_TICKETS_TABLE} WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!existing?.[0]) {
+      return NextResponse.json({ success: false, error: "Ticket not found" }, { status: 404 });
+    }
+
+    await query(`DELETE FROM ${EMPLOYEE_TICKETS_TABLE} WHERE id = ?`, [id]);
+    broadcastWsEvent({
+      type: "ticket_update",
+      ticket: { id, deleted: true },
+    });
+    return NextResponse.json({
+      success: true,
+      deleted: true,
+      id,
+      ticket_number: existing[0].ticket_number,
+    });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : String(error) },

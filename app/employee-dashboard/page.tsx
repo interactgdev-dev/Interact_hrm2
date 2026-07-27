@@ -400,15 +400,16 @@ export default function EmployeeDashboardPage() {
   }, [employeeId]);
 
   const openTicketPage = React.useCallback(
-    (ticket: TicketWidgetRow) => {
-      if (ticket.ticket_type !== "leave") {
+    (ticket?: TicketWidgetRow) => {
+      if (ticket && ticket.ticket_type !== "leave") {
         const lastAdmin = getLastAdminMessage(ticket.messages ?? []);
         if (lastAdmin && employeeId) {
           saveTicketSeen(employeeId, ticket.id, lastAdmin.id);
           setTicketSeenMap((prev) => ({ ...prev, [ticket.id]: lastAdmin.id }));
         }
       }
-      router.push(`/employee-dashboard/generate-ticket?open=${ticket.id}`);
+      // Always open My tickets page (full list + replies) — do not auto-open a modal
+      router.push("/employee-dashboard/generate-ticket");
     },
     [employeeId, router]
   );
@@ -696,7 +697,7 @@ export default function EmployeeDashboardPage() {
         if (bUnread !== aUnread) return bUnread - aUnread;
         return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
       })
-      .slice(0, 3);
+      .slice(0, 1);
   }, [tickets, ticketSeenMap]);
 
   const weekStats = React.useMemo(() => {
@@ -840,13 +841,27 @@ export default function EmployeeDashboardPage() {
             <span className={styles.generateBtn}>Generate Tickets</span>
           </div>
 
-          <article className={styles.panelCard}>
+          <article
+            className={`${styles.panelCard} ${styles.ticketsPanel}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => openTicketPage()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                openTicketPage();
+              }
+            }}
+          >
             <div className={styles.panelHead}>
               <h2 className={styles.panelTitle}>My tickets</h2>
               <button
                 type="button"
                 className={styles.viewAll}
-                onClick={() => router.push("/employee-dashboard/generate-ticket")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push("/employee-dashboard/generate-ticket");
+                }}
               >
                 View all
               </button>
@@ -858,10 +873,7 @@ export default function EmployeeDashboardPage() {
             ) : null}
             <ul className={styles.ticketList}>
               {ticketWidgetItems.length === 0 ? (
-                <li
-                  className={styles.ticketItem}
-                  onClick={() => router.push("/employee-dashboard/generate-ticket")}
-                >
+                <li className={styles.ticketItem}>
                   <div className={styles.ticketEmpty}>No pending tickets</div>
                 </li>
               ) : (
@@ -877,7 +889,10 @@ export default function EmployeeDashboardPage() {
                     <li
                       key={ticket.id}
                       className={styles.ticketItem}
-                      onClick={() => openTicketPage(ticket)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openTicketPage(ticket);
+                      }}
                     >
                       <div className={styles.ticketTop}>
                         <span className={styles.ticketNum}>{ticket.ticket_number}</span>
