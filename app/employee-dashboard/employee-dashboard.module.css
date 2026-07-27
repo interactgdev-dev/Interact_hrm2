@@ -80,33 +80,34 @@
   grid-area: today;
   display: flex;
   flex-direction: column;
-  min-height: 420px;
+  min-height: 0;
   animation-delay: 0.05s;
 }
 
 .liveClock {
-  font-size: clamp(1.75rem, 2.6vw, 2.35rem);
+  font-size: clamp(1.55rem, 2.2vw, 2.1rem);
   font-weight: 800;
   letter-spacing: -0.04em;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
-  margin: 4px 0 8px;
+  margin: 2px 0 6px;
 }
 
 .clockedInLabel {
-  margin: 0 0 16px;
+  margin: 0 0 10px;
   font-size: 13px;
   font-weight: 600;
   color: #64748b;
 }
 
 .todayActions {
-  flex: 1;
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  min-height: 180px;
+  justify-content: flex-start;
+  min-height: 0;
+  margin-top: 0;
 }
 
 /* My Attendance */

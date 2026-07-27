@@ -14,6 +14,8 @@ type Props = {
   initials: string;
   photo: string | null;
   onAvatarUpdated: (url: string) => void;
+  /** Dashboard profile card — larger circle + "Update image" hover bar */
+  variant?: "hero" | "card";
 };
 
 function PreviewModal({
@@ -69,10 +71,12 @@ export function HeroProfileAvatar({
   initials,
   photo,
   onAvatarUpdated,
+  variant = "hero",
 }: Props) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
+  const isCard = variant === "card";
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -98,7 +102,7 @@ export function HeroProfileAvatar({
 
   return (
     <>
-      <div className={styles.wrap}>
+      <div className={`${styles.wrap}${isCard ? ` ${styles.wrapCard}` : ""}`}>
         <button
           type="button"
           className={styles.previewBtn}
@@ -120,13 +124,13 @@ export function HeroProfileAvatar({
         <button
           type="button"
           className={styles.uploadBar}
-          title="Upload from PC"
-          aria-label="Upload profile picture from PC"
+          title="Update image"
+          aria-label="Update profile image"
           onClick={openPicker}
           disabled={uploading || !employeeId}
         >
           <FaCamera className={styles.uploadIcon} aria-hidden />
-          <span>{uploading ? "…" : "Upload"}</span>
+          <span>{uploading ? "…" : isCard ? "Update image" : "Upload"}</span>
         </button>
 
         <input

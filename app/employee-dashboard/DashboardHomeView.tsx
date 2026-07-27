@@ -17,6 +17,7 @@ import {
 } from "../../lib/ticket-thread";
 import type { TicketCategory } from "../../lib/ticket-catalog";
 import { TardyNoteWidget } from "../components/TardyNoteWidget";
+import { HeroProfileAvatar } from "./components/HeroProfileAvatar";
 import styles from "./employee-dashboard.module.css";
 
 type TicketWidgetRow = {
@@ -85,6 +86,7 @@ export type DashboardHomeViewProps = {
   employeeId: string;
   employeeName: string;
   profilePhoto: string | null;
+  onAvatarUpdated: (url: string) => void;
   profileContact: { email: string; phone: string; location: string };
   liveClock: string;
   clockedInLabel: string;
@@ -119,6 +121,7 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
     employeeId,
     employeeName,
     profilePhoto,
+    onAvatarUpdated,
     profileContact,
     liveClock,
     clockedInLabel,
@@ -227,12 +230,14 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
           </article>
 
           <article className={`${styles.card} ${styles.profileCard}`}>
-            {profilePhoto ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img className={styles.profileAvatar} src={profilePhoto} alt="" />
-            ) : (
-              <div className={styles.profileAvatarFallback}>{profileInitials}</div>
-            )}
+            <HeroProfileAvatar
+              employeeId={employeeId}
+              name={employeeName}
+              initials={profileInitials}
+              photo={profilePhoto}
+              onAvatarUpdated={onAvatarUpdated}
+              variant="card"
+            />
             <h3 className={styles.profileName}>{employeeName}</h3>
             <ul className={styles.profileMeta}>
               <li>

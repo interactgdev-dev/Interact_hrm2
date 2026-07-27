@@ -9,7 +9,6 @@ import {
   FaUsers,
   FaSearch,
   FaTicketAlt,
-  FaCog,
 } from "react-icons/fa";
 import styles from "../layout-dashboard.module.css";
 import empStyles from "./emp-shell.module.css";
@@ -91,40 +90,45 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     return () => window.clearInterval(id);
   }, []);
 
-  React.useEffect(() => {
+  // Portal target lives in page children; loading.tsx has no #emp-today-status-root.
+  // Keep watching until (and whenever) the home view mounts the slot.
+  React.useLayoutEffect(() => {
     if (!isDashboardHome) {
       setTodayStatusRoot(null);
       return;
     }
     let cancelled = false;
-    const find = () => {
+    const sync = () => {
+      if (cancelled) return;
       const el = document.getElementById("emp-today-status-root");
-      if (!cancelled) setTodayStatusRoot(el);
-      return Boolean(el);
+      if (el) setTodayStatusRoot((prev) => (prev === el ? prev : el));
     };
-    if (find()) return;
-    const t = window.setInterval(() => {
-      if (find()) window.clearInterval(t);
-    }, 50);
+    sync();
+    const obs = new MutationObserver(sync);
+    obs.observe(document.body, { childList: true, subtree: true });
     return () => {
       cancelled = true;
-      window.clearInterval(t);
+      obs.disconnect();
     };
-  }, [isDashboardHome, children]);
+  }, [isDashboardHome]);
 
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
+  // Resolve employeeId before paint so Clock/Break/Prayer can mount immediately.
+  React.useLayoutEffect(() => {
     const loginId = localStorage.getItem("loginId");
     if (!loginId) {
       window.location.href = "/auth";
       return;
     }
-
     const cachedId = localStorage.getItem("employeeId");
     const cachedName = localStorage.getItem("employeeName");
-    if (cachedId) setEmployeeId(cachedId);
-    else setEmployeeId(loginId);
+    setEmployeeId(cachedId || loginId);
     if (cachedName) setEmployeeName(cachedName);
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const loginId = localStorage.getItem("loginId");
+    if (!loginId) return;
 
     let apiUrl = "/api/hrm_employees?";
     if (loginId.includes("@")) {
@@ -149,11 +153,11 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
           localStorage.setItem("employeeId", empId);
           localStorage.setItem("employeeName", trimmedName);
         } else {
-          setEmployeeName("Employee");
+          setEmployeeName((prev) => prev || "Employee");
         }
       })
       .catch(() => {
-        setEmployeeName("Employee");
+        setEmployeeName((prev) => prev || "Employee");
       });
   }, []);
 
@@ -186,13 +190,12 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   const clockWidget =
     employeeId ? (
       <ClockBreakPrayerWidget
+        key="emp-clock-widget"
         employeeId={employeeId}
         employeeName={employeeName || "Employee"}
-        variant={isDashboardHome && todayStatusRoot ? "todayStatus" : "slack"}
+        variant={isDashboardHome ? "todayStatus" : "slack"}
       />
     ) : null;
-
-  const usePortal = Boolean(isDashboardHome && todayStatusRoot && clockWidget);
 
   return (
     <div className={`${styles.layout} ${empStyles.noTopbar} ${empStyles.modernShell}`}>
@@ -243,15 +246,6 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
             );
           })}
         </nav>
-
-        <div className={empStyles.sidebarFooter}>
-          <Link href="/employee-dashboard/my-info" className={`${styles.navItem} ${empStyles.navItemPdf}`}>
-            <span className={`${styles.navIcon} ${empStyles.navIconPdf}`}>
-              <FaCog />
-            </span>
-            <span>Settings</span>
-          </Link>
-        </div>
       </aside>
 
       <div className={`${styles.contentArea} ${empStyles.contentFull} ${empStyles.contentModern}`}>
@@ -314,14 +308,13 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
         )}
 
         {employeeId ? (
-          usePortal && todayStatusRoot ? (
-            createPortal(clockWidget, todayStatusRoot)
+          isDashboardHome ? (
+            // Wait for portal target — do NOT mount in hidden dock first (that caused double sync + late buttons)
+            todayStatusRoot ? createPortal(clockWidget, todayStatusRoot) : null
           ) : (
             <div
-              className={`${empStyles.attendanceDock}${
-                showClockBar && !isDashboardHome ? "" : ` ${empStyles.attendanceDockHidden}`
-              }`}
-              aria-hidden={!(showClockBar && !isDashboardHome)}
+              className={`${empStyles.attendanceDock}${showClockBar ? "" : ` ${empStyles.attendanceDockHidden}`}`}
+              aria-hidden={!showClockBar}
             >
               <div className={empStyles.attendanceDockInner}>
                 <div className={empStyles.dockCard}>

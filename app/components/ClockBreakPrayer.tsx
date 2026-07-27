@@ -85,6 +85,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
   variant?: "default" | "slack" | "todayStatus";
 }) {
   const isSlack = variant === "slack" || variant === "todayStatus";
+  const isTodayStatus = variant === "todayStatus";
   const slackStyles = variant === "todayStatus" ? todayStyles : slackStylesDefault;
   const [isPrayerOn, setIsPrayerOn] = React.useState(false);
   const [prayerStart, setPrayerStart] = React.useState<Date | null>(null);
@@ -370,6 +371,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
 
   // Fade-in on mount and force backend-only sync for clock state
   React.useEffect(() => {
+    // Dashboard Today Status: show controls immediately (no 0.5s invisible fade)
     setFadeIn(true);
     if (!employeeId) {
       setLoadingAttendance(false);
@@ -748,7 +750,11 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
         notifyPrayerDataChanged();
       }}
     />
-    <div className={`cbp-fade-in ${isSlack ? slackStyles.row : "cbp-widget-row"}${fadeIn ? " cbp-fade-in-active" : ""}`}>
+    <div
+      className={`${isTodayStatus ? "" : "cbp-fade-in "}${isSlack ? slackStyles.row : "cbp-widget-row"}${
+        !isTodayStatus && fadeIn ? " cbp-fade-in-active" : ""
+      }`}
+    >
       {/* Clock In Widget */}
       <div
         className={isSlack ? `${slackStyles.card} ${slackStyles.cardClock}` : undefined}
@@ -771,7 +777,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           <div style={{ fontWeight: 600, fontSize: "1.1rem", color: "#27ae60", marginBottom: 10 }}>Clock In</div>
         )}
         {isSlack && isClockedIn && <span className={slackStyles.clockRing} aria-hidden />}
-        {!loadingAttendance && (
+        {(!loadingAttendance || isTodayStatus) && (
           <>
             <button
               onClick={
@@ -779,7 +785,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
                   ? handleClockOut
                   : () => runWithVerify("clock_in", (token) => handleClockIn(token))
               }
-              disabled={clockActionPending || verifyPreparing}
+              disabled={clockActionPending || verifyPreparing || (isTodayStatus && loadingAttendance)}
               className={isSlack ? `${slackStyles.btn} ${isClockedIn ? slackStyles.btnClockOut : slackStyles.btnClockIn}` : undefined}
               style={isSlack ? undefined : {
                 background: isClockedIn ? "#e74c3c" : "#27ae60",
@@ -870,12 +876,14 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
               <div style={{ fontSize: "1rem", fontWeight: 500, color: "#2d3436" }}>{formatTime(breakTimer)}</div>
             </div>
           ) : null}
-          <BreakSummary
-            employeeId={employeeId}
-            isOnBreak={isOnBreak}
-            liveBreakSeconds={breakTimer}
-            variant={variant}
-          />
+          {!isTodayStatus ? (
+            <BreakSummary
+              employeeId={employeeId}
+              isOnBreak={isOnBreak}
+              liveBreakSeconds={breakTimer}
+              variant={variant}
+            />
+          ) : null}
         </div>
       )}
 

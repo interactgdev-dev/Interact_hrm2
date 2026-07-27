@@ -241,8 +241,7 @@ export default function EmployeeDashboardPage() {
     };
   }, []);
 
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
+  React.useLayoutEffect(() => {
     const empId =
       localStorage.getItem("employeeId") || localStorage.getItem("loginId") || "";
     setEmployeeId(empId);
@@ -781,7 +780,22 @@ export default function EmployeeDashboardPage() {
 
   React.useEffect(() => {
     eventsYearRef.current = eventsCal.year;
-    void fetchEvents(eventsCal.year);
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const load = () => {
+      void fetchEvents(eventsCal.year);
+    };
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(load, { timeout: 2000 });
+    } else {
+      timeoutId = setTimeout(load, 100);
+    }
+    return () => {
+      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [eventsCal.year, fetchEvents]);
 
   return (
@@ -789,6 +803,7 @@ export default function EmployeeDashboardPage() {
       employeeId={employeeId}
       employeeName={employeeName}
       profilePhoto={profilePhoto}
+      onAvatarUpdated={(url) => setProfilePhoto(url)}
       profileContact={profileContact}
       liveClock={liveClock}
       clockedInLabel={clockedInLabel}

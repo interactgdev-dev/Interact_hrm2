@@ -8,6 +8,28 @@
   overflow: hidden;
 }
 
+.wrapCard {
+  width: 88px;
+  height: 88px;
+  border-radius: 999px;
+  box-shadow: 0 8px 20px rgba(13, 148, 136, 0.2);
+  border: 3px solid #99f6e4;
+  box-sizing: border-box;
+}
+
+.wrapCard .placeholderIcon {
+  font-size: 28px;
+}
+
+.wrapCard .initials {
+  font-size: 12px;
+}
+
+.wrapCard .uploadBar {
+  height: 28px;
+  font-size: 11px;
+}
+
 .previewBtn {
   width: 100%;
   height: 100%;
