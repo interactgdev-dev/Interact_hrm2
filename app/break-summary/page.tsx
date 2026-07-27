@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import LayoutDashboard from "../layout-dashboard";
 import styles from "./break-summary.module.css";
 import { FaFileExcel } from "react-icons/fa";
@@ -25,11 +25,6 @@ function formatDuration(seconds: number) {
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
-}
-
-function getMonthStartDateString(date: Date = new Date()) {
-  const d = getDateStringInTimeZone(date, SERVER_TIMEZONE);
-  return `${d.slice(0, 7)}-01`;
 }
 
 function getEmployeeGroupingKey(record: any) {
@@ -63,9 +58,13 @@ export default function BreakSummaryPage() {
   const [breaks, setBreaks] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [department, setDepartment] = useState("");
-  const [fromDate, setFromDate] = useState(getMonthStartDateString());
-  const [toDate, setToDate] = useState(getLocalDateString());
+  /** Default: current day only — expand range when user picks dates */
+  const today = getLocalDateString();
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
+  const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -81,53 +80,68 @@ export default function BreakSummaryPage() {
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (fromDate) params.append("fromDate", fromDate);
-    if (toDate) params.append("toDate", toDate);
-    const url = `/api/breaks${params.toString() ? `?${params.toString()}` : ""}`;
-
-    fetch(url)
+    const effectiveFrom = fromDate || toDate || today;
+    const effectiveTo = toDate || fromDate || today;
+    const params = new URLSearchParams({ fromDate: effectiveFrom, toDate: effectiveTo });
+    setLoading(true);
+    fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         if (data.success) setBreaks(data.breaks || []);
         else setBreaks([]);
-      });
-  }, [fromDate, toDate]);
+      })
+      .catch(() => setBreaks([]))
+      .finally(() => setLoading(false));
+  }, [fromDate, toDate, today]);
 
   useEffect(() => {
     const hasRunning = breaks.some((b) => b.break_start && !b.break_end);
     if (!hasRunning) return;
-    const interval = setInterval(() => setNow(Date.now()), 1000);
+    // 5s is enough for live duration; 1s was rebuilding the whole table every tick
+    const interval = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(interval);
   }, [breaks]);
 
   const filteredBreaks = useMemo(() => {
     return breaks.filter((b) => {
-      const term = search.trim().toLowerCase();
+      const term = deferredSearch.trim().toLowerCase();
       if (term) {
         const employeeName = (b.employee_name || "").toLowerCase();
         const pseudonym = (b.pseudonym || "").toLowerCase();
-        if (!employeeName.includes(term) && !pseudonym.includes(term)) return false;
+        const id = String(b.employee_id || "");
+        if (!employeeName.includes(term) && !pseudonym.includes(term) && !id.includes(term)) {
+          return false;
+        }
       }
       if (department && b.department_name !== department) return false;
       return true;
     });
-  }, [breaks, search, department]);
+  }, [breaks, deferredSearch, department]);
 
-  const dailyTotals = useMemo(() => {
+  /** Static totals for ended breaks (no live clock). Running rows get live end = now below. */
+  const staticTotals = useMemo(() => {
     const map = new Map<string, number>();
     for (const b of filteredBreaks) {
-      if (!b.break_start) continue;
+      if (!b.break_start || !b.break_end) continue;
       const start = new Date(b.break_start).getTime();
-      const end = b.break_end ? new Date(b.break_end).getTime() : now;
+      const end = new Date(b.break_end).getTime();
       const seconds = Math.floor((end - start) / 1000);
       const key = getSessionGroupingKey(b);
       map.set(key, (map.get(key) || 0) + Math.max(0, seconds));
     }
     return map;
-  }, [filteredBreaks, now]);
+  }, [filteredBreaks]);
 
   const rows = useMemo(() => {
+    const liveTotals = new Map(staticTotals);
+    for (const b of filteredBreaks) {
+      if (!b.break_start || b.break_end) continue;
+      const start = new Date(b.break_start).getTime();
+      const seconds = Math.floor((now - start) / 1000);
+      const key = getSessionGroupingKey(b);
+      liveTotals.set(key, (liveTotals.get(key) || 0) + Math.max(0, seconds));
+    }
+
     return filteredBreaks
       .map((b) => {
         const isRunning = b.break_start && !b.break_end;
@@ -135,11 +149,10 @@ export default function BreakSummaryPage() {
         const end = b.break_end ? new Date(b.break_end).getTime() : now;
         const sessionSeconds = b.break_start ? Math.floor((end - start) / 1000) : 0;
         const key = getSessionGroupingKey(b);
-        const dailySeconds = dailyTotals.get(key) || sessionSeconds;
+        const dailySeconds = liveTotals.get(key) || sessionSeconds;
         const exceedToday = dailySeconds > 3600 ? dailySeconds - 3600 : 0;
         return {
           ...b,
-          // Use attendance session clock-in date for overnight readability.
           date_display: b.session_clock_in
             ? getDateStringInTimeZone(b.session_clock_in, SERVER_TIMEZONE)
             : b.date
@@ -159,7 +172,7 @@ export default function BreakSummaryPage() {
         };
       })
       .sort((a, b) => new Date(b.break_start || 0).getTime() - new Date(a.break_start || 0).getTime());
-  }, [filteredBreaks, dailyTotals, now]);
+  }, [filteredBreaks, staticTotals, now]);
 
   const downloadBreakCSV = () => {
     const headers = [
@@ -217,10 +230,10 @@ export default function BreakSummaryPage() {
         toastError(data.error || "Import failed");
       } else {
         toastSuccess(`Imported ${data.imported} break rows`);
-        const params = new URLSearchParams();
-        if (fromDate) params.append("fromDate", fromDate);
-        if (toDate) params.append("toDate", toDate);
-        const r = await fetch(`/api/breaks?${params.toString()}`);
+        const effectiveFrom = fromDate || toDate || today;
+        const effectiveTo = toDate || fromDate || today;
+        const params = new URLSearchParams({ fromDate: effectiveFrom, toDate: effectiveTo });
+        const r = await fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" });
         const refreshed = await r.json();
         setBreaks(refreshed.success ? refreshed.breaks || [] : []);
       }
@@ -242,7 +255,7 @@ export default function BreakSummaryPage() {
         <div className={styles.breakSummaryFilters}>
           <input
             type="text"
-            placeholder="Search employee..."
+            placeholder="Search by name or pseudo name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className={styles.breakSummaryInput}
@@ -293,6 +306,11 @@ export default function BreakSummaryPage() {
         </div>
 
         <div className={styles.breakSummaryTableWrapper}>
+          {loading ? (
+            <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
+              Loading...
+            </div>
+          ) : (
           <table className={styles.breakSummaryTable}>
             <thead>
               <tr>
@@ -348,6 +366,7 @@ export default function BreakSummaryPage() {
               )}
             </tbody>
           </table>
+          )}
         </div>
       </div>
       {detail ? <EmployeeDetailPopup data={detail} onClose={() => setDetail(null)} /> : null}

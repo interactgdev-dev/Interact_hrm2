@@ -484,34 +484,69 @@ export default function EmployeeDashboardPage() {
 
   React.useEffect(() => {
     if (!employeeId) return;
-    fetchAttendance();
-    fetchLeaveBalance();
-    void fetchTickets();
-    void fetchEmployeeHierarchy(employeeId).then((data) => {
-      if (!data) return;
-      setTeamMembers(data.teamMembers);
-    });
+    // Attendance first (hours chart) — rest deferred so route paint stays snappy
+    void fetchAttendance();
+    const runSecondary = () => {
+      void fetchLeaveBalance();
+      void fetchTickets();
+      void fetchEmployeeHierarchy(employeeId).then((data) => {
+        if (!data) return;
+        setTeamMembers(data.teamMembers);
+      });
+    };
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(runSecondary, { timeout: 1800 });
+    } else {
+      timeoutId = setTimeout(runSecondary, 120);
+    }
+    return () => {
+      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [employeeId, fetchAttendance, fetchLeaveBalance, fetchTickets]);
 
   React.useEffect(() => {
-    fetchReminders();
     if (typeof window === "undefined") return;
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${protocol}://${window.location.host}/api/ws`);
-    ws.onmessage = (evt) => {
-      try {
-        const msg = JSON.parse(evt.data.toString());
-        if (msg?.type === "events_updated") fetchEvents(eventsYearRef.current);
-        if (msg?.type === "reminders_updated") fetchReminders();
-        if (msg?.type === "leave_update") fetchLeaveBalance();
-        if (msg?.type === "ticket_update" || msg?.type === "ticket_created") {
-          void fetchTickets({ silent: true });
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+    const connect = () => {
+      if (cancelled) return;
+      void fetchReminders();
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${protocol}://${window.location.host}/api/ws`);
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data.toString());
+          if (msg?.type === "events_updated") fetchEvents(eventsYearRef.current);
+          if (msg?.type === "reminders_updated") fetchReminders();
+          if (msg?.type === "leave_update") fetchLeaveBalance();
+          if (msg?.type === "ticket_update" || msg?.type === "ticket_created") {
+            void fetchTickets({ silent: true });
+          }
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
-      }
+      };
     };
-    return () => ws.close();
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if ("requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(connect, { timeout: 2500 });
+    } else {
+      timeoutId = setTimeout(connect, 200);
+    }
+    return () => {
+      cancelled = true;
+      if (idleId !== undefined && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+      ws?.close();
+    };
   }, [fetchEvents, fetchReminders, fetchLeaveBalance, fetchTickets]);
 
   React.useEffect(() => {
@@ -539,11 +574,11 @@ export default function EmployeeDashboardPage() {
   const todayRecord = attendanceByDate.get(todayKey);
   const isClockedIn = Boolean(todayRecord?.clock_in && !todayRecord?.clock_out);
 
-  // Tick every second while clocked in so hours match the live clock widget.
+  // Tick while clocked in so hours stay live — 5s avoids freezing the whole dashboard every second
   const [liveTick, setLiveTick] = React.useState(0);
   React.useEffect(() => {
     if (!isClockedIn) return;
-    const id = setInterval(() => setLiveTick((n) => n + 1), 1000);
+    const id = setInterval(() => setLiveTick((n) => n + 1), 5000);
     return () => clearInterval(id);
   }, [isClockedIn]);
 
@@ -607,26 +642,25 @@ export default function EmployeeDashboardPage() {
 
   const calendarYear = todayParts.year;
   const calendarMonthIndex = todayParts.month - 1;
-  const monthStartUtc = new Date(Date.UTC(calendarYear, calendarMonthIndex, 1));
   const monthName = new Intl.DateTimeFormat(undefined, {
     month: "long",
     timeZone: SERVER_TIMEZONE,
   }).format(new Date(Date.UTC(calendarYear, calendarMonthIndex, 1, 12, 0, 0)));
-  const daysInMonth = new Date(
-    Date.UTC(calendarYear, calendarMonthIndex + 1, 0)
-  ).getUTCDate();
-  const leadingBlanks = monthStartUtc.getUTCDay();
-  const calendarSlots = Array.from(
-    { length: leadingBlanks + daysInMonth },
-    (_, idx) => {
+  const calendarSlots = React.useMemo(() => {
+    const monthStartUtc = new Date(Date.UTC(calendarYear, calendarMonthIndex, 1));
+    const daysInMonth = new Date(
+      Date.UTC(calendarYear, calendarMonthIndex + 1, 0)
+    ).getUTCDate();
+    const leadingBlanks = monthStartUtc.getUTCDay();
+    return Array.from({ length: leadingBlanks + daysInMonth }, (_, idx) => {
       if (idx < leadingBlanks) return null;
       const day = idx - leadingBlanks + 1;
       const key = `${calendarYear}-${String(todayParts.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       const isToday = day === todayParts.day;
       const isTardy = attendanceByDate.get(key)?.is_late === true;
       return { day, isToday, isTardy };
-    }
-  );
+    });
+  }, [calendarYear, calendarMonthIndex, todayParts.month, todayParts.day, attendanceByDate]);
 
   const newReplyCount = React.useMemo(
     () =>

@@ -34,6 +34,17 @@ export function clearEmployeeHierarchyCache(employeeId?: string) {
   inflight.clear();
 }
 
+/** Sync peek for instant paint on My Team / dashboard when cache is warm. */
+export function peekEmployeeHierarchyCache(
+  employeeId: string,
+): EmployeeHierarchy | null | undefined {
+  const id = String(employeeId || "").trim();
+  if (!id) return undefined;
+  const hit = cache.get(id);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+  return undefined;
+}
+
 export async function fetchEmployeeHierarchy(
   employeeId: string,
 ): Promise<EmployeeHierarchy | null> {

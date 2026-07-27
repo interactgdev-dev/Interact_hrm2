@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
     const fromDate = searchParams.get("fromDate");
     const toDate = searchParams.get("toDate");
     const activeBreakCheck = searchParams.get("activeBreakCheck");
+    /** Lighter payload for summary pages — skips shift subquery + contacts */
+    const summaryOnly = searchParams.get("summary") === "1";
     
     conn = await pool.getConnection();
     if (!conn) {
@@ -36,7 +38,33 @@ export async function GET(req: NextRequest) {
     }
     let rows;
     // Join with hrm_employees for employee name and pseudonym, and departments for department name
-    const baseQuery = `
+    const baseQuery = summaryOnly
+      ? `
+      SELECT 
+        ea.*,
+        COALESCE(
+          NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), ''),
+          NULLIF(TRIM(ea.employee_name), ''),
+          ea.employee_name
+        ) as employee_name,
+        e.pseudonym AS pseudonym,
+        e.gender AS gender,
+        d.name AS department_name,
+        sa.start_time AS shift_start_time
+      FROM ${ATTENDANCE_TABLE} ea
+      LEFT JOIN hrm_employees e ON ea.employee_id = e.id
+      LEFT JOIN employee_jobs j ON e.id = j.employee_id
+      LEFT JOIN departments d ON j.department_id = d.id
+      LEFT JOIN shift_assignments sa
+        ON sa.employee_id = ea.employee_id
+       AND sa.assigned_date = (
+         SELECT MAX(sa2.assigned_date)
+         FROM shift_assignments sa2
+         WHERE sa2.employee_id = ea.employee_id
+           AND sa2.assigned_date <= ea.date
+       )
+    `
+      : `
       SELECT 
         ea.*,
         COALESCE(
@@ -70,12 +98,12 @@ export async function GET(req: NextRequest) {
     if (employeeId) {
       if (date) {
         [rows] = await conn.execute(
-          `${baseQuery} WHERE ea.employee_id = ? AND DATE(ea.date) = ? ORDER BY ea.clock_in DESC`,
+          `${baseQuery} WHERE ea.employee_id = ? AND ea.date = ? ORDER BY ea.clock_in DESC`,
           [employeeId, date]
         );
       } else if (fromDate && toDate) {
         [rows] = await conn.execute(
-          `${baseQuery} WHERE ea.employee_id = ? AND DATE(ea.date) BETWEEN ? AND ? ORDER BY ea.clock_in DESC`,
+          `${baseQuery} WHERE ea.employee_id = ? AND ea.date BETWEEN ? AND ? ORDER BY ea.clock_in DESC`,
           [employeeId, fromDate, toDate]
         );
       } else {
@@ -86,12 +114,12 @@ export async function GET(req: NextRequest) {
       }
     } else if (fromDate && toDate) {
       [rows] = await conn.execute(
-        `${baseQuery} WHERE DATE(ea.date) BETWEEN ? AND ? ORDER BY ea.clock_in DESC`,
+        `${baseQuery} WHERE ea.date BETWEEN ? AND ? ORDER BY ea.clock_in DESC`,
         [fromDate, toDate]
       );
     } else if (date) {
       [rows] = await conn.execute(
-        `${baseQuery} WHERE DATE(ea.date) = ? ORDER BY ea.clock_in DESC`,
+        `${baseQuery} WHERE ea.date = ? ORDER BY ea.clock_in DESC`,
         [date]
       );
     } else {

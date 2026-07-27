@@ -101,12 +101,27 @@ export function useBiometricGate(
     }
     let cancelled = false;
     setFaceEngineReady(false);
-    preloadFaceRuntime();
-    void ensureFaceModelsLoaded().then(() => {
-      if (!cancelled) setFaceEngineReady(true);
-    });
+    // Defer heavy face-api/TFJS load until idle so dashboard first paint stays responsive
+    const startLoad = () => {
+      if (cancelled) return;
+      preloadFaceRuntime();
+      void ensureFaceModelsLoaded().then(() => {
+        if (!cancelled) setFaceEngineReady(true);
+      });
+    };
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(startLoad, { timeout: 4000 });
+    } else {
+      timeoutId = setTimeout(startLoad, 1500);
+    }
     return () => {
       cancelled = true;
+      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [employeeId]);
 

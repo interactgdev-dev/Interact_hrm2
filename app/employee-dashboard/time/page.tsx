@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ATTENDANCE_DATA_CHANGED,
   BREAK_DATA_CHANGED,
@@ -34,19 +34,18 @@ function formatDuration(seconds: number) {
 }
 
 // Helper to format total hours
-function formatTotalHours(clockIn: string, clockOut: string) {
+function formatTotalHours(clockIn: string, clockOut: string, currentTime?: number) {
   if (!clockIn) return "00h 00m 00s";
-  // Always use server timezone for both clockIn and now
-  const clockInParts = getParts(clockIn, "Asia/Karachi");
+  const clockInParts = getParts(clockIn, SERVER_TIMEZONE);
   if (!clockInParts) return "00h 00m 00s";
   const start = new Date(Date.UTC(clockInParts.year, clockInParts.month - 1, clockInParts.day, clockInParts.hour, clockInParts.minute, clockInParts.second)).getTime();
   let end: number;
   if (clockOut) {
-    const clockOutParts = getParts(clockOut, "Asia/Karachi");
+    const clockOutParts = getParts(clockOut, SERVER_TIMEZONE);
     if (!clockOutParts) return "00h 00m 00s";
     end = new Date(Date.UTC(clockOutParts.year, clockOutParts.month - 1, clockOutParts.day, clockOutParts.hour, clockOutParts.minute, clockOutParts.second)).getTime();
   } else {
-    const nowParts = getParts(new Date(), "Asia/Karachi");
+    const nowParts = getParts(new Date(currentTime || Date.now()), SERVER_TIMEZONE);
     if (!nowParts) return "00h 00m 00s";
     end = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day, nowParts.hour, nowParts.minute, nowParts.second)).getTime();
   }
@@ -123,36 +122,33 @@ export default function EmployeeTimePage() {
   const [breaks, setBreaks] = useState<any[]>([]);
   const [prayerBreaks, setPrayerBreaks] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
-  const [breakFromDate, setBreakFromDate] = useState("");
-  const [breakToDate, setBreakToDate] = useState(getLocalDateString());
-  const [prayerFromDate, setPrayerFromDate] = useState("");
-  const [prayerToDate, setPrayerToDate] = useState(getLocalDateString());
-  const [attFromDate, setAttFromDate] = useState("");
-  const [attToDate, setAttToDate] = useState(getLocalDateString());
+  /** Default: current day only — expand range when user picks dates */
+  const today = getLocalDateString();
+  const [breakFromDate, setBreakFromDate] = useState(today);
+  const [breakToDate, setBreakToDate] = useState(today);
+  const [prayerFromDate, setPrayerFromDate] = useState(today);
+  const [prayerToDate, setPrayerToDate] = useState(today);
+  const [attFromDate, setAttFromDate] = useState(today);
+  const [attToDate, setAttToDate] = useState(today);
+  const [loadingBreaks, setLoadingBreaks] = useState(false);
+  const [loadingPrayer, setLoadingPrayer] = useState(false);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
   const [employeeId, setEmployeeId] = useState("");
   const [employeeName, setEmployeeName] = useState("");
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
-  // For live timer
   const [now, setNow] = useState(Date.now());
   const { getPhoto } = useEmployeePhotoMap();
 
-  const isInRange = (dateStr: string | null | undefined, fromDate?: string, toDate?: string) => {
-    if (!dateStr) return false;
-    const dateOnly = getDateStringInTimeZone(dateStr, SERVER_TIMEZONE);
-    if (fromDate && dateOnly < fromDate) return false;
-    if (toDate && dateOnly > toDate) return false;
-    return true;
-  };
-
-  // Update timer every second if any open attendance exists
+  // Live timer only when something is running (5s — avoids full recompute every second)
   useEffect(() => {
-    const hasOpen = attendance.some(a => a.clock_in && !a.clock_out);
-    if (!hasOpen) return;
-    const interval = setInterval(() => setNow(Date.now()), 1000);
+    const hasOpenAttendance = attendance.some((a) => a.clock_in && !a.clock_out);
+    const hasOpenBreak = breaks.some((b) => b.break_start && !b.break_end);
+    const hasOpenPrayer = prayerBreaks.some((p) => p.prayer_break_start && !p.prayer_break_end);
+    if (!hasOpenAttendance && !hasOpenBreak && !hasOpenPrayer) return;
+    const interval = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(interval);
-  }, [attendance]);
+  }, [attendance, breaks, prayerBreaks]);
 
-  // Get employeeId and employeeName from localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
       const empId = localStorage.getItem("employeeId") || localStorage.getItem("loginId");
@@ -168,71 +164,77 @@ export default function EmployeeTimePage() {
 
   const fetchBreaks = useCallback(() => {
     if (!employeeId) return;
-    let url = `/api/breaks?employeeId=${employeeId}`;
-    const params = new URLSearchParams();
-    if (breakFromDate) params.append("fromDate", breakFromDate);
-    if (breakToDate) params.append("toDate", breakToDate);
-    if (params.toString()) url += `&${params.toString()}`;
-    fetch(url)
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          const filtered = (data.breaks || []).filter((b: any) =>
-            isInRange(b.date || b.break_start, breakFromDate, breakToDate)
-          );
-          setBreaks(filtered);
-        }
+    const from = breakFromDate || breakToDate || today;
+    const to = breakToDate || breakFromDate || today;
+    const params = new URLSearchParams({
+      employeeId,
+      fromDate: from,
+      toDate: to,
+    });
+    setLoadingBreaks(true);
+    fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) setBreaks(data.breaks || []);
         else setBreaks([]);
-      });
-  }, [employeeId, breakFromDate, breakToDate]);
+      })
+      .catch(() => setBreaks([]))
+      .finally(() => setLoadingBreaks(false));
+  }, [employeeId, breakFromDate, breakToDate, today]);
 
   const fetchPrayerBreaks = useCallback(() => {
     if (!employeeId) return;
-    let url = `/api/prayer_breaks?employeeId=${employeeId}`;
-    const params = new URLSearchParams();
-    if (prayerFromDate) params.append("fromDate", prayerFromDate);
-    if (prayerToDate) params.append("toDate", prayerToDate);
-    if (params.toString()) url += `&${params.toString()}`;
-    fetch(url)
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          const filtered = (data.prayer_breaks || []).filter((p: any) =>
-            isInRange(p.date || p.prayer_break_start, prayerFromDate, prayerToDate)
-          );
-          setPrayerBreaks(filtered);
-        }
+    const from = prayerFromDate || prayerToDate || today;
+    const to = prayerToDate || prayerFromDate || today;
+    const params = new URLSearchParams({
+      employeeId,
+      fromDate: from,
+      toDate: to,
+    });
+    setLoadingPrayer(true);
+    fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) setPrayerBreaks(data.prayer_breaks || []);
         else setPrayerBreaks([]);
-      });
-  }, [employeeId, prayerFromDate, prayerToDate]);
+      })
+      .catch(() => setPrayerBreaks([]))
+      .finally(() => setLoadingPrayer(false));
+  }, [employeeId, prayerFromDate, prayerToDate, today]);
 
   const fetchAttendance = useCallback(() => {
     if (!employeeId) return;
-    let url = `/api/attendance?employeeId=${employeeId}`;
-    const params = new URLSearchParams();
-    if (attFromDate) params.append("fromDate", attFromDate);
-    if (attToDate) params.append("toDate", attToDate);
-    if (params.toString()) url += `&${params.toString()}`;
-    fetch(url)
-      .then(res => res.json())
-      .then(data => {
+    const from = attFromDate || attToDate || today;
+    const to = attToDate || attFromDate || today;
+    const params = new URLSearchParams({
+      employeeId,
+      fromDate: from,
+      toDate: to,
+      summary: "1",
+    });
+    setLoadingAttendance(true);
+    fetch(`/api/attendance?${params.toString()}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
         if (data.success) {
-          const filtered = (data.attendance || []).filter((a: any) =>
-            isInRange(a.clock_in || a.date, attFromDate, attToDate)
+          const list = data.attendance || [];
+          const valid = list.filter((a: any) => a.clock_in && toKarachiEpochMs(a.clock_in) !== null);
+          const invalid = list.filter((a: any) => !a.clock_in || toKarachiEpochMs(a.clock_in) === null);
+          valid.sort(
+            (a: any, b: any) =>
+              (toKarachiEpochMs(b.clock_in) || 0) - (toKarachiEpochMs(a.clock_in) || 0)
           );
-          const valid = filtered.filter((a: any) => a.clock_in && toKarachiEpochMs(a.clock_in) !== null);
-          const invalid = filtered.filter((a: any) => !a.clock_in || toKarachiEpochMs(a.clock_in) === null);
-          valid.sort((a: any, b: any) => (toKarachiEpochMs(b.clock_in) || 0) - (toKarachiEpochMs(a.clock_in) || 0));
           setAttendance([...valid, ...invalid]);
-        }
-        else setAttendance([]);
-      });
-  }, [employeeId, attFromDate, attToDate]);
+        } else setAttendance([]);
+      })
+      .catch(() => setAttendance([]))
+      .finally(() => setLoadingAttendance(false));
+  }, [employeeId, attFromDate, attToDate, today]);
 
   useEffect(() => {
-    if (!employeeId) return;
+    if (!employeeId || activeTab !== "break") return;
     fetchBreaks();
-  }, [employeeId, fetchBreaks]);
+  }, [employeeId, activeTab, fetchBreaks]);
 
   useEffect(() => {
     if (!employeeId || activeTab !== "prayer") return;
@@ -245,9 +247,15 @@ export default function EmployeeTimePage() {
   }, [employeeId, activeTab, fetchAttendance]);
 
   useEffect(() => {
-    const onBreakChanged = () => fetchBreaks();
-    const onPrayerChanged = () => fetchPrayerBreaks();
-    const onAttendanceChanged = () => fetchAttendance();
+    const onBreakChanged = () => {
+      if (activeTab === "break") fetchBreaks();
+    };
+    const onPrayerChanged = () => {
+      if (activeTab === "prayer") fetchPrayerBreaks();
+    };
+    const onAttendanceChanged = () => {
+      if (activeTab === "attendance") fetchAttendance();
+    };
     window.addEventListener(BREAK_DATA_CHANGED, onBreakChanged);
     window.addEventListener(PRAYER_DATA_CHANGED, onPrayerChanged);
     window.addEventListener(ATTENDANCE_DATA_CHANGED, onAttendanceChanged);
@@ -256,111 +264,141 @@ export default function EmployeeTimePage() {
       window.removeEventListener(PRAYER_DATA_CHANGED, onPrayerChanged);
       window.removeEventListener(ATTENDANCE_DATA_CHANGED, onAttendanceChanged);
     };
-  }, [fetchBreaks, fetchPrayerBreaks, fetchAttendance]);
+  }, [activeTab, fetchBreaks, fetchPrayerBreaks, fetchAttendance]);
 
-  // Aggregate all breaks per attendance session for this employee
-  const dailyBreakTotals = (() => {
-    const map = new Map<string, number>();
+  const breakRows = useMemo(() => {
+    const staticTotals = new Map<string, number>();
     for (const b of breaks) {
-      if (!b.break_start) continue;
+      if (!b.break_start || !b.break_end) continue;
       const start = toKarachiEpochMs(b.break_start);
-      const end = b.break_end ? toKarachiEpochMs(b.break_end) : toKarachiEpochMs(new Date(now));
+      const end = toKarachiEpochMs(b.break_end);
       if (start === null || end === null) continue;
-      const seconds = Math.floor((end - start) / 1000);
       const key = getSessionGroupingKey(b, "break_start");
-      map.set(key, (map.get(key) || 0) + Math.max(0, seconds));
+      staticTotals.set(key, (staticTotals.get(key) || 0) + Math.max(0, Math.floor((end - start) / 1000)));
     }
-    return map;
-  })();
-
-  // Map breaks data with both session and daily totals (including running breaks)
-  const breakRows = breaks.map(b => {
-    let sessionSeconds = 0;
-    const isRunning = b.break_start && !b.break_end;
-    if (b.break_start) {
+    const liveTotals = new Map(staticTotals);
+    for (const b of breaks) {
+      if (!b.break_start || b.break_end) continue;
       const start = toKarachiEpochMs(b.break_start);
-      const end = b.break_end ? toKarachiEpochMs(b.break_end) : toKarachiEpochMs(new Date(now));
-      if (start !== null && end !== null) {
-        sessionSeconds = Math.floor((end - start) / 1000);
-      }
-    }
-    const sessionExceed = sessionSeconds > 3600 ? sessionSeconds - 3600 : 0;
-    const key = getSessionGroupingKey(b, "break_start");
-    const dailySeconds = dailyBreakTotals.get(key) || sessionSeconds;
-    const dailyExceed = dailySeconds > 3600 ? dailySeconds - 3600 : 0;
-    return {
-      ...b,
-      break_start_display: b.break_start ? getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE) : "",
-      break_end_display: b.break_end ? getTimeStringInTimeZone(b.break_end, SERVER_TIMEZONE) : (isRunning ? "🔴 Running" : ""),
-      total_break_time: formatDuration(sessionSeconds),
-      total_break_time_today: formatDuration(dailySeconds),
-      exceed: sessionExceed > 0 ? formatDuration(sessionExceed) : "",
-      exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-      // Show shift/session date for overnight readability (fallback to old behavior).
-      date_display: b.session_clock_in
-        ? getDateStringInTimeZone(b.session_clock_in, SERVER_TIMEZONE)
-        : b.date
-        ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE)
-        : (b.break_start ? getDateStringInTimeZone(b.break_start, SERVER_TIMEZONE) : ""),
-      isRunning: isRunning
-    };
-  });
-
-  const dailyPrayerTotals = (() => {
-    const map = new Map<string, number>();
-    for (const p of prayerBreaks) {
-      if (!p.prayer_break_start) continue;
-      const start = toKarachiEpochMs(p.prayer_break_start);
-      const end = p.prayer_break_end ? toKarachiEpochMs(p.prayer_break_end) : toKarachiEpochMs(new Date(now));
+      const end = toKarachiEpochMs(new Date(now));
       if (start === null || end === null) continue;
-      const seconds = Math.floor((end - start) / 1000);
+      const key = getSessionGroupingKey(b, "break_start");
+      liveTotals.set(key, (liveTotals.get(key) || 0) + Math.max(0, Math.floor((end - start) / 1000)));
+    }
+
+    return breaks.map((b) => {
+      let sessionSeconds = 0;
+      const isRunning = b.break_start && !b.break_end;
+      if (b.break_start) {
+        const start = toKarachiEpochMs(b.break_start);
+        const end = b.break_end ? toKarachiEpochMs(b.break_end) : toKarachiEpochMs(new Date(now));
+        if (start !== null && end !== null) {
+          sessionSeconds = Math.floor((end - start) / 1000);
+        }
+      }
+      const key = getSessionGroupingKey(b, "break_start");
+      const dailySeconds = liveTotals.get(key) || sessionSeconds;
+      const dailyExceed = dailySeconds > 3600 ? dailySeconds - 3600 : 0;
+      return {
+        ...b,
+        break_start_display: b.break_start ? getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE) : "",
+        break_end_display: b.break_end
+          ? getTimeStringInTimeZone(b.break_end, SERVER_TIMEZONE)
+          : isRunning
+          ? "Running"
+          : "",
+        total_break_time: formatDuration(sessionSeconds),
+        total_break_time_today: formatDuration(dailySeconds),
+        exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
+        date_display: b.session_clock_in
+          ? getDateStringInTimeZone(b.session_clock_in, SERVER_TIMEZONE)
+          : b.date
+          ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE)
+          : b.break_start
+          ? getDateStringInTimeZone(b.break_start, SERVER_TIMEZONE)
+          : "",
+        isRunning,
+      };
+    });
+  }, [breaks, now]);
+
+  const prayerRows = useMemo(() => {
+    const staticTotals = new Map<string, number>();
+    for (const p of prayerBreaks) {
+      if (!p.prayer_break_start || !p.prayer_break_end) continue;
+      const start = toKarachiEpochMs(p.prayer_break_start);
+      const end = toKarachiEpochMs(p.prayer_break_end);
+      if (start === null || end === null) continue;
       const key = getSessionGroupingKey(p, "prayer_break_start");
-      map.set(key, (map.get(key) || 0) + Math.max(0, seconds));
+      staticTotals.set(key, (staticTotals.get(key) || 0) + Math.max(0, Math.floor((end - start) / 1000)));
+    }
+    const liveTotals = new Map(staticTotals);
+    for (const p of prayerBreaks) {
+      if (!p.prayer_break_start || p.prayer_break_end) continue;
+      const start = toKarachiEpochMs(p.prayer_break_start);
+      const end = toKarachiEpochMs(new Date(now));
+      if (start === null || end === null) continue;
+      const key = getSessionGroupingKey(p, "prayer_break_start");
+      liveTotals.set(key, (liveTotals.get(key) || 0) + Math.max(0, Math.floor((end - start) / 1000)));
+    }
+
+    return prayerBreaks.map((p) => {
+      let sessionSeconds = 0;
+      const isRunning = p.prayer_break_start && !p.prayer_break_end;
+      if (p.prayer_break_start) {
+        const start = toKarachiEpochMs(p.prayer_break_start);
+        const end = p.prayer_break_end
+          ? toKarachiEpochMs(p.prayer_break_end)
+          : toKarachiEpochMs(new Date(now));
+        if (start !== null && end !== null) {
+          sessionSeconds = Math.floor((end - start) / 1000);
+        }
+      }
+      const key = getSessionGroupingKey(p, "prayer_break_start");
+      const dailySeconds = liveTotals.get(key) || sessionSeconds;
+      const dailyExceed = dailySeconds > 1800 ? dailySeconds - 1800 : 0;
+      return {
+        ...p,
+        prayer_start_display: p.prayer_break_start
+          ? getTimeStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE)
+          : "",
+        prayer_end_display: p.prayer_break_end
+          ? getTimeStringInTimeZone(p.prayer_break_end, SERVER_TIMEZONE)
+          : isRunning
+          ? "Running"
+          : "",
+        total_prayer_time: formatDuration(sessionSeconds),
+        total_prayer_time_today: formatDuration(dailySeconds),
+        exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
+        date_display: p.session_clock_in
+          ? getDateStringInTimeZone(p.session_clock_in, SERVER_TIMEZONE)
+          : p.date
+          ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE)
+          : p.prayer_break_start
+          ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE)
+          : "",
+        isRunning,
+      };
+    });
+  }, [prayerBreaks, now]);
+
+  const closedAttendanceHours = useMemo(() => {
+    const map = new Map<string | number, string>();
+    for (const a of attendance) {
+      if (!a.clock_in || !a.clock_out) continue;
+      const key = a.id ?? `${a.employee_id}-${a.clock_in}`;
+      map.set(key, formatTotalHours(a.clock_in, a.clock_out));
     }
     return map;
-  })();
-
-  // Map prayer breaks data with daily totals (including running prayer breaks)
-  const prayerRows = prayerBreaks.map(p => {
-    let sessionSeconds = 0;
-    const isRunning = p.prayer_break_start && !p.prayer_break_end;
-    if (p.prayer_break_start) {
-      const start = toKarachiEpochMs(p.prayer_break_start);
-      const end = p.prayer_break_end ? toKarachiEpochMs(p.prayer_break_end) : toKarachiEpochMs(new Date(now));
-      if (start !== null && end !== null) {
-        sessionSeconds = Math.floor((end - start) / 1000);
-      }
-    }
-    const sessionExceed = sessionSeconds > 1800 ? sessionSeconds - 1800 : 0;
-    const key = getSessionGroupingKey(p, "prayer_break_start");
-    const dailySeconds = dailyPrayerTotals.get(key) || sessionSeconds;
-    const dailyExceed = dailySeconds > 1800 ? dailySeconds - 1800 : 0;
-    return {
-      ...p,
-      prayer_start_display: p.prayer_break_start ? getTimeStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : "",
-      prayer_end_display: p.prayer_break_end ? getTimeStringInTimeZone(p.prayer_break_end, SERVER_TIMEZONE) : (isRunning ? "🔴 Running" : ""),
-      total_prayer_time: formatDuration(sessionSeconds),
-      total_prayer_time_today: formatDuration(dailySeconds),
-      exceed: sessionExceed > 0 ? formatDuration(sessionExceed) : "",
-      exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-      // Show shift/session date for overnight readability (fallback to old behavior).
-      date_display: p.session_clock_in
-        ? getDateStringInTimeZone(p.session_clock_in, SERVER_TIMEZONE)
-        : p.date
-        ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE)
-        : (p.prayer_break_start ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : ""),
-      isRunning: isRunning
-    };
-  });
+  }, [attendance]);
 
   const downloadBreaksCSV = () => {
-    const headers = ["Employee ID", "Name", "Pseudo Name", "Department", "Date", "Break Start", "Break End", "Total Break Time", "Total Break", "Exceed", "Exceed Today"];
+    const headers = ["Employee ID", "Name", "Pseudo Name", "Department", "Date", "Break Start", "Break End", "Total Break Time", "Total Break", "Exceed Today"];
     let csv = headers.join(',') + '\n';
     breakRows.forEach(row => {
       const pseudo = row.pseudonym !== undefined ? row.pseudonym : (attendance && attendance[0]?.pseudonym ? attendance[0].pseudonym : '');
-      // Format date as yyyy-mm-dd for Excel compatibility
       const excelDate = row.date_display ? `${row.date_display} 00:00:00` : '';
-      csv += [row.employee_id, row.employee_name || row.name, pseudo, row.department_name, excelDate, row.break_start_display, row.break_end_display, row.total_break_time, row.total_break_time_today, row.exceed, row.exceed_today].map(val => `"${val}"`).join(',') + '\n';
+      csv += [row.employee_id, row.employee_name || row.name, pseudo, row.department_name, excelDate, row.break_start_display, row.break_end_display, row.total_break_time, row.total_break_time_today, row.exceed_today].map(val => `"${val}"`).join(',') + '\n';
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -374,11 +412,11 @@ export default function EmployeeTimePage() {
   };
 
   const downloadPrayerCSV = () => {
-    const headers = ["Employee ID", "Name", "Pseudo Name", "Department", "Date", "Prayer Start", "Prayer End", "Total Prayer Time", "Total Prayer", "Exceed", "Exceed Today"];
+    const headers = ["Employee ID", "Name", "Pseudo Name", "Department", "Date", "Prayer Start", "Prayer End", "Total Prayer Time", "Total Prayer", "Exceed Today"];
     let csv = headers.join(',') + '\n';
     prayerRows.forEach(row => {
       const pseudo = row.pseudonym !== undefined ? row.pseudonym : (attendance && attendance[0]?.pseudonym ? attendance[0].pseudonym : '');
-      csv += [row.employee_id, row.employee_name || row.name, pseudo, row.department_name, row.date_display, row.prayer_start_display, row.prayer_end_display, row.total_prayer_time, row.total_prayer_time_today, row.exceed, row.exceed_today].map(val => `"${val}"`).join(',') + '\n';
+      csv += [row.employee_id, row.employee_name || row.name, pseudo, row.department_name, row.date_display, row.prayer_start_display, row.prayer_end_display, row.total_prayer_time, row.total_prayer_time_today, row.exceed_today].map(val => `"${val}"`).join(',') + '\n';
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -397,7 +435,11 @@ export default function EmployeeTimePage() {
       const date = row.date ? getDateStringInTimeZone(row.date, SERVER_TIMEZONE) : "";
       const clockIn = row.clock_in ? getTimeStringInTimeZone(row.clock_in, SERVER_TIMEZONE) : "";
       const clockOut = row.clock_out ? getTimeStringInTimeZone(row.clock_out, SERVER_TIMEZONE) : "";
-      const totalHours = formatTotalHours(row.clock_in, row.clock_out);
+      const key = row.id ?? `${row.employee_id}-${row.clock_in}`;
+      const totalHours =
+        row.clock_in && !row.clock_out
+          ? formatTotalHours(row.clock_in, "", now)
+          : closedAttendanceHours.get(key) || formatTotalHours(row.clock_in, row.clock_out);
       const late = row.is_late ? `Late ${formatLateTime(row.late_minutes || 0)}` : "On Time";
       return {
         "Id": row.employee_id,
@@ -413,15 +455,15 @@ export default function EmployeeTimePage() {
     });
     const ws = XLSX.utils.json_to_sheet(data);
     ws['!cols'] = [
-      { wch: 10 }, // Employee ID
-      { wch: 22 }, // Name
-      { wch: 18 }, // Pseudo Name
-      { wch: 18 }, // Department
-      { wch: 22 }, // Date
-      { wch: 18 }, // Clock In
-      { wch: 18 }, // Clock Out
-      { wch: 16 }, // Total Hours
-      { wch: 14 }  // Late
+      { wch: 10 },
+      { wch: 22 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 22 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 14 }
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Attendance");
@@ -452,10 +494,12 @@ export default function EmployeeTimePage() {
 
   const employeePseudonym =
     breaks[0]?.pseudonym ||
+    prayerBreaks[0]?.pseudonym ||
     attendance[0]?.pseudonym ||
     null;
   const employeeDepartment =
     breaks[0]?.department_name ||
+    prayerBreaks[0]?.department_name ||
     attendance[0]?.department_name ||
     null;
   const employeeEmail = breaks[0]?.email || attendance[0]?.email || null;
@@ -477,19 +521,25 @@ export default function EmployeeTimePage() {
   const displayPseudonym = (row?: { pseudonym?: string | null }) =>
     row?.pseudonym || employeePseudonym || "—";
 
+  const loadingBox = (
+    <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
+      Loading...
+    </div>
+  );
+
   return (
     <div style={{ width: '100%', minHeight: '100vh', background: 'linear-gradient(180deg, #f4f6f9 0%, #eef1f6 100%)', padding: 0, margin: 0 }}>
       <div style={{ maxWidth: '100%', margin: '0 auto', padding: '0 16px 32px' }}>
         <h1 style={{ marginTop: "24px", marginBottom: "24px", color: "#0f172a", fontWeight: 700, fontSize: "1.75rem", letterSpacing: "-0.02em" }}>My Time & Attendance</h1>
 
         <div style={{ ...tabStyles, borderBottom: '2px solid #e2e8f0', background: '#fff', borderRadius: '12px 12px 0 0', padding: '8px 8px 0' }}>
-          <button style={tabButtonStyles(activeTab === "break")} onClick={() => setActiveTab("break")}> 
+          <button style={tabButtonStyles(activeTab === "break")} onClick={() => setActiveTab("break")}>
             Break Summary
           </button>
-          <button style={tabButtonStyles(activeTab === "prayer")} onClick={() => setActiveTab("prayer")}> 
+          <button style={tabButtonStyles(activeTab === "prayer")} onClick={() => setActiveTab("prayer")}>
             Prayer Break Summary
           </button>
-          <button style={tabButtonStyles(activeTab === "attendance")} onClick={() => setActiveTab("attendance")}> 
+          <button style={tabButtonStyles(activeTab === "attendance")} onClick={() => setActiveTab("attendance")}>
             Attendance Summary
           </button>
         </div>
@@ -517,6 +567,7 @@ export default function EmployeeTimePage() {
               </button>
             </div>
             <div className={styles.breakSummaryTableWrapper}>
+              {loadingBreaks ? loadingBox : (
               <table className={styles.breakSummaryTable}>
                 <thead>
                 <tr>
@@ -583,6 +634,7 @@ export default function EmployeeTimePage() {
                 )}
               </tbody>
             </table>
+              )}
           </div>
         </div>
         )}
@@ -610,6 +662,7 @@ export default function EmployeeTimePage() {
               </button>
             </div>
             <div className={styles.breakSummaryTableWrapper}>
+              {loadingPrayer ? loadingBox : (
               <table className={styles.breakSummaryTable}>
                 <thead>
                 <tr>
@@ -656,7 +709,7 @@ export default function EmployeeTimePage() {
                           <td>{p.date_display}</td>
                           <td>{p.prayer_start_display}</td>
                           <td>
-                            {p.prayer_break_start && !p.prayer_break_end ? (
+                            {p.isRunning ? (
                               <span className={styles.badgeRunning}>Running</span>
                             ) : (
                               p.prayer_end_display
@@ -665,7 +718,7 @@ export default function EmployeeTimePage() {
                           <td>{p.total_prayer_time}</td>
                           <td>{p.total_prayer_time_today}</td>
                           <td className={isLast && p.exceed_today ? styles.cellExceed : undefined}>
-                            {isLast ? p.exceed_today : ""}
+                            {isLast ? p.exceed_today || "—" : "—"}
                           </td>
                         </tr>
                       );
@@ -674,6 +727,7 @@ export default function EmployeeTimePage() {
                 )}
               </tbody>
             </table>
+              )}
           </div>
         </div>
         )}
@@ -701,6 +755,7 @@ export default function EmployeeTimePage() {
               </button>
             </div>
             <div className={styles.breakSummaryTableWrapper}>
+              {loadingAttendance ? loadingBox : (
               <table className={styles.breakSummaryTable}>
                 <thead>
                 <tr>
@@ -721,14 +776,13 @@ export default function EmployeeTimePage() {
                     <td colSpan={9} className={styles.breakSummaryNoRecords}>No records found.</td>
                   </tr>
                 ) : (
-                  attendance
-                    .sort((a, b) => {
-                      if (!a.clock_in && !b.clock_in) return 0;
-                      if (!a.clock_in) return 1;
-                      if (!b.clock_in) return -1;
-                      return (toKarachiEpochMs(b.clock_in) || 0) - (toKarachiEpochMs(a.clock_in) || 0);
-                    })
-                    .map((a, idx) => (
+                  attendance.map((a, idx) => {
+                    const rowKey = a.id ?? `${a.employee_id}-${a.clock_in}`;
+                    const isOpen = Boolean(a.clock_in && !a.clock_out);
+                    const totalHours = isOpen
+                      ? formatTotalHours(a.clock_in, "", now)
+                      : closedAttendanceHours.get(rowKey) || formatTotalHours(a.clock_in, a.clock_out);
+                    return (
                       <tr key={a.id || idx}>
                         <td className={styles.cellMuted}>{a.employee_id || employeeId}</td>
                         <td className={styles.nameCol}>
@@ -753,19 +807,17 @@ export default function EmployeeTimePage() {
                             <span className={styles.badgeRunning}>Running</span>
                           )}
                         </td>
-                        <td>
-                          {a.clock_in && !a.clock_out
-                            ? formatTotalHours(a.clock_in, "")
-                            : formatTotalHours(a.clock_in, a.clock_out)}
-                        </td>
+                        <td>{totalHours}</td>
                         <td className={a.is_late ? styles.cellExceed : undefined} style={a.is_late ? undefined : { color: "#007a5a", fontWeight: 600 }}>
                           {a.is_late ? `Late ${formatLateTime(a.late_minutes || 0)}` : "On Time"}
                         </td>
                       </tr>
-                    ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
+              )}
           </div>
         </div>
         )}

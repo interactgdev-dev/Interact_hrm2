@@ -333,6 +333,11 @@
   z-index: 1;
 }
 
+/* Keep widget mounted across routes — hide without tearing down timers/sync state */
+.attendanceDockHidden {
+  display: none !important;
+}
+
 .attendanceDockInner {
   max-width: 1320px;
   margin: 0 auto;

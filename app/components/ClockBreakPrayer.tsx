@@ -74,7 +74,7 @@ function formatDuration(seconds: number) {
 }
 
 // Compact widget combining Clock In/Out, Break, and Prayer controls
-export function ClockBreakPrayerWidget({
+export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget({
   employeeId,
   employeeName,
   variant = "default",
@@ -951,7 +951,7 @@ export function ClockBreakPrayerWidget({
       : null}
     </>
   );
-}
+});
 
 // Today's break totals for quick glance
 function BreakSummary({
@@ -977,13 +977,25 @@ function BreakSummary({
   const refreshTotals = React.useCallback(async () => {
     try {
       if (!employeeId) return;
-      const attendanceRes = await fetch(`/api/attendance?employeeId=${employeeId}`);
+      const today = getDateStringInTimeZone(new Date());
+      const [y, m, d] = today.split("-").map(Number);
+      const yest = new Date(Date.UTC(y, m - 1, d - 1));
+      const fromDate = `${yest.getUTCFullYear()}-${String(yest.getUTCMonth() + 1).padStart(2, "0")}-${String(yest.getUTCDate()).padStart(2, "0")}`;
+      const range = `fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(today)}`;
+
+      const [attendanceRes, breakRes] = await Promise.all([
+        fetch(`/api/attendance?employeeId=${encodeURIComponent(employeeId)}&${range}&summary=1`, {
+          cache: "no-store",
+        }),
+        fetch(`/api/breaks?employeeId=${encodeURIComponent(employeeId)}&${range}`, {
+          cache: "no-store",
+        }),
+      ]);
       const attendanceData = await attendanceRes.json();
+      const breakData = await breakRes.json();
       const attendanceRowsPre = Array.isArray(attendanceData?.attendance)
         ? attendanceData.attendance
         : [];
-      const breakRes = await fetch(`/api/breaks?employeeId=${employeeId}`);
-      const breakData = await breakRes.json();
 
       const breakRows =
         breakData.success && Array.isArray(breakData.breaks)

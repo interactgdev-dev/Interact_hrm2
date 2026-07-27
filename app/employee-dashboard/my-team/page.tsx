@@ -4,6 +4,7 @@ import React from "react";
 import { EmployeeAvatar } from "../../components/EmployeeAvatar";
 import {
   fetchEmployeeHierarchy,
+  peekEmployeeHierarchyCache,
   type EmployeeHierarchy,
   type HierarchyPerson,
 } from "../../employee-hierarchy-api";
@@ -54,7 +55,13 @@ export default function MyTeamPage() {
 
   React.useEffect(() => {
     if (!employeeId) return;
-    setLoading(true);
+    const cached = peekEmployeeHierarchyCache(employeeId);
+    if (cached !== undefined) {
+      setHierarchy(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     void fetchEmployeeHierarchy(employeeId)
       .then(setHierarchy)
       .finally(() => setLoading(false));

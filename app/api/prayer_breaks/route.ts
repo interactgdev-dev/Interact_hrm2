@@ -38,10 +38,19 @@ export async function GET(req: NextRequest) {
       throw new Error("Failed to get database connection from pool");
     }
     await ensureAttendanceTable(conn);
+    // One attendance lookup (not two identical subqueries). Datetime range keeps index usable.
     let query = `SELECT pb.*, e.pseudonym, d.name AS department_name,
       ec.email_work, ec.email_other,
-      sa.shift_name, sa.start_time, sa.end_time, sa.assigned_date
-      ,(
+      sa.shift_name, sa.start_time, sa.end_time, sa.assigned_date,
+      ea_sess.id AS attendance_session_id,
+      ea_sess.clock_in AS session_clock_in
+      FROM prayer_breaks pb
+      LEFT JOIN hrm_employees e ON pb.employee_id = e.id
+      LEFT JOIN employee_contacts ec ON e.id = ec.employee_id
+      LEFT JOIN employee_jobs j ON e.id = j.employee_id
+      LEFT JOIN departments d ON j.department_id = d.id
+      LEFT JOIN shift_assignments sa ON pb.shift_assignment_id = sa.id
+      LEFT JOIN ${ATTENDANCE_TABLE} ea_sess ON ea_sess.id = (
         SELECT ea.id
         FROM ${ATTENDANCE_TABLE} ea
         WHERE ea.employee_id = pb.employee_id
@@ -50,23 +59,7 @@ export async function GET(req: NextRequest) {
           AND (ea.clock_out IS NULL OR pb.prayer_break_start <= ea.clock_out)
         ORDER BY ea.clock_in DESC, ea.id DESC
         LIMIT 1
-      ) AS attendance_session_id
-      ,(
-        SELECT ea.clock_in
-        FROM ${ATTENDANCE_TABLE} ea
-        WHERE ea.employee_id = pb.employee_id
-          AND ea.clock_in IS NOT NULL
-          AND pb.prayer_break_start >= ea.clock_in
-          AND (ea.clock_out IS NULL OR pb.prayer_break_start <= ea.clock_out)
-        ORDER BY ea.clock_in DESC, ea.id DESC
-        LIMIT 1
-      ) AS session_clock_in
-      FROM prayer_breaks pb
-      LEFT JOIN hrm_employees e ON pb.employee_id = e.id
-      LEFT JOIN employee_contacts ec ON e.id = ec.employee_id
-      LEFT JOIN employee_jobs j ON e.id = j.employee_id
-      LEFT JOIN departments d ON j.department_id = d.id
-      LEFT JOIN shift_assignments sa ON pb.shift_assignment_id = sa.id
+      )
       WHERE 1=1`;
     const params: (string|number)[] = [];
     if (employeeId) {
@@ -74,17 +67,17 @@ export async function GET(req: NextRequest) {
       params.push(Number(employeeId));
     }
     if (date) {
-      query += " AND DATE(pb.prayer_break_start) = ?";
-      params.push(date);
+      query += " AND pb.prayer_break_start >= ? AND pb.prayer_break_start < DATE_ADD(?, INTERVAL 1 DAY)";
+      params.push(date, date);
     }
     if (fromDate && toDate) {
-      query += " AND DATE(pb.prayer_break_start) BETWEEN ? AND ?";
+      query += " AND pb.prayer_break_start >= ? AND pb.prayer_break_start < DATE_ADD(?, INTERVAL 1 DAY)";
       params.push(fromDate, toDate);
     } else if (fromDate) {
-      query += " AND DATE(pb.prayer_break_start) >= ?";
+      query += " AND pb.prayer_break_start >= ?";
       params.push(fromDate);
     } else if (toDate) {
-      query += " AND DATE(pb.prayer_break_start) <= ?";
+      query += " AND pb.prayer_break_start < DATE_ADD(?, INTERVAL 1 DAY)";
       params.push(toDate);
     }
     query += " ORDER BY pb.prayer_break_start DESC";

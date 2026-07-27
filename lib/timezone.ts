@@ -6,22 +6,47 @@ function toDate(value: DateInput) {
   return value instanceof Date ? value : new Date(value);
 }
 
+/** Reuse formatters — getParts is called on every clock tick and must stay cheap. */
+const partsFormatterByTz = new Map<string, Intl.DateTimeFormat>();
+const timeFormatterByTz = new Map<string, Intl.DateTimeFormat>();
+
+function getPartsFormatter(timeZone: string) {
+  let formatter = partsFormatterByTz.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    partsFormatterByTz.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+function getTimeFormatter(timeZone: string) {
+  let formatter = timeFormatterByTz.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    timeFormatterByTz.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 export function getParts(value: DateInput, timeZone: string = SERVER_TIMEZONE) {
   const date = toDate(value);
   if (Number.isNaN(date.getTime())) return null;
 
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(date);
+  const parts = getPartsFormatter(timeZone).formatToParts(date);
   const year = Number(parts.find((part) => part.type === "year")?.value);
   const month = Number(parts.find((part) => part.type === "month")?.value);
   const day = Number(parts.find((part) => part.type === "day")?.value);
@@ -54,12 +79,7 @@ export function getTimeStringInTimeZone(
   const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "";
 
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(date);
+  return getTimeFormatter(timeZone).format(date);
 }
 
 export function getTimeInMinutesInTimeZone(

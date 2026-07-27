@@ -29,23 +29,45 @@ function formatHeroDate() {
   });
 }
 
+/** Isolated so typing does not re-render ClockBreakPrayer / dashboard children. */
+function HeroSearch() {
+  const [searchQuery, setSearchQuery] = React.useState("");
+  return (
+    <label className={empStyles.heroSearch}>
+      <FaSearch className={empStyles.heroSearchIcon} aria-hidden />
+      <input
+        type="search"
+        className={empStyles.heroSearchInput}
+        placeholder="Search"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        aria-label="Search"
+      />
+    </label>
+  );
+}
+
 const employeeTabs = [
   { name: "Dashboard", path: "/employee-dashboard", icon: <FaTachometerAlt /> },
   { name: "My Team", path: "/employee-dashboard/my-team", icon: <FaUsers /> },
   { name: "My Info", path: "/employee-dashboard/my-info", icon: <FaUser /> },
 ];
 
-/** Routes where the clock/break widget stays mounted so Dashboard ↔ Time switches
- *  do not tear down timers, face-model preload, or attendance sync state. */
-const CLOCK_WIDGET_PATHS = new Set(["/employee-dashboard", "/employee-dashboard/time"]);
+/** Routes where the clock/break dock is visible. Widget stays mounted on all
+ *  employee routes so Dashboard ↔ Team ↔ Info ↔ Time does not remount sync/timers. */
+const CLOCK_WIDGET_VISIBLE_PATHS = new Set([
+  "/employee-dashboard",
+  "/employee-dashboard/time",
+]);
 
 export default function EmployeeDashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [employeeName, setEmployeeName] = React.useState<string>("");
   const [employeeId, setEmployeeId] = React.useState<string>("");
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const showClockBar = pathname != null && CLOCK_WIDGET_PATHS.has(pathname);
+  const showClockBar =
+    pathname != null && CLOCK_WIDGET_VISIBLE_PATHS.has(pathname);
   const isDashboardHome = pathname === "/employee-dashboard";
+  const isTimePage = pathname === "/employee-dashboard/time";
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -156,6 +178,11 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
                     ? `${styles.navItem} ${styles.navItemActive} ${empStyles.navItemPdf} ${empStyles.navItemPdfActive}`
                     : `${styles.navItem} ${empStyles.navItemPdf}`
                 }
+                onClick={(e) => {
+                  if (isActive) {
+                    e.preventDefault();
+                  }
+                }}
               >
                 <span className={`${styles.navIcon} ${empStyles.navIconPdf}`}>{tab.icon}</span>
                 <span>{tab.name}</span>
@@ -196,17 +223,7 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
                 </div>
 
                 <div className={empStyles.heroRight}>
-                  <label className={empStyles.heroSearch}>
-                    <FaSearch className={empStyles.heroSearchIcon} aria-hidden />
-                    <input
-                      type="search"
-                      className={empStyles.heroSearchInput}
-                      placeholder="Search"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      aria-label="Search"
-                    />
-                  </label>
+                  <HeroSearch />
                   <EmployeeProfileMenu
                     employeeId={employeeId}
                     onAvatarUpdated={(dataUrl) => setEmployeeAvatar(dataUrl)}
@@ -241,8 +258,11 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
           </div>
         )}
 
-        {showClockBar && employeeId ? (
-          <div className={empStyles.attendanceDock}>
+        {employeeId ? (
+          <div
+            className={`${empStyles.attendanceDock}${showClockBar ? "" : ` ${empStyles.attendanceDockHidden}`}`}
+            aria-hidden={!showClockBar}
+          >
             <div className={empStyles.attendanceDockInner}>
               <div className={empStyles.dockCard}>
                 <ClockBreakPrayerWidget
@@ -250,7 +270,7 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
                   employeeName={employeeName || "Employee"}
                   variant="slack"
                 />
-                {!isDashboardHome ? (
+                {isTimePage ? (
                   <div style={{ marginTop: 12 }}>
                     <TardyNoteWidget employeeId={employeeId} variant="slack" />
                   </div>

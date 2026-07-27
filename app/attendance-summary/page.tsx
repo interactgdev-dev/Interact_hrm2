@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import LayoutDashboard from "../layout-dashboard";
 import styles from "../break-summary/break-summary.module.css";
 import { EmployeeTableNameCell } from "../components/EmployeeTableNameCell";
@@ -21,11 +21,6 @@ import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
-}
-
-function getMonthStartDateString(date: Date = new Date()) {
-  const d = getDateStringInTimeZone(date, SERVER_TIMEZONE);
-  return `${d.slice(0, 7)}-01`;
 }
 
 function formatDateOnly(dateValue: string | null | undefined) {
@@ -95,11 +90,15 @@ function formatLateTime(minutes: number) {
 
 export default function AttendanceSummaryPage() {
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [department, setDepartment] = useState("");
-  const [fromDate, setFromDate] = useState(getMonthStartDateString());
-  const [toDate, setToDate] = useState(getLocalDateString());
+  /** Default: current day only — expand range when user picks dates */
+  const today = getLocalDateString();
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [importedSnapshot, setImportedSnapshot] = useState<ImportedAttendanceSummarySnapshot | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -127,43 +126,76 @@ export default function AttendanceSummaryPage() {
 
   useEffect(() => {
     if (showingImported) return;
-    const params = new URLSearchParams();
-    if (fromDate) params.append("fromDate", fromDate);
-    if (toDate) params.append("toDate", toDate);
-    const url = `/api/attendance${params.toString() ? `?${params.toString()}` : ""}`;
-
-    fetch(url)
+    const effectiveFrom = fromDate || toDate || today;
+    const effectiveTo = toDate || fromDate || today;
+    const params = new URLSearchParams({
+      fromDate: effectiveFrom,
+      toDate: effectiveTo,
+      summary: "1",
+    });
+    setLoading(true);
+    fetch(`/api/attendance?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         if (data.success) setAttendance(data.attendance || []);
         else setAttendance([]);
-      });
-  }, [fromDate, toDate, showingImported]);
+      })
+      .catch(() => setAttendance([]))
+      .finally(() => setLoading(false));
+  }, [fromDate, toDate, showingImported, today]);
 
   useEffect(() => {
     const hasOpen = attendance.some((a) => a.clock_in && !a.clock_out);
     if (!hasOpen) return;
-    const interval = setInterval(() => setNow(Date.now()), 1000);
+    // 5s is enough for live hours; 1s was re-rendering the whole table every tick
+    const interval = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(interval);
   }, [attendance]);
 
-  const rows = useMemo(() => {
-    if (showingImported && importedSnapshot) {
-      return filterImportedRows(importedSnapshot, fromDate, toDate, search, department);
-    }
+  const filteredLive = useMemo(() => {
+    if (showingImported) return [];
+    const term = deferredSearch.trim().toLowerCase();
     return attendance
       .filter((a) => {
-        const term = search.trim().toLowerCase();
         if (term) {
           const employeeName = (a.employee_name || "").toLowerCase();
           const pseudonym = (a.pseudonym || "").toLowerCase();
-          if (!employeeName.includes(term) && !pseudonym.includes(term)) return false;
+          const id = String(a.employee_id || "");
+          if (!employeeName.includes(term) && !pseudonym.includes(term) && !id.includes(term)) {
+            return false;
+          }
         }
         if (department && a.department_name !== department) return false;
         return true;
       })
       .sort(compareAttendanceRows);
-  }, [attendance, search, department, showingImported, importedSnapshot, fromDate, toDate]);
+  }, [attendance, deferredSearch, department, showingImported]);
+
+  /** Closed sessions: total hours fixed (no live clock). */
+  const closedDisplay = useMemo(() => {
+    const map = new Map<string | number, string>();
+    for (const a of filteredLive) {
+      if (!a.clock_in || !a.clock_out) continue;
+      const key = a.id ?? `${a.employee_id}-${a.clock_in}`;
+      map.set(key, formatTotalHours(a.clock_in, a.clock_out));
+    }
+    return map;
+  }, [filteredLive]);
+
+  const rows = useMemo(() => {
+    if (showingImported && importedSnapshot) {
+      return filterImportedRows(importedSnapshot, fromDate, toDate, deferredSearch, department);
+    }
+    return filteredLive;
+  }, [
+    showingImported,
+    importedSnapshot,
+    fromDate,
+    toDate,
+    deferredSearch,
+    department,
+    filteredLive,
+  ]);
 
   const downloadAttendanceCSV = () => {
     const headers = ["Id", "Full Name", "P.Name", "Department", "Date", "Clock In", "Clock Out", "Total Hours", "Late"];
@@ -188,7 +220,11 @@ export default function AttendanceSummaryPage() {
       const date = row.date ? getDateStringInTimeZone(row.date, SERVER_TIMEZONE) : "";
       const clockIn = row.clock_in ? getTimeStringInTimeZone(row.clock_in, SERVER_TIMEZONE) : "";
       const clockOut = row.clock_out ? getTimeStringInTimeZone(row.clock_out, SERVER_TIMEZONE) : "";
-      const totalHours = formatTotalHours(row.clock_in, row.clock_out, now);
+      const key = row.id ?? `${row.employee_id}-${row.clock_in}`;
+      const totalHours =
+        row.clock_in && !row.clock_out
+          ? formatTotalHours(row.clock_in, "", now)
+          : closedDisplay.get(key) || formatTotalHours(row.clock_in, row.clock_out, now);
       const late = row.is_late ? `Late ${formatLateTime(row.late_minutes || 0)}` : "On Time";
       csv += [
         row.employee_id,
@@ -255,7 +291,14 @@ export default function AttendanceSummaryPage() {
           </p>
         )}
         <div className={styles.breakSummaryFilters}>
-          <input type="text" placeholder="Search employee..." value={search} onChange={(e) => setSearch(e.target.value)} className={styles.breakSummaryInput} style={{ width: 220 }} />
+          <input
+            type="text"
+            placeholder="Search by name or pseudo name..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className={styles.breakSummaryInput}
+            style={{ width: 220 }}
+          />
           <select value={department} onChange={(e) => setDepartment(e.target.value)} className={styles.breakSummaryDate} style={{ width: 200 }}>
             <option value="">All Departments</option>
             {departments.map((dept: any) => (
@@ -294,6 +337,11 @@ export default function AttendanceSummaryPage() {
         </div>
 
         <div className={styles.breakSummaryTableWrapper}>
+          {loading && !showingImported ? (
+            <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
+              Loading...
+            </div>
+          ) : (
           <table className={styles.breakSummaryTable}>
             <thead>
               <tr>
@@ -361,6 +409,11 @@ export default function AttendanceSummaryPage() {
                       </tr>
                     );
                   }
+                  const rowKey = a.id ?? `${a.employee_id}-${a.clock_in}`;
+                  const isOpen = Boolean(a.clock_in && !a.clock_out);
+                  const totalHours = isOpen
+                    ? formatTotalHours(a.clock_in, "", now)
+                    : closedDisplay.get(rowKey) || formatTotalHours(a.clock_in, a.clock_out);
                   return (
                     <tr key={a.id || idx}>
                       <td className={styles.cellMuted}>{a.employee_id}</td>
@@ -386,11 +439,7 @@ export default function AttendanceSummaryPage() {
                           <span style={{ color: "#e67e22", fontWeight: 600 }}>Running...</span>
                         )}
                       </td>
-                      <td>
-                        {a.clock_in && !a.clock_out
-                          ? formatTotalHours(a.clock_in, "", now)
-                          : formatTotalHours(a.clock_in, a.clock_out, now)}
-                      </td>
+                      <td>{totalHours}</td>
                       <td style={{ color: a.is_late ? "#e74c3c" : "#27ae60", fontWeight: 600 }}>
                         {a.is_late ? `Late ${formatLateTime(a.late_minutes || 0)}` : "On Time"}
                       </td>
@@ -400,6 +449,7 @@ export default function AttendanceSummaryPage() {
               )}
             </tbody>
           </table>
+          )}
         </div>
       </div>
       {popup}
