@@ -1,0 +1,122 @@
+/* Today's Status — Clock / Break / Prayer stacked pills (dashboard mockup) */
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 0;
+  border-radius: 0;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  color: #fff;
+  box-shadow: none;
+  overflow: visible;
+  background: transparent !important;
+}
+
+.card::before,
+.card::after {
+  display: none !important;
+}
+
+.cardHeader {
+  display: none;
+}
+
+.clockRing {
+  display: none;
+}
+
+.btn {
+  width: 100%;
+  border: none;
+  border-radius: 999px;
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+}
+
+.btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.btnClockIn,
+.btnClockOut {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+}
+
+.btnBreak,
+.btnBreakEnd {
+  background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+}
+
+.btnPrayer,
+.btnPrayerEnd {
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+}
+
+.statusBox,
+.summaryBox {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+
+.statusBoxInner,
+.summaryBoxInner {
+  text-align: center;
+  padding: 2px 0 4px;
+}
+
+.statusLabel,
+.summaryLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  letter-spacing: 0.02em;
+}
+
+.statusTimer,
+.summaryValue {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.summaryExceed {
+  font-size: 11px;
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.cardBadge,
+.badgeLive,
+.titleIcon,
+.cardTitle {
+  display: none;
+}

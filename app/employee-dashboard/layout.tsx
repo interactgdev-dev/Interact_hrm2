@@ -1,8 +1,16 @@
 "use client";
 import React from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FaTachometerAlt, FaUser, FaUsers, FaSearch } from "react-icons/fa";
+import {
+  FaTachometerAlt,
+  FaUser,
+  FaUsers,
+  FaSearch,
+  FaTicketAlt,
+  FaCog,
+} from "react-icons/fa";
 import styles from "../layout-dashboard.module.css";
 import empStyles from "./emp-shell.module.css";
 import { ClockBreakPrayerWidget } from "../components/ClockBreakPrayer";
@@ -10,23 +18,29 @@ import { TardyNoteWidget } from "../components/TardyNoteWidget";
 import { fetchShellBranding } from "../shell-branding-api";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { EmployeeProfileMenu } from "./components/EmployeeProfileMenu";
-import { HeroProfileAvatar } from "./components/HeroProfileAvatar";
 import { InteractGlobeLogo } from "./components/InteractGlobeLogo";
 
 function greetingLabel() {
   const h = new Date().getHours();
-  if (h < 12) return "Good Morning";
-  if (h < 17) return "Good Afternoon";
-  return "Good Evening";
+  if (h < 12) return "Welcome Back";
+  if (h < 17) return "Welcome Back";
+  return "Welcome Back";
 }
 
-function formatHeroDate() {
-  return new Date().toLocaleDateString("en-US", {
+function formatHeroDateTime() {
+  const d = new Date();
+  const date = d.toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
     year: "numeric",
   });
+  const time = d.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return `${date} | ${time}`;
 }
 
 /** Isolated so typing does not re-render ClockBreakPrayer / dashboard children. */
@@ -48,9 +62,10 @@ function HeroSearch() {
 }
 
 const employeeTabs = [
-  { name: "Dashboard", path: "/employee-dashboard", icon: <FaTachometerAlt /> },
+  { name: "Employee Dashboard", path: "/employee-dashboard", icon: <FaTachometerAlt /> },
   { name: "My Team", path: "/employee-dashboard/my-team", icon: <FaUsers /> },
   { name: "My Info", path: "/employee-dashboard/my-info", icon: <FaUser /> },
+  { name: "Generate Ticket", path: "/employee-dashboard/generate-ticket", icon: <FaTicketAlt /> },
 ];
 
 /** Routes where the clock/break dock is visible. Widget stays mounted on all
@@ -64,10 +79,38 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   const pathname = usePathname();
   const [employeeName, setEmployeeName] = React.useState<string>("");
   const [employeeId, setEmployeeId] = React.useState<string>("");
+  const [heroDateTime, setHeroDateTime] = React.useState(formatHeroDateTime);
   const showClockBar =
     pathname != null && CLOCK_WIDGET_VISIBLE_PATHS.has(pathname);
   const isDashboardHome = pathname === "/employee-dashboard";
   const isTimePage = pathname === "/employee-dashboard/time";
+  const [todayStatusRoot, setTodayStatusRoot] = React.useState<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    const id = window.setInterval(() => setHeroDateTime(formatHeroDateTime()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isDashboardHome) {
+      setTodayStatusRoot(null);
+      return;
+    }
+    let cancelled = false;
+    const find = () => {
+      const el = document.getElementById("emp-today-status-root");
+      if (!cancelled) setTodayStatusRoot(el);
+      return Boolean(el);
+    };
+    if (find()) return;
+    const t = window.setInterval(() => {
+      if (find()) window.clearInterval(t);
+    }, 50);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, [isDashboardHome, children]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -140,9 +183,19 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     .slice(0, 2)
     .toUpperCase();
 
+  const clockWidget =
+    employeeId ? (
+      <ClockBreakPrayerWidget
+        employeeId={employeeId}
+        employeeName={employeeName || "Employee"}
+        variant={isDashboardHome && todayStatusRoot ? "todayStatus" : "slack"}
+      />
+    ) : null;
+
+  const usePortal = Boolean(isDashboardHome && todayStatusRoot && clockWidget);
+
   return (
-    <div className={`${styles.layout} ${empStyles.noTopbar}`}>
-      <div className={empStyles.topAccent} aria-hidden />
+    <div className={`${styles.layout} ${empStyles.noTopbar} ${empStyles.modernShell}`}>
       {sidebarOpen ? (
         <div
           className={styles.sidebarOverlay}
@@ -190,9 +243,18 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
             );
           })}
         </nav>
+
+        <div className={empStyles.sidebarFooter}>
+          <Link href="/employee-dashboard/my-info" className={`${styles.navItem} ${empStyles.navItemPdf}`}>
+            <span className={`${styles.navIcon} ${empStyles.navIconPdf}`}>
+              <FaCog />
+            </span>
+            <span>Settings</span>
+          </Link>
+        </div>
       </aside>
 
-      <div className={`${styles.contentArea} ${empStyles.contentFull}`}>
+      <div className={`${styles.contentArea} ${empStyles.contentFull} ${empStyles.contentModern}`}>
         {isDashboardHome ? (
           <div className={empStyles.heroStrip}>
             <div className={empStyles.heroStripInner}>
@@ -206,19 +268,12 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
                   >
                     &#9776;
                   </button>
-                  <div className={empStyles.heroAvatar}>
-                    <HeroProfileAvatar
-                      employeeId={employeeId}
-                      name={employeeName || "Employee"}
-                      initials={initials}
-                      photo={employeeAvatar}
-                      onAvatarUpdated={(url) => setEmployeeAvatar(url)}
-                    />
-                  </div>
                   <div className={empStyles.heroMain}>
-                    <p className={empStyles.heroKicker}>{greetingLabel()}</p>
-                    <h1 className={empStyles.heroTitle}>{employeeName || "Employee"}</h1>
-                    <span className={empStyles.heroDate}>{formatHeroDate()}</span>
+                    <h1 className={empStyles.heroTitle}>
+                      {greetingLabel()},{" "}
+                      <span className={empStyles.heroNameAccent}>{employeeName || "Employee"}!</span>
+                    </h1>
+                    <span className={empStyles.heroDate}>{heroDateTime}</span>
                   </div>
                 </div>
 
@@ -259,25 +314,27 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
         )}
 
         {employeeId ? (
-          <div
-            className={`${empStyles.attendanceDock}${showClockBar ? "" : ` ${empStyles.attendanceDockHidden}`}`}
-            aria-hidden={!showClockBar}
-          >
-            <div className={empStyles.attendanceDockInner}>
-              <div className={empStyles.dockCard}>
-                <ClockBreakPrayerWidget
-                  employeeId={employeeId}
-                  employeeName={employeeName || "Employee"}
-                  variant="slack"
-                />
-                {isTimePage ? (
-                  <div style={{ marginTop: 12 }}>
-                    <TardyNoteWidget employeeId={employeeId} variant="slack" />
-                  </div>
-                ) : null}
+          usePortal && todayStatusRoot ? (
+            createPortal(clockWidget, todayStatusRoot)
+          ) : (
+            <div
+              className={`${empStyles.attendanceDock}${
+                showClockBar && !isDashboardHome ? "" : ` ${empStyles.attendanceDockHidden}`
+              }`}
+              aria-hidden={!(showClockBar && !isDashboardHome)}
+            >
+              <div className={empStyles.attendanceDockInner}>
+                <div className={empStyles.dockCard}>
+                  {clockWidget}
+                  {isTimePage ? (
+                    <div style={{ marginTop: 12 }}>
+                      <TardyNoteWidget employeeId={employeeId} variant="slack" />
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
-          </div>
+          )
         ) : null}
 
         <main className={`${styles.main} ${empStyles.employeeMain}`}>{children}</main>

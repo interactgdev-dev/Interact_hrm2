@@ -1,39 +1,40 @@
 /* Employee shell — PDF layout (teal top accent, no old top bar) */
 
 .topAccent {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 28px;
-  z-index: 1200;
-  pointer-events: none;
-  background: linear-gradient(90deg, #00c2cb 0%, #1ab4bc 45%, #35aaae 100%);
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.18);
+  display: none;
 }
 
 .noTopbar {
-  padding-top: 28px !important;
+  padding-top: 0 !important;
 }
 
 .sidebarFull {
-  height: calc(100vh - 28px) !important;
-  max-height: calc(100vh - 28px) !important;
-  top: 28px !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  top: 0 !important;
 }
 
 .contentFull {
-  min-height: calc(100vh - 28px) !important;
-  max-height: calc(100vh - 28px) !important;
+  min-height: 100vh !important;
+  max-height: 100vh !important;
 }
 
-/* PDF sidebar look */
+.modernShell {
+  background: #e8f4f8;
+}
+
+.contentModern {
+  background: linear-gradient(165deg, #e8f6fa 0%, #eef5fb 45%, #f3f6fa 100%);
+}
+
 .sidebarPdf {
-  background: #292929 !important;
+  background: #1a1d24 !important;
   border-right: none !important;
-  box-shadow: none !important;
+  box-shadow: 8px 0 32px rgba(15, 23, 42, 0.12) !important;
   width: 240px !important;
   padding-top: 8px !important;
+  display: flex !important;
+  flex-direction: column !important;
 }
 
 .sidebarBrand {
@@ -155,25 +156,26 @@
 .sidebarFooter {
   margin-top: auto;
   width: 100%;
-  padding: 12px 14px 16px;
+  padding: 12px 8px 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-sizing: border-box;
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 4px;
 }
 
-/* ── Hero (PDF header card) ─────────────────────────────────── */
+/* ── Hero (modern welcome) ─────────────────────────────────── */
 .heroStrip {
   flex-shrink: 0;
-  background: #f3f4f6;
-  padding: 18px 28px 0;
+  background: transparent;
+  padding: 22px 28px 0;
   position: relative;
   z-index: 40;
   overflow: visible;
 }
 
 .heroStripInner {
-  max-width: 1320px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -184,12 +186,11 @@
   justify-content: space-between;
   gap: 24px;
   flex-wrap: wrap;
-  padding: 22px 26px;
-  background: #fff;
-  border-radius: 16px;
-  border: 1px solid #b8e8ea;
-  border-left: 6px solid #5ad1d5;
-  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04);
+  padding: 8px 4px 4px;
+  background: transparent;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
   overflow: visible;
 }
 
@@ -200,46 +201,33 @@
   min-width: 0;
 }
 
-.heroAvatar {
-  flex-shrink: 0;
-}
-
-.heroAvatarSquare {
-  border-radius: 14px !important;
-  box-shadow: 0 0 0 2px #b8e8ea;
-}
-
 .heroMain {
   min-width: 0;
 }
 
-.heroKicker {
-  margin: 0 0 4px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
 .heroTitle {
   margin: 0;
-  font-size: 24px;
+  font-size: clamp(1.45rem, 2.2vw, 1.85rem);
   font-weight: 800;
   letter-spacing: -0.03em;
   color: #0f172a;
-  line-height: 1.15;
+  line-height: 1.2;
+}
+
+.heroNameAccent {
+  color: #0d9488;
 }
 
 .heroDate {
-  display: inline-flex;
-  align-items: center;
-  margin-top: 10px;
-  padding: 6px 14px;
-  font-size: 12px;
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  font-size: 13px;
   font-weight: 500;
-  color: #0f172a;
-  background: #dffbec;
-  border-radius: 999px;
-  text-transform: capitalize;
+  color: #64748b;
+  background: transparent;
+  border-radius: 0;
+  text-transform: none;
 }
 
 .heroRight {
@@ -249,7 +237,7 @@
   justify-content: flex-end;
   gap: 10px;
   min-width: 0;
-  max-width: 560px;
+  max-width: 420px;
   margin-left: auto;
   position: relative;
   z-index: 50;
@@ -261,12 +249,18 @@
   gap: 10px;
   flex: 1 1 auto;
   min-width: 0;
-  height: 44px;
+  height: 46px;
   padding: 0 16px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 999px;
   box-sizing: border-box;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+  transition: box-shadow 0.2s ease;
+}
+
+.heroSearch:focus-within {
+  box-shadow: 0 6px 20px rgba(13, 148, 136, 0.12);
 }
 
 .heroSearchIcon {
@@ -311,7 +305,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 14px 28px 0;
-  background: #f3f4f6;
+  background: transparent;
 }
 
 .subPageProfile {

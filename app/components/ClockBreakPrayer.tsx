@@ -3,7 +3,8 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import './ClockBreakPrayerFade.css';
-import slackStyles from './clock-widgets-slack.module.css';
+import slackStylesDefault from './clock-widgets-slack.module.css';
+import todayStyles from './clock-widgets-today.module.css';
 import modalStyles from './clock-break-prayer-modals.module.css';
 import { PrayerButton } from "./PrayerButton";
 import {
@@ -81,9 +82,10 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
 }: {
   employeeId: string;
   employeeName: string;
-  variant?: "default" | "slack";
+  variant?: "default" | "slack" | "todayStatus";
 }) {
-  const isSlack = variant === "slack";
+  const isSlack = variant === "slack" || variant === "todayStatus";
+  const slackStyles = variant === "todayStatus" ? todayStyles : slackStylesDefault;
   const [isPrayerOn, setIsPrayerOn] = React.useState(false);
   const [prayerStart, setPrayerStart] = React.useState<Date | null>(null);
   const [isOnBreak, setIsOnBreak] = React.useState(false);
@@ -963,9 +965,10 @@ function BreakSummary({
   employeeId: string;
   isOnBreak?: boolean;
   liveBreakSeconds?: number;
-  variant?: "default" | "slack";
+  variant?: "default" | "slack" | "todayStatus";
 }) {
-  const isSlack = variant === "slack";
+  const isSlack = variant === "slack" || variant === "todayStatus";
+  const slackStyles = variant === "todayStatus" ? todayStyles : slackStylesDefault;
   const [completedBreakSeconds, setCompletedBreakSeconds] = React.useState(0);
   // Removed prayer totals from BreakSummary; shown in Prayer widget instead
 

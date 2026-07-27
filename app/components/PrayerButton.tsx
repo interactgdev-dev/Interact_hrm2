@@ -2,7 +2,8 @@
 import React from "react";
 import type { BiometricAction } from "@/lib/face-types";
 import { getDateStringInTimeZone } from "../../lib/timezone";
-import slackStyles from "./clock-widgets-slack.module.css";
+import slackStylesDefault from "./clock-widgets-slack.module.css";
+import todayStyles from "./clock-widgets-today.module.css";
 import {
   ATTENDANCE_DATA_CHANGED,
   PRAYER_DATA_CHANGED,
@@ -52,7 +53,7 @@ interface PrayerButtonProps {
   bioStatusLoading?: boolean;
   /** Stop server-sync interval after ending prayer (parent refresh uses Map-based intervals). */
   onClearServerPrayerInterval?: () => void;
-  variant?: "default" | "slack";
+  variant?: "default" | "slack" | "todayStatus";
 }
 
 export function PrayerButton({
@@ -74,7 +75,8 @@ export function PrayerButton({
   onClearServerPrayerInterval,
   variant = "default",
 }: PrayerButtonProps) {
-  const isSlack = variant === "slack";
+  const isSlack = variant === "slack" || variant === "todayStatus";
+  const slackStyles = variant === "todayStatus" ? todayStyles : slackStylesDefault;
   const [prayerActionPending, setPrayerActionPending] = React.useState(false);
 
   const handlePrayerStart = async (biometricToken: string | null = null) => {
@@ -267,9 +269,10 @@ function PrayerTotals({
   employeeId: string;
   isPrayerOn?: boolean;
   livePrayerSeconds?: number;
-  variant?: "default" | "slack";
+  variant?: "default" | "slack" | "todayStatus";
 }) {
-  const isSlack = variant === "slack";
+  const isSlack = variant === "slack" || variant === "todayStatus";
+  const slackStyles = variant === "todayStatus" ? todayStyles : slackStylesDefault;
   const [completedPrayerSeconds, setCompletedPrayerSeconds] = React.useState(0);
 
   const displayTotalSeconds =
