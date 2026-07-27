@@ -13,7 +13,6 @@ import {
 import styles from "../layout-dashboard.module.css";
 import empStyles from "./emp-shell.module.css";
 import { ClockBreakPrayerWidget } from "../components/ClockBreakPrayer";
-import { TardyNoteWidget } from "../components/TardyNoteWidget";
 import { fetchShellBranding } from "../shell-branding-api";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { EmployeeProfileMenu } from "./components/EmployeeProfileMenu";
@@ -67,11 +66,10 @@ const employeeTabs = [
   { name: "Generate Ticket", path: "/employee-dashboard/generate-ticket", icon: <FaTicketAlt /> },
 ];
 
-/** Routes where the clock/break dock is visible. Widget stays mounted on all
- *  employee routes so Dashboard ↔ Team ↔ Info ↔ Time does not remount sync/timers. */
+/** Clock/Break/Prayer stays mounted off-dashboard in a hidden dock so timers
+ *  don’t remount when navigating. Visible only on dashboard home (portal). */
 const CLOCK_WIDGET_VISIBLE_PATHS = new Set([
   "/employee-dashboard",
-  "/employee-dashboard/time",
 ]);
 
 export default function EmployeeDashboardLayout({ children }: { children: React.ReactNode }) {
@@ -82,7 +80,6 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   const showClockBar =
     pathname != null && CLOCK_WIDGET_VISIBLE_PATHS.has(pathname);
   const isDashboardHome = pathname === "/employee-dashboard";
-  const isTimePage = pathname === "/employee-dashboard/time";
   const [todayStatusRoot, setTodayStatusRoot] = React.useState<HTMLElement | null>(null);
 
   React.useEffect(() => {
@@ -319,11 +316,6 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
               <div className={empStyles.attendanceDockInner}>
                 <div className={empStyles.dockCard}>
                   {clockWidget}
-                  {isTimePage ? (
-                    <div style={{ marginTop: 12 }}>
-                      <TardyNoteWidget employeeId={employeeId} variant="slack" />
-                    </div>
-                  ) : null}
                 </div>
               </div>
             </div>
