@@ -76,6 +76,7 @@ const PREFETCH_PATHS = [
   "/employee-dashboard/my-info",
   "/employee-dashboard/generate-ticket",
   "/employee-dashboard/time",
+  "/employee-dashboard/attendance",
 ];
 
 export default function EmployeeDashboardLayout({ children }: { children: React.ReactNode }) {

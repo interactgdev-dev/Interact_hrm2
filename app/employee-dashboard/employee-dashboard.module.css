@@ -148,6 +148,23 @@
   font-weight: 650;
 }
 
+.attStatBtn {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 8px;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.attStatBtn:hover {
+  opacity: 0.9;
+}
+
 .dot {
   width: 8px;
   height: 8px;

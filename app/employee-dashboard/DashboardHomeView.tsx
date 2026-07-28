@@ -197,10 +197,14 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
                   <span className={`${styles.dot} ${styles.dotBlue}`} />
                   {monthAttendanceStats.present} Days Present
                 </div>
-                <div className={styles.attStat}>
+                <button
+                  type="button"
+                  className={`${styles.attStat} ${styles.attStatBtn}`}
+                  onClick={() => onNavigate("/employee-dashboard/attendance?filter=absent")}
+                >
                   <span className={`${styles.dot} ${styles.dotRed}`} />
                   {monthAttendanceStats.absent} Absent
-                </div>
+                </button>
               </div>
             </div>
           </article>
