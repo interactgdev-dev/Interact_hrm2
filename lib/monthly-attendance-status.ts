@@ -489,16 +489,7 @@ export function classifyDayAttendance(params: {
     return { statusLabel: "On Time", isLate: false, lateMinutes: 0 };
   }
 
-  // Tardy uses monthly count; 1st/2nd-Half Day = 50% deduction.
-  // Low hours already handled as Absent above — do not mark 2h day as Tardy.
-  if (late.isLate) {
-    return {
-      statusLabel: "Tardy",
-      isLate: true,
-      lateMinutes: late.lateMinutes,
-    };
-  }
-
+  // Hours-first: half-day worked time beats late/Tardy (HR: status follows hours, not clock-in late).
   if (shiftStart && shiftEnd) {
     const halfType = classifyHalfDayType({
       dateKey,
@@ -514,12 +505,24 @@ export function classifyDayAttendance(params: {
       return { statusLabel: halfType, isLate: false, lateMinutes: 0 };
     }
   }
+  if (isWorkedHoursInHalfDayBand(worked, effectiveShiftSeconds)) {
+    return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
+  }
+
+  // Full-ish day: then late → Tardy
+  if (late.isLate) {
+    return {
+      statusLabel: "Tardy",
+      isLate: true,
+      lateMinutes: late.lateMinutes,
+    };
+  }
 
   if (worked >= shiftSeconds * 0.88) {
     return { statusLabel: "On Time", isLate: false, lateMinutes: 0 };
   }
 
-  if (worked < shiftSeconds / 2 * 0.85) {
+  if (worked < (shiftSeconds / 2) * 0.85) {
     return { statusLabel: "Absent", isLate: false, lateMinutes: 0 };
   }
 
