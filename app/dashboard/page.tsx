@@ -344,7 +344,10 @@ export default function DashboardPage() {
       const res = await fetch("/api/employee-list", { cache: "no-store" });
       const data = await res.json();
       if (data?.success && data.employees) {
-        const employeeCount = data.employees.length;
+        const employeeCount = data.employees.filter((emp: any) => {
+          const status = String(emp?.status || "").toLowerCase();
+          return status === "active" || status === "enabled";
+        }).length;
         setStats((prev) => [
           { label: "Employees", value: employeeCount.toString(), badge: "Team size" },
           prev[1],
