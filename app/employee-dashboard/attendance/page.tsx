@@ -114,7 +114,7 @@ function formatClock(value: string | null | undefined) {
 
 function AttendancePageInner() {
   const searchParams = useSearchParams();
-  const initialFilter = (searchParams.get("filter") || "absent").toLowerCase();
+  const initialFilter = (searchParams?.get("filter") || "absent").toLowerCase();
   const [filter, setFilter] = useState<FilterTab>(
     initialFilter === "present" ? "present" : "absent"
   );
