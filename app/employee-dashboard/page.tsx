@@ -1,7 +1,6 @@
 "use client";
 
 import { fetchShellBranding } from "../shell-branding-api";
-import { fetchEmployeeHierarchy, type HierarchyPerson } from "../employee-hierarchy-api";
 import DashboardHomeView from "./DashboardHomeView";
 import {
   getLastAdminMessage,
@@ -18,6 +17,11 @@ import {
   getParts,
   SERVER_TIMEZONE,
 } from "../../lib/timezone";
+import {
+  aggregateDayPunches,
+  classifyDayAttendance,
+} from "../../lib/monthly-attendance-status";
+import { normalizeAttendanceStatus } from "../../lib/attendance-status";
 import { useRouter } from "next/navigation";
 import React from "react";
 
@@ -28,6 +32,9 @@ type AttendanceRow = {
   clock_out?: string | null;
   is_late?: boolean;
   late_minutes?: number;
+  gender?: string | null;
+  shift_start_time?: string | null;
+  shift_end_time?: string | null;
 };
 
 type DayChart = {
@@ -76,6 +83,33 @@ function weekdayIndexKarachi(dateKey: string): number {
     weekday: "short",
   }).format(instant);
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(label);
+}
+
+/** Same rule as admin Monthly Attendance (calendar override, else Mon–Fri UTC). */
+function isMonthlyWorkingDay(
+  dateKey: string,
+  calendarOverrides: Record<string, { status?: string }>
+): boolean {
+  if (!dateKey) return false;
+  const override = calendarOverrides[dateKey];
+  if (override) return String(override.status || "").toLowerCase() === "working";
+  const [yearStr, monthStr, dayStr] = dateKey.split("-");
+  const year = Number(yearStr);
+  const monthIndex = Number(monthStr) - 1;
+  const day = Number(dayStr);
+  if (!year || monthIndex < 0 || !day) return false;
+  const date = new Date(Date.UTC(year, monthIndex, day));
+  const weekday = date.getUTCDay();
+  return weekday !== 0 && weekday !== 6;
+}
+
+function toLeaveDateKey(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return value.slice(0, 10);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return getDateStringInTimeZone(value, SERVER_TIMEZONE) || "";
+  }
+  return String(value).slice(0, 10);
 }
 
 /** Mon → Fri of the work week containing anchorKey (Karachi). */
@@ -171,6 +205,12 @@ export default function EmployeeDashboardPage() {
   const [eventsMonthOffset, setEventsMonthOffset] = React.useState(0);
   const eventsYearRef = React.useRef(new Date().getFullYear());
   const [attendance, setAttendance] = React.useState<AttendanceRow[]>([]);
+  const [calendarOverrides, setCalendarOverrides] = React.useState<
+    Record<string, { date: string; status?: string }>
+  >({});
+  const [approvedLeaveKeys, setApprovedLeaveKeys] = React.useState<Set<string>>(
+    () => new Set()
+  );
   const [leaveBalance, setLeaveBalance] = React.useState<LeaveBalance>({
     annual: 0,
     annualAllowance: 20,
@@ -183,22 +223,12 @@ export default function EmployeeDashboardPage() {
   const [reminders, setReminders] = React.useState<
     Array<{ id: number; message: string }>
   >([]);
-  const [teamMembers, setTeamMembers] = React.useState<HierarchyPerson[]>([]);
   const [tickets, setTickets] = React.useState<TicketWidgetRow[]>([]);
   const [loadingTickets, setLoadingTickets] = React.useState(false);
   const [ticketPulseIds, setTicketPulseIds] = React.useState<number[]>([]);
   const [ticketSeenMap, setTicketSeenMap] = React.useState<Record<number, string>>({});
   const ticketsRef = React.useRef<TicketWidgetRow[]>([]);
   const ticketTimerRef = React.useRef<number | null>(null);
-  const [liveClock, setLiveClock] = React.useState(() =>
-    new Date().toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true,
-      timeZone: SERVER_TIMEZONE,
-    })
-  );
   const [employeeName, setEmployeeName] = React.useState("Employee");
   const [profilePhoto, setProfilePhoto] = React.useState<string | null>(null);
   const [profileContact, setProfileContact] = React.useState<{
@@ -247,23 +277,6 @@ export default function EmployeeDashboardPage() {
     setEmployeeId(empId);
     setEmployeeName(localStorage.getItem("employeeName") || "Employee");
     if (empId) setTicketSeenMap(loadTicketSeenMap(empId));
-  }, []);
-
-  React.useEffect(() => {
-    const tick = () => {
-      setLiveClock(
-        new Date().toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: true,
-          timeZone: SERVER_TIMEZONE,
-        })
-      );
-    };
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
   }, []);
 
   React.useEffect(() => {
@@ -362,6 +375,50 @@ export default function EmployeeDashboardPage() {
     }
   }, [employeeId]);
 
+  const fetchMonthAbsentContext = React.useCallback(async () => {
+    if (!employeeId) return;
+    const today = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
+    const month = today.slice(0, 7);
+    const monthStart = `${month}-01`;
+    try {
+      const [calRes, leaveRes] = await Promise.all([
+        fetch(`/api/calendar?month=${encodeURIComponent(month)}`, { cache: "no-store" }),
+        fetch(
+          `/api/leaves?employees=${encodeURIComponent(employeeId)}&status=approved&fromDate=${monthStart}&toDate=${today}`,
+          { cache: "no-store" }
+        ),
+      ]);
+      const calData = await calRes.json().catch(() => null);
+      const leaveData = await leaveRes.json().catch(() => null);
+
+      if (calData?.success) {
+        const map: Record<string, { date: string; status?: string }> = {};
+        (calData.days || []).forEach((d: { date: string; status?: string }) => {
+          if (d?.date) map[d.date] = d;
+        });
+        setCalendarOverrides(map);
+      }
+
+      const keys = new Set<string>();
+      if (leaveData?.success && Array.isArray(leaveData.leaves)) {
+        for (const leave of leaveData.leaves) {
+          const start = toLeaveDateKey(leave.start_date);
+          const end = toLeaveDateKey(leave.end_date) || start;
+          if (!start) continue;
+          let cursor = start;
+          for (let i = 0; i < 62; i++) {
+            if (cursor >= monthStart && cursor <= today) keys.add(cursor);
+            if (cursor >= end) break;
+            cursor = addDaysToDateKey(cursor, 1);
+          }
+        }
+      }
+      setApprovedLeaveKeys(keys);
+    } catch (err) {
+      console.error("month absent context fetch", err);
+    }
+  }, [employeeId]);
+
   const fetchLeaveBalance = React.useCallback(async () => {
     if (!employeeId) return;
     try {
@@ -415,15 +472,12 @@ export default function EmployeeDashboardPage() {
 
   React.useEffect(() => {
     if (!employeeId) return;
-    // Attendance first (hours chart) — rest deferred so route paint stays snappy
+    // Attendance first — rest deferred so route paint stays snappy
     void fetchAttendance();
+    void fetchMonthAbsentContext();
     const runSecondary = () => {
       void fetchLeaveBalance();
       void fetchTickets();
-      void fetchEmployeeHierarchy(employeeId).then((data) => {
-        if (!data) return;
-        setTeamMembers(data.teamMembers);
-      });
     };
     let idleId: number | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -438,7 +492,7 @@ export default function EmployeeDashboardPage() {
       }
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [employeeId, fetchAttendance, fetchLeaveBalance, fetchTickets]);
+  }, [employeeId, fetchAttendance, fetchMonthAbsentContext, fetchLeaveBalance, fetchTickets]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -454,7 +508,10 @@ export default function EmployeeDashboardPage() {
           const msg = JSON.parse(evt.data.toString());
           if (msg?.type === "events_updated") fetchEvents(eventsYearRef.current);
           if (msg?.type === "reminders_updated") fetchReminders();
-          if (msg?.type === "leave_update") fetchLeaveBalance();
+          if (msg?.type === "leave_update") {
+            fetchLeaveBalance();
+            void fetchMonthAbsentContext();
+          }
           if (msg?.type === "ticket_update" || msg?.type === "ticket_created") {
             void fetchTickets({ silent: true });
           }
@@ -478,7 +535,7 @@ export default function EmployeeDashboardPage() {
       if (timeoutId) clearTimeout(timeoutId);
       ws?.close();
     };
-  }, [fetchEvents, fetchReminders, fetchLeaveBalance, fetchTickets]);
+  }, [fetchEvents, fetchReminders, fetchLeaveBalance, fetchMonthAbsentContext, fetchTickets]);
 
   React.useEffect(() => {
     const onAttendance = () => {
@@ -571,26 +628,77 @@ export default function EmployeeDashboardPage() {
     return count;
   }, [attendanceByDate, monthStart, todayKey]);
 
+  const attendanceRecordsByDate = React.useMemo(() => {
+    const map = new Map<string, AttendanceRow[]>();
+    attendance.forEach((row) => {
+      const key = recordDateKey(row);
+      if (!key) return;
+      const list = map.get(key);
+      if (list) list.push(row);
+      else map.set(key, [row]);
+    });
+    return map;
+  }, [attendance]);
+
   const monthAttendanceStats = React.useMemo(() => {
     let present = 0;
     let absent = 0;
     const y = todayParts.year;
     const m = todayParts.month;
+
     for (let d = 1; d <= todayParts.day; d++) {
       const key = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      const wd = weekdayIndexKarachi(key);
-      if (wd === 0 || wd === 6) continue;
-      const row = attendanceByDate.get(key);
-      if (!row?.clock_in) {
-        if (key < todayKey) absent++;
+      if (!isMonthlyWorkingDay(key, calendarOverrides)) continue;
+      if (approvedLeaveKeys.has(key)) continue;
+
+      const dayRecords = attendanceRecordsByDate.get(key) || [];
+      const isPast = key < todayKey;
+      const isToday = key === todayKey;
+
+      // Future days never count. Today: present only if punched; never absent yet.
+      if (!isPast && !isToday) continue;
+
+      if (dayRecords.length === 0) {
+        if (isPast) absent++;
         continue;
       }
-      present++;
+
+      const { clockIn, clockOut, record } = aggregateDayPunches(dayRecords);
+      if (!clockIn) {
+        if (isPast) absent++;
+        continue;
+      }
+
+      const dayStatus = classifyDayAttendance({
+        dateKey: key,
+        clockIn,
+        clockOut,
+        shiftStart: record?.shift_start_time ?? null,
+        shiftEnd: record?.shift_end_time ?? null,
+        gender: record?.gender ?? null,
+      });
+      const status = normalizeAttendanceStatus(dayStatus.statusLabel);
+
+      if (status === "Absent") {
+        if (isPast) absent++;
+      } else {
+        present++;
+      }
     }
+
     const total = present + absent;
     const pct = total > 0 ? Math.round((present / total) * 100) : 0;
     return { present, absent, pct };
-  }, [attendanceByDate, todayParts.year, todayParts.month, todayParts.day, todayKey, liveTick]);
+  }, [
+    attendanceRecordsByDate,
+    calendarOverrides,
+    approvedLeaveKeys,
+    todayParts.year,
+    todayParts.month,
+    todayParts.day,
+    todayKey,
+    liveTick,
+  ]);
 
   const clockedInLabel = React.useMemo(() => {
     if (!todayRecord?.clock_in) return "Not clocked in yet";
@@ -802,7 +910,6 @@ export default function EmployeeDashboardPage() {
       profilePhoto={profilePhoto}
       onAvatarUpdated={(url) => setProfilePhoto(url)}
       profileContact={profileContact}
-      liveClock={liveClock}
       clockedInLabel={clockedInLabel}
       monthAttendanceStats={monthAttendanceStats}
       leaveBalance={leaveBalance}

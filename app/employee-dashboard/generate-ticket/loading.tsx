@@ -1,4 +1,4 @@
-export default function EmployeeDashboardLoading() {
+export default function GenerateTicketLoading() {
   return (
     <div
       style={{

@@ -1,4 +1,4 @@
-export default function EmployeeDashboardLoading() {
+export default function MyInfoLoading() {
   return (
     <div
       style={{

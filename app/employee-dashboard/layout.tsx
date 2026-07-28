@@ -1,8 +1,9 @@
 "use client";
 import React from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   FaTachometerAlt,
   FaUser,
@@ -12,16 +13,19 @@ import {
 } from "react-icons/fa";
 import styles from "../layout-dashboard.module.css";
 import empStyles from "./emp-shell.module.css";
-import { ClockBreakPrayerWidget } from "../components/ClockBreakPrayer";
 import { fetchShellBranding } from "../shell-branding-api";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { EmployeeProfileMenu } from "./components/EmployeeProfileMenu";
 import { InteractGlobeLogo } from "./components/InteractGlobeLogo";
 
+/** Heavy clock/biometric UI — load only when dashboard home needs it. */
+const ClockBreakPrayerWidget = dynamic(
+  () =>
+    import("../components/ClockBreakPrayer").then((m) => m.ClockBreakPrayerWidget),
+  { ssr: false }
+);
+
 function greetingLabel() {
-  const h = new Date().getHours();
-  if (h < 12) return "Welcome Back";
-  if (h < 17) return "Welcome Back";
   return "Welcome Back";
 }
 
@@ -66,19 +70,20 @@ const employeeTabs = [
   { name: "Generate Ticket", path: "/employee-dashboard/generate-ticket", icon: <FaTicketAlt /> },
 ];
 
-/** Clock/Break/Prayer stays mounted off-dashboard in a hidden dock so timers
- *  don’t remount when navigating. Visible only on dashboard home (portal). */
-const CLOCK_WIDGET_VISIBLE_PATHS = new Set([
+const PREFETCH_PATHS = [
   "/employee-dashboard",
-]);
+  "/employee-dashboard/my-team",
+  "/employee-dashboard/my-info",
+  "/employee-dashboard/generate-ticket",
+  "/employee-dashboard/time",
+];
 
 export default function EmployeeDashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [employeeName, setEmployeeName] = React.useState<string>("");
   const [employeeId, setEmployeeId] = React.useState<string>("");
   const [heroDateTime, setHeroDateTime] = React.useState(formatHeroDateTime);
-  const showClockBar =
-    pathname != null && CLOCK_WIDGET_VISIBLE_PATHS.has(pathname);
   const isDashboardHome = pathname === "/employee-dashboard";
   const [todayStatusRoot, setTodayStatusRoot] = React.useState<HTMLElement | null>(null);
 
@@ -87,8 +92,18 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     return () => window.clearInterval(id);
   }, []);
 
-  // Portal target lives in page children; loading.tsx has no #emp-today-status-root.
-  // Keep watching until (and whenever) the home view mounts the slot.
+  // Warm route JS so sidebar clicks switch immediately after refresh.
+  React.useEffect(() => {
+    for (const path of PREFETCH_PATHS) {
+      try {
+        router.prefetch(path);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [router]);
+
+  // Portal target lives in page children; keep watching until home view mounts the slot.
   React.useLayoutEffect(() => {
     if (!isDashboardHome) {
       setTodayStatusRoot(null);
@@ -162,15 +177,32 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   const [employeeAvatar, setEmployeeAvatar] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    void fetchShellBranding()
-      .then((branding) => {
-        if (employeeId) {
-          setEmployeeAvatar(branding.employeeAvatars[employeeId] ?? null);
-        }
-      })
-      .catch(() => {
-        /* keep placeholder */
-      });
+    if (!employeeId) return;
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const load = () => {
+      if (cancelled) return;
+      void fetchShellBranding()
+        .then((branding) => {
+          if (!cancelled) setEmployeeAvatar(branding.employeeAvatars[employeeId] ?? null);
+        })
+        .catch(() => {
+          /* keep placeholder */
+        });
+    };
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(load, { timeout: 2500 });
+    } else {
+      timeoutId = setTimeout(load, 400);
+    }
+    return () => {
+      cancelled = true;
+      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [employeeId]);
 
   React.useEffect(() => {
@@ -184,13 +216,14 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     .slice(0, 2)
     .toUpperCase();
 
+  // Only mount clock on dashboard home — keeps My Team / My Info / Tickets snappy.
   const clockWidget =
-    employeeId ? (
+    employeeId && isDashboardHome ? (
       <ClockBreakPrayerWidget
         key="emp-clock-widget"
         employeeId={employeeId}
         employeeName={employeeName || "Employee"}
-        variant={isDashboardHome ? "todayStatus" : "slack"}
+        variant="todayStatus"
       />
     ) : null;
 
@@ -304,23 +337,9 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
           </div>
         )}
 
-        {employeeId ? (
-          isDashboardHome ? (
-            // Wait for portal target — do NOT mount in hidden dock first (that caused double sync + late buttons)
-            todayStatusRoot ? createPortal(clockWidget, todayStatusRoot) : null
-          ) : (
-            <div
-              className={`${empStyles.attendanceDock}${showClockBar ? "" : ` ${empStyles.attendanceDockHidden}`}`}
-              aria-hidden={!showClockBar}
-            >
-              <div className={empStyles.attendanceDockInner}>
-                <div className={empStyles.dockCard}>
-                  {clockWidget}
-                </div>
-              </div>
-            </div>
-          )
-        ) : null}
+        {employeeId && isDashboardHome && todayStatusRoot
+          ? createPortal(clockWidget, todayStatusRoot)
+          : null}
 
         <main className={`${styles.main} ${empStyles.employeeMain}`}>{children}</main>
       </div>

@@ -3,7 +3,7 @@
 import React from "react";
 import type { BiometricAction } from "@/lib/face-types";
 import { FaceVerifyModal } from "@/app/components/FaceVerifyModal";
-import { ensureFaceModelsLoaded, preloadFaceRuntime } from "@/lib/face-client-engine";
+import { ensureFaceModelsLoaded } from "@/lib/face-client-engine";
 import { toastInfo } from "@/lib/app-toast";
 
 type PendingAction = {
@@ -94,35 +94,10 @@ export function useBiometricGate(
     void refreshStatus();
   }, [refreshStatus]);
 
+  // Do not preload face-api/TFJS on mount — it steals the main thread and
+  // makes sidebar navigation feel stuck. Models load when verify opens.
   React.useEffect(() => {
-    if (!employeeId) {
-      setFaceEngineReady(false);
-      return;
-    }
-    let cancelled = false;
-    setFaceEngineReady(false);
-    // Defer heavy face-api/TFJS load until idle so dashboard first paint stays responsive
-    const startLoad = () => {
-      if (cancelled) return;
-      preloadFaceRuntime();
-      void ensureFaceModelsLoaded().then(() => {
-        if (!cancelled) setFaceEngineReady(true);
-      });
-    };
-    let idleId: number | undefined;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      idleId = window.requestIdleCallback(startLoad, { timeout: 4000 });
-    } else {
-      timeoutId = setTimeout(startLoad, 1500);
-    }
-    return () => {
-      cancelled = true;
-      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
-        window.cancelIdleCallback(idleId);
-      }
-      if (timeoutId) clearTimeout(timeoutId);
-    };
+    if (!employeeId) setFaceEngineReady(false);
   }, [employeeId]);
 
   const onVerifyOpenRef = React.useRef(options.onVerifyOpen);
@@ -153,7 +128,7 @@ export function useBiometricGate(
       // parallel, showing its own "Loading face engine…" state. Kick off the
       // load (idempotent) and open the modal so the user is never stuck waiting.
       if (bioStatus.enforcementRequired && !faceEngineReady) {
-        void ensureFaceModelsLoaded();
+        void ensureFaceModelsLoaded().then(() => setFaceEngineReady(true));
       }
 
       if (!bioStatus.enforcementRequired) {

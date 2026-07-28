@@ -18,6 +18,7 @@ import {
 import type { TicketCategory } from "../../lib/ticket-catalog";
 import { TardyNoteWidget } from "../components/TardyNoteWidget";
 import { HeroProfileAvatar } from "./components/HeroProfileAvatar";
+import { SERVER_TIMEZONE } from "../../lib/timezone";
 import styles from "./employee-dashboard.module.css";
 
 type TicketWidgetRow = {
@@ -82,13 +83,42 @@ const ProgressRing = React.memo(function ProgressRing({
   );
 });
 
+/** Own 1s tick — avoids re-rendering the whole dashboard every second. */
+const LiveClock = React.memo(function LiveClock() {
+  const [liveClock, setLiveClock] = React.useState(() =>
+    new Date().toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+      timeZone: SERVER_TIMEZONE,
+    })
+  );
+  React.useEffect(() => {
+    const tick = () => {
+      setLiveClock(
+        new Date().toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+          timeZone: SERVER_TIMEZONE,
+        })
+      );
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return <div className={styles.liveClock}>{liveClock}</div>;
+});
+
 export type DashboardHomeViewProps = {
   employeeId: string;
   employeeName: string;
   profilePhoto: string | null;
   onAvatarUpdated: (url: string) => void;
   profileContact: { email: string; phone: string; location: string };
-  liveClock: string;
   clockedInLabel: string;
   monthAttendanceStats: {
     present: number;
@@ -122,7 +152,6 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
     profilePhoto,
     onAvatarUpdated,
     profileContact,
-    liveClock,
     clockedInLabel,
     monthAttendanceStats,
     leaveBalance,
@@ -152,7 +181,7 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
         <div className={styles.dashGrid}>
           <article className={`${styles.card} ${styles.todayCard}`}>
             <h2 className={styles.cardTitle}>Today&apos;s Status</h2>
-            <div className={styles.liveClock}>{liveClock}</div>
+            <LiveClock />
             <p className={styles.clockedInLabel}>{clockedInLabel}</p>
             <div id="emp-today-status-root" className={styles.todayActions} />
           </article>
