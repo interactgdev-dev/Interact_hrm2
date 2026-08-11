@@ -158,14 +158,24 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Calculate late status based on shift start time and grace minutes
-      const lateStatus = computeClockInLateStatus(
+      // Prefer persisted late_minutes when present; else compute from shift + grace
+      const computedLate = computeClockInLateStatus(
         row.clock_in,
         row.shift_start_time,
         row.gender
       );
-      const is_late = lateStatus.isLate;
-      const late_minutes = lateStatus.lateMinutes;
+      const storedLate =
+        row.late_minutes != null && row.late_minutes !== ""
+          ? Number(row.late_minutes)
+          : null;
+      const late_minutes =
+        storedLate != null && Number.isFinite(storedLate)
+          ? storedLate
+          : computedLate.lateMinutes;
+      const is_late =
+        storedLate != null && Number.isFinite(storedLate)
+          ? storedLate > 0
+          : computedLate.isLate;
 
       return {
         ...row,
@@ -302,13 +312,53 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Clock In: Always INSERT a new row
-      console.log("Inserting new clock-in record:", { employee_id, employee_name, formattedDate, clock_in });
+      // Clock In: Always INSERT a new row (persist late_minutes for monthly attendance)
+      const clockInIso = new Date(clock_in).toISOString();
+      const clockInDb = clockInIso.slice(0, 19).replace("T", " ");
+      let lateMinutesToStore: number | null = null;
+      try {
+        const [shiftRows] = await conn.execute(
+          `SELECT sa.start_time, e.gender
+           FROM shift_assignments sa
+           LEFT JOIN hrm_employees e ON e.id = sa.employee_id
+           WHERE sa.employee_id = ?
+             AND sa.assigned_date <= ?
+           ORDER BY sa.assigned_date DESC, sa.id DESC
+           LIMIT 1`,
+          [employee_id, formattedDate],
+        );
+        const shift = (shiftRows as { start_time?: string; gender?: string }[])[0];
+        if (shift?.start_time) {
+          lateMinutesToStore = computeClockInLateStatus(
+            clockInDb,
+            shift.start_time,
+            shift.gender,
+          ).lateMinutes;
+        } else {
+          lateMinutesToStore = 0;
+        }
+      } catch (err) {
+        console.warn("Could not compute late_minutes on clock-in:", err);
+      }
+
+      console.log("Inserting new clock-in record:", {
+        employee_id,
+        employee_name,
+        formattedDate,
+        clock_in,
+        late_minutes: lateMinutesToStore,
+      });
       await conn.execute(
         `INSERT INTO ${ATTENDANCE_TABLE}
-           (employee_id, employee_name, date, clock_in, clock_out, total_hours, auto_clock_out, last_presence_ack_at)
-         VALUES (?, ?, ?, ?, NULL, NULL, 0, NULL)`,
-        [employee_id, employee_name || '', formattedDate, new Date(clock_in).toISOString().slice(0, 19).replace('T', ' ')]
+           (employee_id, employee_name, date, clock_in, clock_out, total_hours, late_minutes, auto_clock_out, last_presence_ack_at)
+         VALUES (?, ?, ?, ?, NULL, NULL, ?, 0, NULL)`,
+        [
+          employee_id,
+          employee_name || "",
+          formattedDate,
+          clockInDb,
+          lateMinutesToStore,
+        ],
       );
       console.log("Clock-in record inserted successfully");
     } else if (clock_out !== undefined && clock_out !== null) {
@@ -432,17 +482,51 @@ export async function PUT(req: NextRequest) {
         : getDateStringInTimeZone(date, SERVER_TIMEZONE)
       : null;
 
+    let lateMinutesToStore: number | null = null;
+    if (formattedClockIn && formattedDate) {
+      try {
+        const [shiftRows] = await conn.execute(
+          `SELECT sa.start_time, e.gender
+           FROM shift_assignments sa
+           LEFT JOIN hrm_employees e ON e.id = sa.employee_id
+           WHERE sa.employee_id = ?
+             AND sa.assigned_date <= ?
+           ORDER BY sa.assigned_date DESC, sa.id DESC
+           LIMIT 1`,
+          [employee_id, formattedDate],
+        );
+        const shift = (shiftRows as { start_time?: string; gender?: string }[])[0];
+        lateMinutesToStore = shift?.start_time
+          ? computeClockInLateStatus(formattedClockIn, shift.start_time, shift.gender)
+              .lateMinutes
+          : 0;
+      } catch (err) {
+        console.warn("Could not compute late_minutes on attendance update:", err);
+      }
+    }
+
     await conn.execute(
       `UPDATE ${ATTENDANCE_TABLE} 
        SET employee_name = ?, date = ?, clock_in = ?, clock_out = ?, 
+           late_minutes = ?,
            total_hours = CASE 
              WHEN ? IS NOT NULL AND ? IS NOT NULL 
              THEN ROUND(TIMESTAMPDIFF(MINUTE, ?, ?)/60, 2) 
              ELSE NULL 
            END
        WHERE id = ?`,
-      [employee_name || '', formattedDate, formattedClockIn, formattedClockOut, 
-       formattedClockIn, formattedClockOut, formattedClockIn, formattedClockOut, id]
+      [
+        employee_name || "",
+        formattedDate,
+        formattedClockIn,
+        formattedClockOut,
+        lateMinutesToStore,
+        formattedClockIn,
+        formattedClockOut,
+        formattedClockIn,
+        formattedClockOut,
+        id,
+      ],
     );
 
     return NextResponse.json({ success: true, message: 'Attendance updated successfully' });

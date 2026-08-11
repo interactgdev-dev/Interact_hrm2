@@ -63,12 +63,22 @@ type MonthlyAttendanceEmployeeRow = {
   byDate: Record<string, any[]>;
   dateMeta: Record<
     string,
-    { runningLate: number | string; statusLabel: string; statusColor: string; deduction: string }
+    {
+      runningLate: number | string;
+      statusLabel: string;
+      statusColor: string;
+      deduction: string;
+      /** Clock-in late minutes (from classifyDayAttendance). Shown only when > 60. */
+      lateMinutes?: number;
+    }
   >;
   isImported?: boolean;
   importedDays?: ImportedMonthlyDay[];
   importedFooter?: { totalDeduction?: string; extraHours?: string; workingDays?: string };
 };
+
+/** Show / sum late time only when late is more than 1 hour (61+ minutes). */
+const EXCESS_LATE_SHOW_AFTER_MINUTES = 60;
 
 // ...existing code...
 
@@ -676,11 +686,36 @@ export default function MonthlyAttendancePage() {
     return `${month}/${day}/${year}`;
   }
 
-  function formatLateTime(minutes: number | null) {
-    if (!minutes || minutes === 0) return "-";
+  function formatLateTime(minutes: number | null | undefined) {
+    if (!minutes || minutes <= 0) return "-";
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return `Late ${h}h ${m}m`;
+  }
+
+  function isExcessLateMinutes(minutes: number | null | undefined) {
+    return typeof minutes === "number" && minutes > EXCESS_LATE_SHOW_AFTER_MINUTES;
+  }
+
+  function statusCellText(statusLabel: string, lateMinutes?: number | null) {
+    if (!isExcessLateMinutes(lateMinutes)) return statusLabel;
+    return `${statusLabel} (${formatLateTime(lateMinutes)})`;
+  }
+
+  function renderStatusWithExcessLate(
+    statusLabel: string,
+    lateMinutes?: number | null,
+  ): React.ReactNode {
+    return (
+      <>
+        {statusLabel}
+        {isExcessLateMinutes(lateMinutes) ? (
+          <div style={{ fontWeight: 500, fontSize: 12, color: "#c05621", marginTop: 2 }}>
+            {formatLateTime(lateMinutes)}
+          </div>
+        ) : null}
+      </>
+    );
   }
 
   function getDateKey(dateValue: string) {
@@ -813,7 +848,7 @@ export default function MonthlyAttendancePage() {
             day.assignedWH,
             day.overtime,
             tardyDisplay,
-            statusLabel,
+            statusCellText(statusLabel, meta?.lateMinutes),
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel),
             deduction,
           ],
@@ -833,6 +868,25 @@ export default function MonthlyAttendancePage() {
         },
         {
           cells: ["", "", "", "", "", "", "", "", "", "", "Extra Hours:", "", getEmployeeTotalOvertime(employee)],
+          status: "",
+          isSummary: true,
+        },
+        {
+          cells: [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "Total Late:",
+            "",
+            getEmployeeTotalExcessLate(employee),
+          ],
           status: "",
           isSummary: true,
         },
@@ -905,7 +959,7 @@ export default function MonthlyAttendancePage() {
         // handled above when no sessions and no records
       }
 
-      sessionsToExport.forEach(({ session, record }) => {
+      sessionsToExport.forEach(({ session, record }, sessionIndex) => {
         const statusLabel = normalizeAttendanceStatus(meta?.statusLabel || "");
         dataRows.push({
           cells: [
@@ -919,7 +973,9 @@ export default function MonthlyAttendancePage() {
             record ? excelAssignedWHForExport(record) : "---",
             record ? excelOvertimeForExport(record) : "---",
             meta?.runningLate ?? "",
-            statusLabel,
+            sessionIndex === 0
+              ? statusCellText(statusLabel, meta?.lateMinutes)
+              : statusLabel,
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, record?.id, dayRecords),
             meta?.deduction || "",
           ],
@@ -937,6 +993,25 @@ export default function MonthlyAttendancePage() {
       },
       {
         cells: ["", "", "", "", "", "", "", "", "", "", "Extra Hours:", "", getEmployeeTotalOvertime(employee)],
+        status: "",
+        isSummary: true,
+      },
+      {
+        cells: [
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "Total Late:",
+          "",
+          getEmployeeTotalExcessLate(employee),
+        ],
         status: "",
         isSummary: true,
       },
@@ -1301,6 +1376,11 @@ export default function MonthlyAttendancePage() {
           statusLabel,
           statusColor,
           deduction,
+          // Prefer persisted/API late_minutes so DB value stays visible (>1h policy)
+          lateMinutes:
+            record?.late_minutes != null && Number(record.late_minutes) > 0
+              ? Number(record.late_minutes)
+              : dayStatus.lateMinutes || 0,
         };
       });
     });
@@ -1413,6 +1493,20 @@ export default function MonthlyAttendancePage() {
       });
     });
 
+    if (totalMinutes <= 0) return "-";
+    const h = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
+    const m = (totalMinutes % 60).toString().padStart(2, "0");
+    return `${h}h ${m}m`;
+  }
+
+  /** Month total of late minutes that are more than 1 hour (first-3 zero deduction still included). */
+  function getEmployeeTotalExcessLate(emp: any) {
+    let totalMinutes = 0;
+    const days: { dateKey: string }[] = monthInfo.days || [];
+    days.forEach((day) => {
+      const late = emp.dateMeta?.[day.dateKey]?.lateMinutes;
+      if (isExcessLateMinutes(late)) totalMinutes += Number(late);
+    });
     if (totalMinutes <= 0) return "-";
     const h = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
     const m = (totalMinutes % 60).toString().padStart(2, "0");
@@ -1630,7 +1724,7 @@ export default function MonthlyAttendancePage() {
                                 <td>{day.overtime}</td>
                                 <td>{tardyDisplay}</td>
                                 <td style={{ color: uiStatusTextColor(rowStatus), fontWeight: 600 }}>
-                                  {rowStatus}
+                                  {renderStatusWithExcessLate(rowStatus, meta?.lateMinutes)}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>{tardyNoteForCell(employee.employeeId, day.dateKey, rowStatus)}</td>
                                 <td>{rowDeduction}</td>
@@ -1671,7 +1765,10 @@ export default function MonthlyAttendancePage() {
                                 <td>---</td>
                                 <td>{meta?.runningLate ? meta.runningLate : ""}</td>
                                 <td style={{ color: uiStatusTextColor(statusLabel), fontWeight: 600 }}>
-                                  {normalizeAttendanceStatus(statusLabel)}
+                                  {renderStatusWithExcessLate(
+                                    normalizeAttendanceStatus(statusLabel),
+                                    meta?.lateMinutes,
+                                  )}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>{tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, undefined, dayRecords)}</td>
                                 <td>{deduction}</td>
@@ -1728,7 +1825,9 @@ export default function MonthlyAttendancePage() {
                                     fontWeight: 600,
                                   }}
                                 >
-                                  {recordStatus}
+                                  {index === 0
+                                    ? renderStatusWithExcessLate(recordStatus, meta?.lateMinutes)
+                                    : recordStatus}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>
                                   {tardyNoteForCell(
@@ -1765,6 +1864,12 @@ export default function MonthlyAttendancePage() {
                               ? employee.importedFooter.extraHours
                               : getEmployeeTotalOvertime(employee)}
                           </td>
+                        </tr>
+                        <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
+                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
+                            Total Late:
+                          </td>
+                          <td>{getEmployeeTotalExcessLate(employee)}</td>
                         </tr>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
                           <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>

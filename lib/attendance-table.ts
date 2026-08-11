@@ -12,6 +12,7 @@ export async function ensureAttendanceTable(conn: {
       clock_in DATETIME NULL,
       clock_out DATETIME NULL,
       total_hours DECIMAL(5,2) NULL,
+      late_minutes INT NULL DEFAULT NULL,
       auto_clock_out TINYINT(1) NOT NULL DEFAULT 0,
       last_presence_ack_at DATETIME NULL,
       INDEX (employee_id),
@@ -23,6 +24,7 @@ export async function ensureAttendanceTable(conn: {
   const columns: [string, string][] = [
     ["auto_clock_out", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["last_presence_ack_at", "DATETIME NULL"],
+    ["late_minutes", "INT NULL DEFAULT NULL"],
   ];
   for (const [name, def] of columns) {
     try {

@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import { normalizeAttendanceStatus, uiStatusTextColor } from "./attendance-status";
 import {
   applyImportedAbsentIfShortShift,
+  computeClockInLateStatus,
   defaultHrShiftTiming,
   importedDeductionForFiveHourShift,
   importedDeductionForStatus,
@@ -570,10 +571,19 @@ export function loadImportedMonthlySnapshot(month: string): ImportedMonthlySnaps
 }
 
 /** Read Status/Deduction already set on sheet rows by applyHrRulesDirectlyOnSheet. */
-function buildDateMetaFromImportedDays(days: ImportedMonthlyDay[]) {
+function buildDateMetaFromImportedDays(
+  days: ImportedMonthlyDay[],
+  opts?: { shiftStart?: string | null; gender?: string | null },
+) {
   const dateMeta: Record<
     string,
-    { runningLate: number | string; statusLabel: string; statusColor: string; deduction: string }
+    {
+      runningLate: number | string;
+      statusLabel: string;
+      statusColor: string;
+      deduction: string;
+      lateMinutes?: number;
+    }
   > = {};
 
   const sorted = [...days].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
@@ -584,6 +594,7 @@ function buildDateMetaFromImportedDays(days: ImportedMonthlyDay[]) {
     let statusLabel: string;
     let deduction: string;
     let runningLate: number | string = "";
+    let lateMinutes = 0;
 
     if (!fiveHourShift && applyImportedAbsentIfShortShift(day)) {
       statusLabel = "Absent";
@@ -602,11 +613,19 @@ function buildDateMetaFromImportedDays(days: ImportedMonthlyDay[]) {
       }
     }
 
+    if (!isEmptyClockDisplay(day.clockIn) && opts?.shiftStart) {
+      const iso = parseDisplayClockToIso(day.dateKey, day.clockIn, 0);
+      if (iso) {
+        lateMinutes = computeClockInLateStatus(iso, opts.shiftStart, opts.gender).lateMinutes;
+      }
+    }
+
     dateMeta[day.dateKey] = {
       runningLate,
       statusLabel,
       statusColor: uiStatusTextColor(statusLabel),
       deduction,
+      lateMinutes,
     };
   });
 
@@ -624,7 +643,9 @@ export function importedSnapshotToAttendanceEmployees(snapshot: ImportedMonthlyS
   const fresh = reapplyImportedHrRulesSnapshot(snapshot);
   return fresh.employees.map((emp) => {
     const byDate: Record<string, any[]> = {};
-    const { dateMeta, sorted, totalDeduction } = buildDateMetaFromImportedDays(emp.days);
+    const { dateMeta, sorted, totalDeduction } = buildDateMetaFromImportedDays(emp.days, {
+      shiftStart: emp.shiftStart,
+    });
 
     sorted.forEach((day) => {
       const shiftSeconds = shiftSecondsFromAssignedWH(day.assignedWH);
