@@ -1277,12 +1277,19 @@ export default function MonthlyAttendancePage() {
         let deduction = "";
         let tardyDisplay: number | string = "";
 
+        // Fetch pads ±1 day for overnight/ZK pairing — do NOT count those padding
+        // days in monthly tardy running total (otherwise first visible tardy shows as 2).
+        const inSelectedMonth =
+          (!fromDate || dateKey >= fromDate) && (!toDate || dateKey <= toDate);
+
         if (statusLabel === "Tardy" && dayStatus.isLate) {
-          runningLate += 1;
-          tardyDisplay = runningLate;
-          if (runningLate === 4) deduction = "50%";
-          else if (runningLate >= 5) deduction = "100%";
-          else deduction = "0%";
+          if (inSelectedMonth) {
+            runningLate += 1;
+            tardyDisplay = runningLate;
+            if (runningLate === 4) deduction = "50%";
+            else if (runningLate >= 5) deduction = "100%";
+            else deduction = "0%";
+          }
         } else if (statusLabel === "Absent") {
           deduction = "100%";
         } else if (statusLabel === STATUS_FIRST_HALF_DAY || statusLabel === STATUS_SECOND_HALF_DAY) {
@@ -1299,7 +1306,7 @@ export default function MonthlyAttendancePage() {
     });
 
     return Object.values(map).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
-  }, [attendance, showingImported, importedSnapshot, selectedDepartment]);
+  }, [attendance, showingImported, importedSnapshot, selectedDepartment, fromDate, toDate]);
 
   /** Cheap name / pseudo / ID filter — deferred so typing does not block the input */
   const attendanceByEmployee = useMemo(() => {
