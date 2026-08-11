@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
 import LayoutDashboard from "../../layout-dashboard";
 import styles from "./manage-leaves.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
@@ -51,10 +51,25 @@ export default function ManageLeavesPage() {
   });
   const [saving, setSaving] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection } | null>(null);
+  const [searchName, setSearchName] = useState("");
+  const deferredSearchName = useDeferredValue(searchName);
+  const [selectedDepartment, setSelectedDepartment] = useState("");
+  const [departments, setDepartments] = useState<{ id: number | string; name?: string; department_name?: string }[]>([]);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
   useEffect(() => {
     fetchEmployees();
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/departments")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.departments)) {
+          setDepartments(data.departments);
+        }
+      })
+      .catch((err) => console.error("Error fetching departments:", err));
   }, []);
 
   async function fetchEmployees() {
@@ -63,33 +78,35 @@ export default function ManageLeavesPage() {
       const res = await fetch("/api/employee-leave-allowances");
       const data = await res.json();
       if (data.success) {
-        // Create a map to hold pseudonym and department for each employee
-        const empDetailsMap = new Map();
-        
-        // Fetch all attendance records to get pseudonym and department
+        const empDetailsMap = new Map<
+          number,
+          { pseudonym: string; department_name: string }
+        >();
+
         try {
-          const attendanceRes = await fetch("/api/attendance?fromDate=2020-01-01&toDate=2099-12-31");
-          const attendanceData = await attendanceRes.json();
-          if (attendanceData.success && Array.isArray(attendanceData.attendance)) {
-            attendanceData.attendance.forEach((att: any) => {
-              const empId = parseInt(att.employee_id);
-              if (!empDetailsMap.has(empId)) {
-                empDetailsMap.set(empId, {
-                  pseudonym: att.pseudonym || '-',
-                  department_name: att.department_name || '-'
-                });
-              }
+          const listRes = await fetch("/api/employee-list", { cache: "no-store" });
+          const listData = await listRes.json();
+          const list = Array.isArray(listData?.employees)
+            ? listData.employees
+            : Array.isArray(listData)
+              ? listData
+              : [];
+          for (const row of list) {
+            const empId = Number(row.id);
+            if (!Number.isFinite(empId) || empDetailsMap.has(empId)) continue;
+            empDetailsMap.set(empId, {
+              pseudonym: row.pseudonym || "-",
+              department_name: row.department_name || "-",
             });
           }
         } catch (err) {
-          console.error("Error fetching attendance:", err);
+          console.error("Error fetching employee list:", err);
         }
-        
-        // Merge data into employees
+
         const enrichedEmployees = data.employees.map((emp: Employee) => ({
           ...emp,
-          department_name: empDetailsMap.get(emp.id)?.department_name || '-',
-          pseudonym: empDetailsMap.get(emp.id)?.pseudonym || '-'
+          department_name: empDetailsMap.get(emp.id)?.department_name || "-",
+          pseudonym: empDetailsMap.get(emp.id)?.pseudonym || "-",
         }));
         setEmployees(enrichedEmployees);
       } else {
@@ -169,12 +186,31 @@ export default function ManageLeavesPage() {
     return sortConfig.direction === "asc" ? <FaSortUp /> : <FaSortDown />;
   };
 
+  const filteredEmployees = useMemo(() => {
+    let rows = employees;
+    const term = deferredSearchName.trim().toLowerCase();
+    if (term) {
+      rows = rows.filter((emp) => {
+        const fullName = getFullName(emp).toLowerCase();
+        const pseudo = (emp.pseudonym || "").toLowerCase();
+        return fullName.includes(term) || pseudo.includes(term);
+      });
+    }
+    if (selectedDepartment) {
+      rows = rows.filter(
+        (emp) =>
+          (emp.department_name || "").toLowerCase() === selectedDepartment.toLowerCase()
+      );
+    }
+    return rows;
+  }, [employees, deferredSearchName, selectedDepartment]);
+
   const sortedEmployees = useMemo(() => {
-    if (!sortConfig) return employees;
+    if (!sortConfig) return filteredEmployees;
 
     const getText = (value: unknown) => String(value || "").toLowerCase();
 
-    return [...employees].sort((a, b) => {
+    return [...filteredEmployees].sort((a, b) => {
       let cmp = 0;
 
       switch (sortConfig.key) {
@@ -213,7 +249,7 @@ export default function ManageLeavesPage() {
 
       return sortConfig.direction === "asc" ? cmp : -cmp;
     });
-  }, [employees, sortConfig]);
+  }, [filteredEmployees, sortConfig]);
 
   const sortButtonStyle: React.CSSProperties = {
     border: "none",
@@ -294,6 +330,33 @@ export default function ManageLeavesPage() {
         <div className={adminStyles.inner}>
           <h1 className={adminStyles.title}>Manage leaves</h1>
           <p className={adminStyles.subtitle}>Update annual and bereavement leave balances per employee.</p>
+
+          <div className={tableStyles.breakSummaryFilters}>
+            <input
+              type="text"
+              placeholder="Search by name or pseudo name..."
+              value={searchName}
+              onChange={(e) => setSearchName(e.target.value)}
+              className={tableStyles.breakSummaryInput}
+              style={{ width: 220 }}
+            />
+            <select
+              value={selectedDepartment}
+              onChange={(e) => setSelectedDepartment(e.target.value)}
+              className={tableStyles.breakSummaryDate}
+              style={{ width: 180 }}
+            >
+              <option value="">All Departments</option>
+              {departments.map((dept) => {
+                const name = dept.name || dept.department_name || "";
+                return (
+                  <option key={dept.id} value={name}>
+                    {name}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
 
           <div className={adminStyles.card}>
         <div className={tableStyles.breakSummaryTableWrapper} style={{ overflowY: "auto", maxHeight: "74vh" }}>
