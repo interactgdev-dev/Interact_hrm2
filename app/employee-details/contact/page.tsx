@@ -143,7 +143,7 @@ export default function ContactDetailsPage() {
             <div style={{ fontWeight: 600, fontSize: "1.1rem", margin: "18px 0 10px 0" }}>Email</div>
             <div className={styles.row}>
               <input className={styles.input} type="email" placeholder="Work Email" value={email.work} onChange={e => setEmail(em => ({ ...em, work: e.target.value }))} />
-              <input className={styles.input} type="email" placeholder="Other Email" value={email.other} onChange={e => setEmail(em => ({ ...em, other: e.target.value }))} />
+              <input className={styles.input} type="email" placeholder="Personal Email" value={email.other} onChange={e => setEmail(em => ({ ...em, other: e.target.value }))} />
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
               <button type="submit" style={{ background: "#8BC34A", color: "#fff", border: "none", borderRadius: 8, padding: "10px 32px", fontWeight: 600, fontSize: "1.08rem", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,82,204,0.10)" }}>Save</button>

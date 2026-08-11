@@ -863,8 +863,8 @@ export default function AddEmployeeForm({
                     <input className={styles.input} type="email" placeholder="Work Email" value={contactEmail.work} onChange={e => setContactEmail(em => ({ ...em, work: e.target.value }))} required />
                   </div>
                   <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Other Email</label>
-                    <input className={styles.input} type="email" placeholder="Other Email" value={contactEmail.other} onChange={e => setContactEmail(em => ({ ...em, other: e.target.value }))} />
+                    <label className={styles.fieldLabel}>Personal Email</label>
+                    <input className={styles.input} type="email" placeholder="Personal Email" value={contactEmail.other} onChange={e => setContactEmail(em => ({ ...em, other: e.target.value }))} />
                   </div>
                 </div>
                 <div className={styles.actionsLeft}>
