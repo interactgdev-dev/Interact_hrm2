@@ -511,6 +511,14 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
       } else if (res.status === 403 && isBiometricGateError(data.error)) {
         runWithVerify("clock_in", (token) => handleClockIn(token));
       } else {
+        // Stale open session: flip UI to Clock Out so state matches API guard
+        if (
+          res.status === 400 &&
+          String(data.error || "").toLowerCase().includes("already clocked in")
+        ) {
+          forceSyncClockState(id, setIsClockedIn, setTimer, setLoadingAttendance, setIntervalId);
+          notifyAttendanceDataChanged();
+        }
         toastError(data.error || "Failed to clock in. Please try again.");
       }
     } catch (error) {

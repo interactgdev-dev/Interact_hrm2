@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
     const fromDate = searchParams.get("fromDate");
     const toDate = searchParams.get("toDate");
     const activeBreakCheck = searchParams.get("activeBreakCheck");
+    /** Any open session for employee (all dates) — matches POST clock-in guard */
+    const openOnly = searchParams.get("openOnly") === "1";
     /** Lighter payload for summary pages — skips shift subquery + contacts */
     const summaryOnly = searchParams.get("summary") === "1";
     
@@ -96,7 +98,12 @@ export async function GET(req: NextRequest) {
        )
     `;
     if (employeeId) {
-      if (date) {
+      if (openOnly) {
+        [rows] = await conn.execute(
+          `${baseQuery} WHERE ea.employee_id = ? AND ea.clock_out IS NULL ORDER BY ea.clock_in DESC`,
+          [employeeId]
+        );
+      } else if (date) {
         [rows] = await conn.execute(
           `${baseQuery} WHERE ea.employee_id = ? AND ea.date = ? ORDER BY ea.clock_in DESC`,
           [employeeId, date]

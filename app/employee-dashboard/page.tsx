@@ -364,12 +364,31 @@ export default function EmployeeDashboardPage() {
       const monthStart = `${today.slice(0, 7)}-01`;
       const weekMonday = workWeekMonFriKeys(today)[0] ?? monthStart;
       const fromDate = monthStart < weekMonday ? monthStart : weekMonday;
-      const res = await fetch(
-        `/api/attendance?employeeId=${encodeURIComponent(employeeId)}&fromDate=${fromDate}&toDate=${today}&ts=${Date.now()}`,
-        { cache: "no-store" }
-      );
-      const data = await res.json();
-      if (data.success) setAttendance(data.attendance || []);
+      const eid = encodeURIComponent(employeeId);
+      const [rangeRes, openRes] = await Promise.all([
+        fetch(
+          `/api/attendance?employeeId=${eid}&fromDate=${fromDate}&toDate=${today}&ts=${Date.now()}`,
+          { cache: "no-store" }
+        ),
+        fetch(
+          `/api/attendance?employeeId=${eid}&openOnly=1&summary=1&ts=${Date.now()}`,
+          { cache: "no-store" }
+        ),
+      ]);
+      const rangeData = await rangeRes.json();
+      const openData = await openRes.json();
+      if (!rangeData.success) return;
+
+      const byId = new Map<number, AttendanceRow>();
+      for (const row of (rangeData.attendance || []) as AttendanceRow[]) {
+        if (row?.id != null) byId.set(Number(row.id), row);
+      }
+      if (openData.success && Array.isArray(openData.attendance)) {
+        for (const row of openData.attendance as AttendanceRow[]) {
+          if (row?.id != null) byId.set(Number(row.id), row);
+        }
+      }
+      setAttendance(Array.from(byId.values()));
     } catch (err) {
       console.error("attendance fetch", err);
     }
@@ -560,7 +579,22 @@ export default function EmployeeDashboardPage() {
   const weekDayKeys = React.useMemo(() => workWeekMonFriKeys(todayKey), [todayKey]);
 
   const todayRecord = attendanceByDate.get(todayKey);
-  const isClockedIn = Boolean(todayRecord?.clock_in && !todayRecord?.clock_out);
+  /** Any open session (including prior days) — matches clock-in API guard */
+  const openAttendance = React.useMemo(() => {
+    const open = attendance.filter(
+      (row) => row.clock_in && (row.clock_out == null || row.clock_out === "")
+    );
+    if (open.length === 0) return null;
+    open.sort((a, b) => {
+      const ta = a.clock_in ? new Date(a.clock_in).getTime() : 0;
+      const tb = b.clock_in ? new Date(b.clock_in).getTime() : 0;
+      return tb - ta;
+    });
+    return open[0];
+  }, [attendance]);
+
+  const activeSession = openAttendance ?? todayRecord ?? null;
+  const isClockedIn = Boolean(openAttendance);
 
   // Tick while clocked in so hours stay live — 5s avoids freezing the whole dashboard every second
   const [liveTick, setLiveTick] = React.useState(0);
@@ -611,12 +645,12 @@ export default function EmployeeDashboardPage() {
   const maxChartHours = Math.max(8, ...weekChart.map((d) => d.hours), 1);
 
   const todayHours = React.useMemo(() => {
-    return todayRecord ? workHours(todayRecord) : 0;
-  }, [todayRecord, liveTick]);
-  const todayStatus = !todayRecord?.clock_in
+    return activeSession ? workHours(activeSession) : 0;
+  }, [activeSession, liveTick]);
+  const todayStatus = !activeSession?.clock_in
     ? "Not clocked in"
-    : todayRecord.is_late
-      ? `Late · ${todayRecord.late_minutes || 0}m`
+    : activeSession.is_late
+      ? `Late · ${activeSession.late_minutes || 0}m`
       : "On time";
 
   const monthStart = `${todayParts.year}-${String(todayParts.month).padStart(2, "0")}-01`;
@@ -701,13 +735,18 @@ export default function EmployeeDashboardPage() {
   ]);
 
   const clockedInLabel = React.useMemo(() => {
-    if (!todayRecord?.clock_in) return "Not clocked in yet";
-    const parts = getParts(todayRecord.clock_in, SERVER_TIMEZONE);
+    if (!activeSession?.clock_in) return "Not clocked in yet";
+    const parts = getParts(activeSession.clock_in, SERVER_TIMEZONE);
     if (!parts) return "Clocked in";
     const h12 = parts.hour % 12 || 12;
     const ampm = parts.hour >= 12 ? "PM" : "AM";
-    return `Clocked In: ${String(h12).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")} ${ampm}`;
-  }, [todayRecord]);
+    const time = `${String(h12).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")} ${ampm}`;
+    const sessionKey = recordDateKey(activeSession);
+    if (sessionKey && sessionKey !== todayKey) {
+      return `Open session since ${sessionKey} · ${time}`;
+    }
+    return `Clocked In: ${time}`;
+  }, [activeSession, todayKey]);
 
   const profileInitials = (employeeName || "E")
     .split(" ")
