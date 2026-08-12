@@ -29,6 +29,8 @@ import {
 import {
   aggregateDayPunches,
   classifyDayAttendance,
+  excessLateMinutesFromRaw,
+  lateCountsForStatus,
   STATUS_FIRST_HALF_DAY,
   STATUS_SECOND_HALF_DAY,
 } from "../../../lib/monthly-attendance-status";
@@ -68,7 +70,7 @@ type MonthlyAttendanceEmployeeRow = {
       statusLabel: string;
       statusColor: string;
       deduction: string;
-      /** Clock-in late minutes (from classifyDayAttendance). Shown only when > 60. */
+      /** Billable late after 1h relaxation (0 on Absent / Half Day). */
       lateMinutes?: number;
     }
   >;
@@ -77,8 +79,8 @@ type MonthlyAttendanceEmployeeRow = {
   importedFooter?: { totalDeduction?: string; extraHours?: string; workingDays?: string };
 };
 
-/** Show / sum late time only when late is more than 1 hour (61+ minutes). */
-const EXCESS_LATE_SHOW_AFTER_MINUTES = 60;
+/** Billable late is already after 1h relaxation — show/sum any minutes > 0. */
+const EXCESS_LATE_SHOW_AFTER_MINUTES = 0;
 
 // ...existing code...
 
@@ -697,6 +699,22 @@ export default function MonthlyAttendancePage() {
     return typeof minutes === "number" && minutes > EXCESS_LATE_SHOW_AFTER_MINUTES;
   }
 
+  /** Resolve billable late for a day: never on Absent/Half Day; 1h already stripped. */
+  function billableLateForDay(
+    statusLabel: string,
+    dayStatusLateMinutes: number,
+    recordLateMinutes: number | null | undefined,
+  ): number {
+    if (!lateCountsForStatus(statusLabel)) return 0;
+    // classifyDayAttendance already returns excess; prefer it
+    if (dayStatusLateMinutes > 0) return dayStatusLateMinutes;
+    // DB stores raw minutes from shift start — convert to excess
+    if (recordLateMinutes != null && Number(recordLateMinutes) > 0) {
+      return excessLateMinutesFromRaw(Number(recordLateMinutes));
+    }
+    return 0;
+  }
+
   function statusCellText(statusLabel: string, lateMinutes?: number | null) {
     if (!isExcessLateMinutes(lateMinutes)) return statusLabel;
     return `${statusLabel} (${formatLateTime(lateMinutes)})`;
@@ -883,7 +901,7 @@ export default function MonthlyAttendancePage() {
             "",
             "",
             "",
-            "Total Late:",
+            "Late Exceed:",
             "",
             getEmployeeTotalExcessLate(employee),
           ],
@@ -1008,7 +1026,7 @@ export default function MonthlyAttendancePage() {
           "",
           "",
           "",
-          "Total Late:",
+          "Late Exceed:",
           "",
           getEmployeeTotalExcessLate(employee),
         ],
@@ -1376,11 +1394,12 @@ export default function MonthlyAttendancePage() {
           statusLabel,
           statusColor,
           deduction,
-          // Prefer persisted/API late_minutes so DB value stays visible (>1h policy)
-          lateMinutes:
-            record?.late_minutes != null && Number(record.late_minutes) > 0
-              ? Number(record.late_minutes)
-              : dayStatus.lateMinutes || 0,
+          // Absent / Half Day → 0; Tardy → minutes after 1h relaxation only
+          lateMinutes: billableLateForDay(
+            statusLabel,
+            dayStatus.lateMinutes || 0,
+            record?.late_minutes != null ? Number(record.late_minutes) : null,
+          ),
         };
       });
     });
@@ -1499,12 +1518,14 @@ export default function MonthlyAttendancePage() {
     return `${h}h ${m}m`;
   }
 
-  /** Month total of late minutes that are more than 1 hour (first-3 zero deduction still included). */
+  /** Month total of billable late (after 1h relaxation; excludes Absent / Half Day). */
   function getEmployeeTotalExcessLate(emp: any) {
     let totalMinutes = 0;
     const days: { dateKey: string }[] = monthInfo.days || [];
     days.forEach((day) => {
-      const late = emp.dateMeta?.[day.dateKey]?.lateMinutes;
+      const meta = emp.dateMeta?.[day.dateKey];
+      const late = meta?.lateMinutes;
+      if (!lateCountsForStatus(meta?.statusLabel)) return;
       if (isExcessLateMinutes(late)) totalMinutes += Number(late);
     });
     if (totalMinutes <= 0) return "-";
@@ -1867,7 +1888,7 @@ export default function MonthlyAttendancePage() {
                         </tr>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
                           <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
-                            Total Late:
+                            Late Exceed:
                           </td>
                           <td>{getEmployeeTotalExcessLate(employee)}</td>
                         </tr>

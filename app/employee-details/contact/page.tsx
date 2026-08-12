@@ -26,8 +26,14 @@ export default function ContactDetailsPage() {
     zip: "",
     country: ""
   });
+  const [permanentAddress, setPermanentAddress] = useState({
+    street: "",
+    city: "",
+    state: "",
+    zip: "",
+    country: "",
+  });
   const [telephone, setTelephone] = useState({
-    home: "",
     mobile: "",
     work: ""
   });
@@ -43,22 +49,29 @@ export default function ContactDetailsPage() {
       toastInfo('Employee ID is required');
       return;
     }
-    const payload = {
-      details: {
-        employeeId: eid,
-        contact: {
-          address,
-          telephone,
-          email
-        }
-      }
-    };
     try {
-      // Example placeholder for saving contact details
       const res = await fetch('/api/employee_contacts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          employee_id: eid,
+          street1: address.street1,
+          street2: "",
+          city: address.city,
+          state: address.state,
+          zip: address.zip,
+          country: address.country,
+          permanent_street: permanentAddress.street,
+          permanent_city: permanentAddress.city,
+          permanent_state: permanentAddress.state,
+          permanent_zip: permanentAddress.zip,
+          permanent_country: permanentAddress.country,
+          phone_home: "",
+          phone_mobile: telephone.mobile,
+          phone_work: telephone.work,
+          email_work: email.work,
+          email_other: email.other,
+        })
       });
       const data = await res.json();
       if (data.success) toastSuccess('Contact details saved'); else toastError('Save failed: ' + (data.error || 'Unknown'));
@@ -113,10 +126,18 @@ export default function ContactDetailsPage() {
           <h2 className={styles.heading}>Contact Details</h2>
           <form className={styles.form} style={{ width: "100%" }} onSubmit={handleSave}>
             {/* Address Section */}
-            <div style={{ fontWeight: 600, fontSize: "1.1rem", marginBottom: 10 }}>Address</div>
+            <div style={{ fontWeight: 600, fontSize: "1.1rem", marginBottom: 10 }}>Current Address</div>
             <div className={styles.row}>
-              <input className={styles.input} type="text" placeholder="Street 1" value={address.street1} onChange={e => setAddress(a => ({ ...a, street1: e.target.value }))} />
-              <input className={styles.input} type="text" placeholder="Street 2" value={address.street2} onChange={e => setAddress(a => ({ ...a, street2: e.target.value }))} />
+              <input
+                className={styles.input}
+                type="text"
+                placeholder="Street/House/Area"
+                value={address.street1}
+                onChange={e => setAddress(a => ({ ...a, street1: e.target.value, street2: "" }))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div className={styles.row}>
               <input className={styles.input} type="text" placeholder="City" value={address.city} onChange={e => setAddress(a => ({ ...a, city: e.target.value }))} />
             </div>
             <div className={styles.row}>
@@ -132,11 +153,37 @@ export default function ContactDetailsPage() {
                 <option value="Other">Other</option>
               </select>
             </div>
+            <div style={{ fontWeight: 600, fontSize: "1.1rem", margin: "18px 0 10px 0" }}>Permanent Address</div>
+            <div className={styles.row}>
+              <input
+                className={styles.input}
+                type="text"
+                placeholder="Street/House/Area"
+                value={permanentAddress.street}
+                onChange={e => setPermanentAddress(a => ({ ...a, street: e.target.value }))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div className={styles.row}>
+              <input className={styles.input} type="text" placeholder="City" value={permanentAddress.city} onChange={e => setPermanentAddress(a => ({ ...a, city: e.target.value }))} />
+            </div>
+            <div className={styles.row}>
+              <input className={styles.input} type="text" placeholder="State/Province" value={permanentAddress.state} onChange={e => setPermanentAddress(a => ({ ...a, state: e.target.value }))} />
+              <input className={styles.input} type="text" placeholder="Zip/Postal Code" value={permanentAddress.zip} onChange={e => setPermanentAddress(a => ({ ...a, zip: e.target.value }))} />
+              <select className={styles.select} value={permanentAddress.country} onChange={e => setPermanentAddress(a => ({ ...a, country: e.target.value }))}>
+                <option value="">-- Select --</option>
+                <option value="Pakistan">Pakistan</option>
+                <option value="India">India</option>
+                <option value="UAE">UAE</option>
+                <option value="USA">USA</option>
+                <option value="UK">UK</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
             {/* Telephone Section */}
             <div style={{ fontWeight: 600, fontSize: "1.1rem", margin: "18px 0 10px 0" }}>Telephone</div>
             <div className={styles.row}>
-              <input className={styles.input} type="text" placeholder="Home" value={telephone.home} onChange={e => setTelephone(t => ({ ...t, home: e.target.value }))} />
-              <input className={styles.input} type="text" placeholder="Mobile" value={telephone.mobile} onChange={e => setTelephone(t => ({ ...t, mobile: e.target.value }))} />
+              <input className={styles.input} type="text" placeholder="Personal Mobile" value={telephone.mobile} onChange={e => setTelephone(t => ({ ...t, mobile: e.target.value }))} />
               <input className={styles.input} type="text" placeholder="Work" value={telephone.work} onChange={e => setTelephone(t => ({ ...t, work: e.target.value }))} />
             </div>
             {/* Email Section */}

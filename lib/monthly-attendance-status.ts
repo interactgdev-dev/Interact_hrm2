@@ -258,15 +258,46 @@ export function formatDbClockInForLateCheck(clockIn: unknown): string | null {
 }
 
 /** Same tardy rules as GET /api/attendance (shift required; no shift → not late). */
+export const TARDY_RELAXATION_MINUTES = 60;
+/** Clock-in later than this → Half Day (not Tardy); late minutes not counted. */
+export const LATE_HALF_DAY_THRESHOLD_MINUTES = 3 * 60 + 30; // 3h 30m
+
+export type ClockInLateStatus = {
+  isLate: boolean;
+  /** Minutes past shift start when late (stored in DB). */
+  lateMinutes: number;
+  /** Billable late after 1h tardy relaxation (monthly Total Late / excess display). */
+  excessLateMinutes: number;
+};
+
+export function excessLateMinutesFromRaw(rawLateMinutes: number | null | undefined): number {
+  const n = Number(rawLateMinutes);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(0, Math.floor(n) - TARDY_RELAXATION_MINUTES);
+}
+
+export function isLatePastHalfDayThreshold(rawLateMinutes: number | null | undefined): boolean {
+  const n = Number(rawLateMinutes);
+  return Number.isFinite(n) && n > LATE_HALF_DAY_THRESHOLD_MINUTES;
+}
+
+/** Absent / Half Day must not contribute late minutes in monthly attendance. */
+export function lateCountsForStatus(statusLabel: string | null | undefined): boolean {
+  const s = normalizeAttendanceStatus(statusLabel || "");
+  if (!s || s === "Absent") return false;
+  if (s === STATUS_FIRST_HALF_DAY || s === STATUS_SECOND_HALF_DAY) return false;
+  return s === "Tardy";
+}
+
 export function computeClockInLateStatus(
   clockIn: unknown,
   shiftStart: unknown,
   gender?: string | null
-): { isLate: boolean; lateMinutes: number } {
+): ClockInLateStatus {
   const shift = normalizeShiftTimeString(shiftStart);
   const clockIso = formatDbClockInForLateCheck(clockIn);
   if (!shift || !clockIso) {
-    return { isLate: false, lateMinutes: 0 };
+    return { isLate: false, lateMinutes: 0, excessLateMinutes: 0 };
   }
   return computeLate(clockIso, shift, graceMinutesForGender(gender));
 }
@@ -275,17 +306,22 @@ function computeLate(
   clockIn: string | null | undefined,
   shiftStart: string | null | undefined,
   graceMinutes: number,
-): { isLate: boolean; lateMinutes: number } {
+): ClockInLateStatus {
   const shiftStartMinutes = parseShiftTimeToMinutes(shiftStart);
   const clockInMinutes = clockIn ? getTimeInMinutesInTimeZone(clockIn, SERVER_TIMEZONE) : null;
   if (shiftStartMinutes === null || clockInMinutes === null) {
-    return { isLate: false, lateMinutes: 0 };
+    return { isLate: false, lateMinutes: 0, excessLateMinutes: 0 };
   }
   let diff = clockInMinutes - shiftStartMinutes;
   if (diff < -12 * 60) diff += 24 * 60;
-  if (diff <= graceMinutes) return { isLate: false, lateMinutes: 0 };
-  // Past grace: count full minutes from shift start (do not subtract grace).
-  return { isLate: true, lateMinutes: diff };
+  if (diff <= graceMinutes) return { isLate: false, lateMinutes: 0, excessLateMinutes: 0 };
+  // Past gender grace: store full minutes from shift start; billable late subtracts 1h relaxation.
+  const lateMinutes = diff;
+  return {
+    isLate: true,
+    lateMinutes,
+    excessLateMinutes: excessLateMinutesFromRaw(lateMinutes),
+  };
 }
 
 /** Absent if worked hours are well below half-day threshold (scales with shift length). */
@@ -459,10 +495,13 @@ export function classifyDayAttendance(params: {
   const late = computeLate(clockIn, shiftStart, grace);
 
   if (!clockOut) {
+    if (isLatePastHalfDayThreshold(late.lateMinutes)) {
+      return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
+    }
     return {
       statusLabel: late.isLate ? "Tardy" : "On Time",
       isLate: late.isLate,
-      lateMinutes: late.lateMinutes,
+      lateMinutes: late.isLate ? late.excessLateMinutes : 0,
     };
   }
 
@@ -478,12 +517,17 @@ export function classifyDayAttendance(params: {
     return { statusLabel: "Absent", isLate: false, lateMinutes: 0 };
   }
 
+  // > 3h 30m late → Half Day (50%); do not count late minutes
+  if (isLatePastHalfDayThreshold(late.lateMinutes)) {
+    return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
+  }
+
   if (shiftSeconds <= 0) {
     if (late.isLate) {
       return {
         statusLabel: "Tardy",
         isLate: true,
-        lateMinutes: late.lateMinutes,
+        lateMinutes: late.excessLateMinutes,
       };
     }
     return { statusLabel: "On Time", isLate: false, lateMinutes: 0 };
@@ -509,12 +553,12 @@ export function classifyDayAttendance(params: {
     return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
   }
 
-  // Full-ish day: then late → Tardy
+  // Full-ish day: then late → Tardy (billable = raw − 1h relaxation)
   if (late.isLate) {
     return {
       statusLabel: "Tardy",
       isLate: true,
-      lateMinutes: late.lateMinutes,
+      lateMinutes: late.excessLateMinutes,
     };
   }
 

@@ -8,10 +8,13 @@ import {
   importedDeductionForStatus,
   isEmptyClockDisplay,
   isFiveHourAssignedShift,
+  isLatePastHalfDayThreshold,
+  lateCountsForStatus,
   parseDisplayClockToIso,
   parseHmDurationToSeconds,
   resolveImportedDayStatus,
   shiftSecondsFromAssignedWH,
+  STATUS_FIRST_HALF_DAY,
   totalDeductionPercentForFiveHourDays,
   workedSecondsBetween,
 } from "./monthly-attendance-status";
@@ -616,8 +619,24 @@ function buildDateMetaFromImportedDays(
     if (!isEmptyClockDisplay(day.clockIn) && opts?.shiftStart) {
       const iso = parseDisplayClockToIso(day.dateKey, day.clockIn, 0);
       if (iso) {
-        lateMinutes = computeClockInLateStatus(iso, opts.shiftStart, opts.gender).lateMinutes;
+        const late = computeClockInLateStatus(iso, opts.shiftStart, opts.gender);
+        if (
+          isLatePastHalfDayThreshold(late.lateMinutes) &&
+          (statusLabel === "Tardy" || statusLabel === "On Time")
+        ) {
+          if (statusLabel === "Tardy" && runningTardy > 0) {
+            runningTardy -= 1;
+          }
+          statusLabel = STATUS_FIRST_HALF_DAY;
+          deduction = "50%";
+          runningLate = "";
+        }
+        lateMinutes = lateCountsForStatus(statusLabel)
+          ? late.excessLateMinutes
+          : 0;
       }
+    } else {
+      lateMinutes = 0;
     }
 
     dateMeta[day.dateKey] = {

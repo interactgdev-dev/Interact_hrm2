@@ -171,32 +171,6 @@ export default function JobPage() {
 						<div className={styles.row}>
 							<select
 								className={styles.select}
-								value={job.jobCategory}
-								onChange={(e) =>
-									setJob((j) => ({ ...j, jobCategory: e.target.value }))
-								}
-							>
-								<option value="">-- Select Job Category --</option>
-								<option value="IT">IT</option>
-								<option value="HR">HR</option>
-								<option value="Finance">Finance</option>
-								<option value="Other">Other</option>
-							</select>
-							<select
-								className={styles.select}
-								value={job.subUnit}
-								onChange={(e) =>
-									setJob((j) => ({ ...j, subUnit: e.target.value }))
-								}
-							>
-								<option value="">-- Select Sub Unit --</option>
-								<option value="Development">Development</option>
-								<option value="Recruitment">Recruitment</option>
-								<option value="Accounts">Accounts</option>
-								<option value="Other">Other</option>
-							</select>
-							<select
-								className={styles.select}
 								value={job.location}
 								onChange={(e) =>
 									setJob((j) => ({ ...j, location: e.target.value }))

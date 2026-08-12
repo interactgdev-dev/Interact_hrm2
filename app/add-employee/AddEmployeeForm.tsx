@@ -13,6 +13,7 @@ const employeeTabs = [
   { name: "Job Details" },
   { name: "Allowances" },
   { name: "Salary" },
+  { name: "Appraisal" },
   { name: "Attachments" },
 ];
 
@@ -96,12 +97,17 @@ export default function AddEmployeeForm({
         body: JSON.stringify({
           employee_id: employeeId,
           street1: contactAddress.street1,
-          street2: contactAddress.street2,
+          street2: "",
           city: contactAddress.city,
           state: contactAddress.state,
           zip: contactAddress.zip,
           country: contactAddress.country,
-          phone_home: contactTelephone.home,
+          permanent_street: permanentAddress.street,
+          permanent_city: permanentAddress.city,
+          permanent_state: permanentAddress.state,
+          permanent_zip: permanentAddress.zip,
+          permanent_country: permanentAddress.country,
+          phone_home: "",
           phone_mobile: contactTelephone.mobile,
           phone_work: contactTelephone.work,
           email_work: contactEmail.work,
@@ -180,6 +186,7 @@ export default function AddEmployeeForm({
   // Allowances — defaults used by Monthly Payroll (Fuel + CTD)
   const [fuelAllowance, setFuelAllowance] = useState("");
   const [companyTransportDeduction, setCompanyTransportDeduction] = useState("");
+  const [travelAllowanceType, setTravelAllowanceType] = useState<"fuel" | "ctd" | "">("");
 
   const handleAllowancesSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -193,9 +200,18 @@ export default function AddEmployeeForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           employee_id: employeeId,
-          fuel_allowance: fuelAllowance === "" ? null : Number(fuelAllowance),
+          fuel_allowance:
+            travelAllowanceType === "fuel"
+              ? fuelAllowance === ""
+                ? null
+                : Number(fuelAllowance)
+              : null,
           company_transport_deduction:
-            companyTransportDeduction === "" ? null : Number(companyTransportDeduction),
+            travelAllowanceType === "ctd"
+              ? companyTransportDeduction === ""
+                ? null
+                : Number(companyTransportDeduction)
+              : null,
           allowancesOnly: true,
         }),
       });
@@ -230,8 +246,49 @@ export default function AddEmployeeForm({
       const data = await res.json();
       if (data.success) {
         toastSuccess('Salary details saved!');
-        setActiveTab('Attachments');
+        setActiveTab('Appraisal');
         if (onSaved) onSaved();
+      } else {
+        toastError('Save failed: ' + (data.error || 'Unknown'));
+      }
+    } catch (err) {
+      toastError('Save failed: ' + String(err));
+    }
+  };
+
+  const handleAppraisalSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!employeeId) {
+      toastInfo('Please save Personal Details first.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/employee_jobs', {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employee_id: employeeId,
+          joinedDate: jobDetails.joinedDate,
+          firstAppraisalMonths: jobDetails.firstAppraisalMonths
+            ? Number(jobDetails.firstAppraisalMonths)
+            : null,
+          secondAppraisalMonths: jobDetails.secondAppraisalMonths
+            ? Number(jobDetails.secondAppraisalMonths)
+            : null,
+          jobTitle: jobDetails.jobTitle,
+          jobSpecification: jobDetails.jobSpecification,
+          jobCategory: jobDetails.jobCategory,
+          subUnit: jobDetails.subUnit,
+          location: jobDetails.location,
+          employmentStatus: jobDetails.employmentStatus,
+          includeContract: jobDetails.includeContract,
+          departmentId: jobDetails.departmentId ? parseInt(jobDetails.departmentId) : null,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toastSuccess('Appraisal details saved!');
+        setActiveTab('Attachments');
       } else {
         toastError('Save failed: ' + (data.error || 'Unknown'));
       }
@@ -243,13 +300,16 @@ export default function AddEmployeeForm({
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [fatherName, setFatherName] = useState("");
   const [employeeId, setEmployeeId] = useState<string | null>(editEmployeeId);
   const [dob, setDob] = useState("");
   const [gender, setGender] = useState("");
   const [maritalStatus, setMaritalStatus] = useState("");
   const [nationality, setNationality] = useState("");
+  const [bloodGroup, setBloodGroup] = useState("");
   const [cnicNumber, setCnicNumber] = useState("");
-  const [cnicAddress, setCnicAddress] = useState("");
+  const [cnicIssuanceDate, setCnicIssuanceDate] = useState("");
+  const [cnicExpiryDate, setCnicExpiryDate] = useState("");
   const [employmentStatus, setEmploymentStatus] = useState("");
   const [employmentType, setEmploymentType] = useState("");
   const [workingHours, setWorkingHours] = useState<string>("");
@@ -268,7 +328,14 @@ export default function AddEmployeeForm({
   }, [createLogin]);
   
   const [contactAddress, setContactAddress] = useState({ street1: "", street2: "", city: "", state: "", zip: "", country: "" });
-  const [contactTelephone, setContactTelephone] = useState({ home: "", mobile: "", work: "" });
+  const [permanentAddress, setPermanentAddress] = useState({
+    street: "",
+    city: "",
+    state: "",
+    zip: "",
+    country: "",
+  });
+  const [contactTelephone, setContactTelephone] = useState({ mobile: "", work: "" });
   const [contactEmail, setContactEmail] = useState({ work: "", other: "" });
   
 
@@ -330,13 +397,16 @@ export default function AddEmployeeForm({
             setFirstName(data.employee.first_name || "");
             setMiddleName(data.employee.pseudonym || data.employee.middle_name || "");
             setLastName(data.employee.last_name || "");
+            setFatherName(data.employee.father_name || "");
             setEmployeeId(String(data.employee.id || editEmployeeId || ""));
             setDob(formatDateForInput(data.employee.dob));
             setGender(data.employee.gender || "");
             setMaritalStatus(data.employee.marital_status || "");
             setNationality(data.employee.nationality || "");
+            setBloodGroup(data.employee.blood_group || "");
             setCnicNumber(data.employee.cnic_number || "");
-            setCnicAddress(data.employee.cnic_address || "");
+            setCnicIssuanceDate(formatDateForInput(data.employee.cnic_issuance_date));
+            setCnicExpiryDate(formatDateForInput(data.employee.cnic_expiry_date));
             setEmploymentStatus(data.employee.employment_status || "");
             setEmploymentType(data.employee.employment_type || "");
             setWorkingHours(
@@ -367,15 +437,24 @@ export default function AddEmployeeForm({
         console.log('Contact data:', data);
         if (data.success && data.contact) {
           setContactAddress({
-            street1: data.contact.street1 || "",
-            street2: data.contact.street2 || "",
+            street1: [data.contact.street1, data.contact.street2]
+              .map((s: string) => (s || "").trim())
+              .filter(Boolean)
+              .join(", "),
+            street2: "",
             city: data.contact.city || "",
             state: data.contact.state || "",
             zip: data.contact.zip || "",
             country: data.contact.country || ""
           });
+          setPermanentAddress({
+            street: data.contact.permanent_street || "",
+            city: data.contact.permanent_city || "",
+            state: data.contact.permanent_state || "",
+            zip: data.contact.permanent_zip || "",
+            country: data.contact.permanent_country || "",
+          });
           setContactTelephone({
-            home: data.contact.phone_home || "",
             mobile: data.contact.phone_mobile || "",
             work: data.contact.phone_work || ""
           });
@@ -462,6 +541,14 @@ export default function AddEmployeeForm({
           ) {
             setCompanyTransportDeduction(String(data.salary.company_transport_deduction));
           }
+          if (data.salary.fuel_allowance != null && data.salary.fuel_allowance !== "") {
+            setTravelAllowanceType("fuel");
+          } else if (
+            data.salary.company_transport_deduction != null &&
+            data.salary.company_transport_deduction !== ""
+          ) {
+            setTravelAllowanceType("ctd");
+          }
         }
       })
       .catch(err => console.error('Error fetching salary details:', err));
@@ -515,13 +602,16 @@ export default function AddEmployeeForm({
       first_name: firstName || '',
       middle_name: middleName || '',
       last_name: lastName || '',
+      father_name: fatherName || '',
       employee_code: '', // optional, not used for assignment
       dob: dob || '',
       gender: gender || '',
       marital_status: maritalStatus || '',
       nationality: nationality || '',
+      blood_group: bloodGroup || '',
       cnic_number: cnicNumber || '',
-      cnic_address: cnicAddress || '',
+      cnic_issuance_date: cnicIssuanceDate || '',
+      cnic_expiry_date: cnicExpiryDate || '',
       employment_status: employmentStatus || '',
       employment_type: employmentType || '',
       working_hours:
@@ -614,6 +704,12 @@ export default function AddEmployeeForm({
                   <label className={styles.fieldLabel}>Last Name</label>
                   <input className={styles.input} type="text" placeholder="Last Name" value={lastName} onChange={e => setLastName(e.target.value)} required />
                 </div>
+              </div>
+              <div className={styles.row}>
+                <div className={styles.field}>
+                  <label className={styles.fieldLabel}>Father Name</label>
+                  <input className={styles.input} type="text" placeholder="Father Name" value={fatherName} onChange={e => setFatherName(e.target.value)} />
+                </div>
                 <div className={styles.field}>
                   <label className={styles.fieldLabel}>Pseudo Name</label>
                   <input className={styles.input} type="text" placeholder="Pseudonym" value={middleName} onChange={e => setMiddleName(e.target.value)} />
@@ -653,14 +749,34 @@ export default function AddEmployeeForm({
                   <input className={styles.input} type="text" placeholder="Nationality" value={nationality} onChange={e => setNationality(e.target.value)} />
                 </div>
               </div>
+              <div>
+                <label className={styles.fieldLabel}>Blood Group</label>
+                <div className={styles.row}>
+                  <select className={styles.select} value={bloodGroup} onChange={e => setBloodGroup(e.target.value)}>
+                    <option value="">Select Blood Group</option>
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                  </select>
+                </div>
+              </div>
               <div className={styles.row}>
                 <div className={styles.field}>
                   <label className={styles.fieldLabel}>CNIC #</label>
                   <input className={styles.input} type="text" placeholder="CNIC #" value={cnicNumber} onChange={e => setCnicNumber(e.target.value)} />
                 </div>
                 <div className={styles.field}>
-                  <label className={styles.fieldLabel}>CNIC Address</label>
-                  <input className={styles.input} type="text" placeholder="CNIC Address" value={cnicAddress} onChange={e => setCnicAddress(e.target.value)} />
+                  <label className={styles.fieldLabel}>CNIC Issuance Date</label>
+                  <input className={styles.input} type="date" value={cnicIssuanceDate} onChange={e => setCnicIssuanceDate(e.target.value)} />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.fieldLabel}>CNIC Expiry Date</label>
+                  <input className={styles.input} type="date" value={cnicExpiryDate} onChange={e => setCnicExpiryDate(e.target.value)} />
                 </div>
               </div>
               <div>
@@ -804,16 +920,21 @@ export default function AddEmployeeForm({
                 </div>
               )}
               <form className={styles.form} style={{ width: "100%" }} onSubmit={handleContactSave}>
-                <p className={styles.sectionTitle}>Address</p>
+                <p className={styles.sectionTitle}>Current Address</p>
                 <div className={styles.row}>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Street 1</label>
-                    <input className={styles.input} type="text" placeholder="Street 1" value={contactAddress.street1} onChange={e => setContactAddress(a => ({ ...a, street1: e.target.value }))} required />
+                  <div className={styles.field} style={{ flex: 1, minWidth: "100%" }}>
+                    <label className={styles.fieldLabel}>Street/House/Area</label>
+                    <input
+                      className={styles.input}
+                      type="text"
+                      placeholder="Street/House/Area"
+                      value={contactAddress.street1}
+                      onChange={e => setContactAddress(a => ({ ...a, street1: e.target.value, street2: "" }))}
+                      required
+                    />
                   </div>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Street 2</label>
-                    <input className={styles.input} type="text" placeholder="Street 2" value={contactAddress.street2} onChange={e => setContactAddress(a => ({ ...a, street2: e.target.value }))} />
-                  </div>
+                </div>
+                <div className={styles.row}>
                   <div className={styles.field}>
                     <label className={styles.fieldLabel}>City</label>
                     <input className={styles.input} type="text" placeholder="City" value={contactAddress.city} onChange={e => setContactAddress(a => ({ ...a, city: e.target.value }))} required />
@@ -841,15 +962,52 @@ export default function AddEmployeeForm({
                     </select>
                   </div>
                 </div>
+                <p className={styles.sectionTitle}>Permanent Address</p>
+                <div className={styles.row}>
+                  <div className={styles.field} style={{ flex: 1, minWidth: "100%" }}>
+                    <label className={styles.fieldLabel}>Street/House/Area</label>
+                    <input
+                      className={styles.input}
+                      type="text"
+                      placeholder="Street/House/Area"
+                      value={permanentAddress.street}
+                      onChange={e => setPermanentAddress(a => ({ ...a, street: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className={styles.row}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>City</label>
+                    <input className={styles.input} type="text" placeholder="City" value={permanentAddress.city} onChange={e => setPermanentAddress(a => ({ ...a, city: e.target.value }))} />
+                  </div>
+                </div>
+                <div className={styles.row}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>State/Province</label>
+                    <input className={styles.input} type="text" placeholder="State/Province" value={permanentAddress.state} onChange={e => setPermanentAddress(a => ({ ...a, state: e.target.value }))} />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>Zip/Postal Code</label>
+                    <input className={styles.input} type="text" placeholder="Zip/Postal Code" value={permanentAddress.zip} onChange={e => setPermanentAddress(a => ({ ...a, zip: e.target.value }))} />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>Country</label>
+                    <select className={styles.select} value={permanentAddress.country} onChange={e => setPermanentAddress(a => ({ ...a, country: e.target.value }))}>
+                      <option value="">-- Select --</option>
+                      <option value="Pakistan">Pakistan</option>
+                      <option value="India">India</option>
+                      <option value="UAE">UAE</option>
+                      <option value="USA">USA</option>
+                      <option value="UK">UK</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
                 <p className={styles.sectionTitle}>Telephone</p>
                 <div className={styles.row}>
                   <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Home</label>
-                    <input className={styles.input} type="text" placeholder="Home" value={contactTelephone.home} onChange={e => setContactTelephone(t => ({ ...t, home: e.target.value }))} />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Mobile</label>
-                    <input className={styles.input} type="text" placeholder="Mobile" value={contactTelephone.mobile} onChange={e => setContactTelephone(t => ({ ...t, mobile: e.target.value }))} required />
+                    <label className={styles.fieldLabel}>Personal Mobile</label>
+                    <input className={styles.input} type="text" placeholder="Personal Mobile" value={contactTelephone.mobile} onChange={e => setContactTelephone(t => ({ ...t, mobile: e.target.value }))} required />
                   </div>
                   <div className={styles.field}>
                     <label className={styles.fieldLabel}>Work</label>
@@ -937,52 +1095,8 @@ export default function AddEmployeeForm({
                 </div>
                 <div className={styles.row}>
                   <div className={styles.field}>
-                    <label className={styles.fieldLabel}>1st Appraisal Timing</label>
-                    <select
-                      className={styles.select}
-                      value={jobDetails.firstAppraisalMonths}
-                      onChange={(e) =>
-                        setJobDetails((j) => ({ ...j, firstAppraisalMonths: e.target.value }))
-                      }
-                    >
-                      <option value="">Select 1st appraisal</option>
-                      <option value="3">After 3 months</option>
-                      <option value="6">After 6 months</option>
-                    </select>
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>2nd Appraisal Timing</label>
-                    <select
-                      className={styles.select}
-                      value={jobDetails.secondAppraisalMonths}
-                      onChange={(e) =>
-                        setJobDetails((j) => ({ ...j, secondAppraisalMonths: e.target.value }))
-                      }
-                    >
-                      <option value="">Select 2nd appraisal</option>
-                      <option value="7">After 7 months</option>
-                      <option value="8">After 8 months</option>
-                      <option value="12">Annual (12 months)</option>
-                    </select>
-                  </div>
-                </div>
-                <div className={styles.row}>
-                  <div className={styles.field}>
                     <label className={styles.fieldLabel}>Job Specification</label>
                     <input className={styles.input} type="text" placeholder="Job Specification" value={jobDetails.jobSpecification} onChange={e => setJobDetails(j => ({ ...j, jobSpecification: e.target.value }))} />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Job Category</label>
-                    <select className={styles.select} value={jobDetails.jobCategory} onChange={e => setJobDetails(j => ({ ...j, jobCategory: e.target.value }))}>
-                      <option value="">-- Select --</option>
-                      <option value="IT">IT</option>
-                      <option value="HR">HR</option>
-                      <option value="Finance">Finance</option>
-                      <option value="Operations">Operations</option>
-                      <option value="Sales">Sales</option>
-                      <option value="Marketing">Marketing</option>
-                      <option value="Other">Other</option>
-                    </select>
                   </div>
                 </div>
                 <div className={styles.row}>
@@ -994,10 +1108,6 @@ export default function AddEmployeeForm({
                         <option key={dep.id} value={dep.id}>{dep.name}</option>
                       ))}
                     </select>
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Sub Unit</label>
-                    <input className={styles.input} type="text" placeholder="Sub Unit" value={jobDetails.subUnit} onChange={e => setJobDetails(j => ({ ...j, subUnit: e.target.value }))} />
                   </div>
                   <div className={styles.field}>
                     <label className={styles.fieldLabel}>Location</label>
@@ -1021,32 +1131,55 @@ export default function AddEmployeeForm({
                 <p className={styles.note}>
                   These defaults feed Monthly Payroll. You can still override Fuel Allowance and Company Transport Deduction (CTD) per month on the payroll page.
                 </p>
+                <p className={styles.sectionTitle}>Travel Allowance</p>
                 <div className={styles.row}>
                   <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Fuel Allowance</label>
-                    <input
-                      className={styles.input}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="e.g. 5000"
-                      value={fuelAllowance}
-                      onChange={(e) => setFuelAllowance(e.target.value)}
-                    />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Company Transport Deduction</label>
-                    <input
-                      className={styles.input}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="e.g. 3000"
-                      value={companyTransportDeduction}
-                      onChange={(e) => setCompanyTransportDeduction(e.target.value)}
-                    />
+                    <label className={styles.fieldLabel}>Type</label>
+                    <select
+                      className={styles.select}
+                      value={travelAllowanceType}
+                      onChange={(e) =>
+                        setTravelAllowanceType(e.target.value as "fuel" | "ctd" | "")
+                      }
+                    >
+                      <option value="">-- Select --</option>
+                      <option value="fuel">Fuel Allowance</option>
+                      <option value="ctd">CT Deduction</option>
+                    </select>
                   </div>
                 </div>
+                {travelAllowanceType === "fuel" && (
+                  <div className={styles.row}>
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>Fuel Allowance</label>
+                      <input
+                        className={styles.input}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="e.g. 5000"
+                        value={fuelAllowance}
+                        onChange={(e) => setFuelAllowance(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+                {travelAllowanceType === "ctd" && (
+                  <div className={styles.row}>
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>CT Deduction</label>
+                      <input
+                        className={styles.input}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="e.g. 3000"
+                        value={companyTransportDeduction}
+                        onChange={(e) => setCompanyTransportDeduction(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className={styles.actionsLeft}>
                   <button type="submit" className={styles.saveBtn}>Save</button>
                 </div>
@@ -1063,19 +1196,6 @@ export default function AddEmployeeForm({
               <form className={styles.form} style={{ width: "100%" }} onSubmit={handleSalarySave}>
                 <div className={styles.row}>
                   <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Salary Component*</label>
-                    <input className={styles.input} type="text" placeholder="Salary Component*" value={salaryDetails.component} onChange={e => setSalaryDetails(s => ({ ...s, component: e.target.value }))} />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Pay Grade</label>
-                    <select className={styles.select} value={salaryDetails.payGrade} onChange={e => setSalaryDetails(s => ({ ...s, payGrade: e.target.value }))}>
-                      <option value="">-- Select --</option>
-                      <option value="A">A</option>
-                      <option value="B">B</option>
-                      <option value="C">C</option>
-                    </select>
-                  </div>
-                  <div className={styles.field}>
                     <label className={styles.fieldLabel}>Pay Frequency</label>
                     <select className={styles.select} value={salaryDetails.payFrequency} onChange={e => setSalaryDetails(s => ({ ...s, payFrequency: e.target.value }))}>
                       <option value="">-- Select --</option>
@@ -1084,8 +1204,6 @@ export default function AddEmployeeForm({
                       <option value="Yearly">Yearly</option>
                     </select>
                   </div>
-                </div>
-                <div className={styles.row}>
                   <div className={styles.field}>
                     <label className={styles.fieldLabel}>Currency</label>
                     <select className={styles.select} value={salaryDetails.currency} onChange={e => setSalaryDetails(s => ({ ...s, currency: e.target.value }))}>
@@ -1115,21 +1233,64 @@ export default function AddEmployeeForm({
                 {salaryDetails.directDeposit && (
                   <div>
                     <div className={styles.row}>
-                      <input className={styles.input} type="text" placeholder="Account Number*" value={salaryDetails.accountNumber} onChange={e => setSalaryDetails(s => ({ ...s, accountNumber: e.target.value }))} />
-                      <select className={styles.select} value={salaryDetails.accountType} onChange={e => setSalaryDetails(s => ({ ...s, accountType: e.target.value }))}>
-                        <option value="">-- Select --</option>
-                        <option value="Savings">Savings</option>
-                        <option value="Current">Current</option>
-                      </select>
-                    </div>
-                    <div className={styles.row}>
-                      <input className={styles.input} type="text" placeholder="Bank Name*" value={salaryDetails.routingNumber} onChange={e => setSalaryDetails(s => ({ ...s, routingNumber: e.target.value }))} />
-                      <input className={styles.input} type="number" placeholder="Amount*" value={salaryDetails.depositAmount} onChange={e => setSalaryDetails(s => ({ ...s, depositAmount: e.target.value }))} />
+                      <div className={styles.field}>
+                        <label className={styles.fieldLabel}>Account Number / IBAN</label>
+                        <input className={styles.input} type="text" placeholder="Account Number / IBAN" value={salaryDetails.accountNumber} onChange={e => setSalaryDetails(s => ({ ...s, accountNumber: e.target.value }))} />
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.fieldLabel}>Bank Name</label>
+                        <input className={styles.input} type="text" placeholder="Bank Name" value={salaryDetails.routingNumber} onChange={e => setSalaryDetails(s => ({ ...s, routingNumber: e.target.value }))} />
+                      </div>
                     </div>
                   </div>
                 )}
                 <div className={styles.actions}>
                   <button type="button" className={styles.cancelBtn}>Cancel</button>
+                  <button type="submit" className={styles.saveBtn}>Save</button>
+                </div>
+              </form>
+            </div>
+          )}
+          {activeTab === "Appraisal" && (
+            <div>
+              {employeeId && (
+                <div className={styles.employeeBadge}>
+                  Employee: {firstName} {lastName} (ID: {employeeId})
+                </div>
+              )}
+              <form className={styles.form} style={{ width: "100%" }} onSubmit={handleAppraisalSave}>
+                <div className={styles.row}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>1st Appraisal Timing</label>
+                    <select
+                      className={styles.select}
+                      value={jobDetails.firstAppraisalMonths}
+                      onChange={(e) =>
+                        setJobDetails((j) => ({ ...j, firstAppraisalMonths: e.target.value }))
+                      }
+                    >
+                      <option value="">Select 1st appraisal</option>
+                      <option value="3">After 3 months</option>
+                      <option value="6">After 6 months</option>
+                    </select>
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>2nd Appraisal Timing</label>
+                    <select
+                      className={styles.select}
+                      value={jobDetails.secondAppraisalMonths}
+                      onChange={(e) =>
+                        setJobDetails((j) => ({ ...j, secondAppraisalMonths: e.target.value }))
+                      }
+                    >
+                      <option value="">Select 2nd appraisal</option>
+                      <option value="7">After 7 months</option>
+                      <option value="8">After 8 months</option>
+                      <option value="12">Annual (12 months)</option>
+                    </select>
+                  </div>
+                </div>
+                <div className={styles.actionsLeft}>
                   <button type="submit" className={styles.saveBtn}>Save</button>
                 </div>
               </form>
