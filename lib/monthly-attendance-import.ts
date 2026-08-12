@@ -14,7 +14,7 @@ import {
   parseHmDurationToSeconds,
   resolveImportedDayStatus,
   shiftSecondsFromAssignedWH,
-  STATUS_FIRST_HALF_DAY,
+  halfDayStatusForExcessiveLate,
   totalDeductionPercentForFiveHourDays,
   workedSecondsBetween,
 } from "./monthly-attendance-status";
@@ -576,7 +576,7 @@ export function loadImportedMonthlySnapshot(month: string): ImportedMonthlySnaps
 /** Read Status/Deduction already set on sheet rows by applyHrRulesDirectlyOnSheet. */
 function buildDateMetaFromImportedDays(
   days: ImportedMonthlyDay[],
-  opts?: { shiftStart?: string | null; gender?: string | null },
+  opts?: { shiftStart?: string | null; shiftEnd?: string | null; gender?: string | null },
 ) {
   const dateMeta: Record<
     string,
@@ -627,7 +627,12 @@ function buildDateMetaFromImportedDays(
           if (statusLabel === "Tardy" && runningTardy > 0) {
             runningTardy -= 1;
           }
-          statusLabel = STATUS_FIRST_HALF_DAY;
+          statusLabel = halfDayStatusForExcessiveLate({
+            dateKey: day.dateKey,
+            clockIn: iso,
+            shiftStart: opts.shiftStart,
+            shiftEnd: opts.shiftEnd ?? null,
+          });
           deduction = "50%";
           runningLate = "";
         }
@@ -664,6 +669,7 @@ export function importedSnapshotToAttendanceEmployees(snapshot: ImportedMonthlyS
     const byDate: Record<string, any[]> = {};
     const { dateMeta, sorted, totalDeduction } = buildDateMetaFromImportedDays(emp.days, {
       shiftStart: emp.shiftStart,
+      shiftEnd: emp.shiftEnd,
     });
 
     sorted.forEach((day) => {

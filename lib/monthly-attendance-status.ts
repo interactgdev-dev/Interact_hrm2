@@ -410,7 +410,7 @@ export function isNearFullShiftWork(workedSeconds: number, shiftSeconds: number)
 
 /**
  * Half day: 4.5–5h total work + shift timing (HR rules).
- * 1st-Half: in at shift start, out early. 2nd-Half: in after first 4.5h of shift.
+ * 1st-Half: in before mid-shift, out early. 2nd-Half: in at/after mid-shift (last hours).
  */
 export function classifyHalfDayType(params: {
   dateKey: string;
@@ -422,8 +422,7 @@ export function classifyHalfDayType(params: {
   workedSeconds: number;
   graceMinutes: number;
 }): typeof STATUS_FIRST_HALF_DAY | typeof STATUS_SECOND_HALF_DAY | null {
-  const { dateKey, clockIn, clockOut, shiftStart, shiftEnd, shiftSeconds, workedSeconds, graceMinutes } =
-    params;
+  const { dateKey, clockIn, clockOut, shiftStart, shiftEnd, shiftSeconds, workedSeconds } = params;
 
   const effectiveShift = shiftSeconds > 0 ? shiftSeconds : 9 * 3600;
   if (isNearFullShiftWork(workedSeconds, effectiveShift)) return null;
@@ -449,19 +448,68 @@ export function classifyHalfDayType(params: {
 
   const halfPointMin = startMin + Math.round(effectiveShift / 120);
   const leftBeforeShiftEnd = outAdj < shiftEndAdj - 15;
-  const boundarySlackMin = 5;
+  const boundarySlackMin = 15;
 
-  // 2nd-Half: in at/after first 4.5h of shift (e.g. ~09:59 PM on 5:30 PM shift)
+  // 2nd-Half: in during last hours of shift (at/after mid-shift)
   if (inAdj >= halfPointMin - boundarySlackMin) {
     return STATUS_SECOND_HALF_DAY;
   }
 
-  // 1st-Half: in before half point, left early (e.g. 05:55 PM in, 04h 25m)
+  // 1st-Half: in before half point, left early
   if (leftBeforeShiftEnd) {
     return STATUS_FIRST_HALF_DAY;
   }
 
   return null;
+}
+
+/**
+ * 1st vs 2nd half from clock-in vs mid-shift (for late > 3h30m Half Day).
+ * Shift last hours → 2nd-Half; earlier arrival (late from start) → 1st-Half.
+ */
+export function classifyHalfDayByClockIn(params: {
+  dateKey: string;
+  clockIn: string;
+  shiftStart: string;
+  shiftEnd: string;
+  shiftSeconds: number;
+}): typeof STATUS_FIRST_HALF_DAY | typeof STATUS_SECOND_HALF_DAY {
+  const { dateKey, clockIn, shiftStart, shiftSeconds } = params;
+  const effectiveShift = shiftSeconds > 0 ? shiftSeconds : 9 * 3600;
+
+  const startMin = minutesFromShiftHms(dateKey, shiftStart);
+  const inMin = minutesFromClockValue(dateKey, clockIn, 0);
+  if (startMin == null || inMin == null) return STATUS_FIRST_HALF_DAY;
+
+  let inAdj = inMin;
+  if (inAdj < startMin - 6 * 60) inAdj += 24 * 60;
+
+  const halfPointMin = startMin + Math.round(effectiveShift / 120);
+  const boundarySlackMin = 15;
+
+  if (inAdj >= halfPointMin - boundarySlackMin) {
+    return STATUS_SECOND_HALF_DAY;
+  }
+  return STATUS_FIRST_HALF_DAY;
+}
+
+/** Late beyond 3h30m → Half Day; pick 1st vs 2nd from shift timing / clock-in. */
+export function halfDayStatusForExcessiveLate(params: {
+  dateKey: string;
+  clockIn: string;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+}): typeof STATUS_FIRST_HALF_DAY | typeof STATUS_SECOND_HALF_DAY {
+  const { dateKey, clockIn, shiftStart, shiftEnd } = params;
+  if (!shiftStart || !shiftEnd) return STATUS_FIRST_HALF_DAY;
+  const shiftSeconds = shiftDurationSeconds(shiftStart, shiftEnd);
+  return classifyHalfDayByClockIn({
+    dateKey,
+    clockIn,
+    shiftStart,
+    shiftEnd,
+    shiftSeconds: shiftSeconds > 0 ? shiftSeconds : 9 * 3600,
+  });
 }
 
 /** Monthly tardy count → deduction % (HR: 1–3 → 0%, 4 → 50%, 5+ → 100%). */
@@ -496,7 +544,16 @@ export function classifyDayAttendance(params: {
 
   if (!clockOut) {
     if (isLatePastHalfDayThreshold(late.lateMinutes)) {
-      return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
+      return {
+        statusLabel: halfDayStatusForExcessiveLate({
+          dateKey,
+          clockIn,
+          shiftStart,
+          shiftEnd,
+        }),
+        isLate: false,
+        lateMinutes: 0,
+      };
     }
     return {
       statusLabel: late.isLate ? "Tardy" : "On Time",
@@ -517,9 +574,18 @@ export function classifyDayAttendance(params: {
     return { statusLabel: "Absent", isLate: false, lateMinutes: 0 };
   }
 
-  // > 3h 30m late → Half Day (50%); do not count late minutes
+  // > 3h 30m late → Half Day (50%); 1st vs 2nd from shift timing / clock-in
   if (isLatePastHalfDayThreshold(late.lateMinutes)) {
-    return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
+    return {
+      statusLabel: halfDayStatusForExcessiveLate({
+        dateKey,
+        clockIn,
+        shiftStart,
+        shiftEnd,
+      }),
+      isLate: false,
+      lateMinutes: 0,
+    };
   }
 
   if (shiftSeconds <= 0) {
