@@ -41,6 +41,169 @@ function splitTopLevel(list: string, sep: string): string[] {
   return out;
 }
 
+/** Index of top-level keyword (depth 0), or -1. */
+function indexOfTopLevelKeyword(sql: string, keyword: string): number {
+  const re = new RegExp(`\\b${keyword}\\b`, "ig");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql))) {
+    let depth = 0;
+    for (let i = 0; i < m.index; i++) {
+      if (sql[i] === "(") depth++;
+      else if (sql[i] === ")") depth = Math.max(0, depth - 1);
+    }
+    if (depth === 0) return m.index;
+  }
+  return -1;
+}
+
+function toDateKey(v: any): string | null {
+  if (v == null) return null;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return v.toISOString().slice(0, 10);
+  }
+  const s = String(v);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+function dateKeysCompatible(a: any, b: any): boolean {
+  const ka = toDateKey(a);
+  const kb = toDateKey(b);
+  if (ka && kb) return ka === kb;
+  return String(a) === String(b);
+}
+
+/**
+ * Parse SELECT into clauses using paren-aware keyword search so subquery
+ * WHERE/ORDER BY do not steal the main clause.
+ */
+function parseSelectSql(raw: string): {
+  selectSql: string;
+  fromChunk: string;
+  whereSql: string | null;
+  orderSql: string | null;
+  limit?: number;
+  offsetN: number;
+} | null {
+  if (!/^SELECT\b/i.test(raw)) return null;
+  const fromAt = indexOfTopLevelKeyword(raw, "FROM");
+  if (fromAt < 0) return null;
+  const selectSql = raw.slice("SELECT".length, fromAt).trim();
+  let rest = raw.slice(fromAt + "FROM".length).trim();
+
+  const whereAt = indexOfTopLevelKeyword(rest, "WHERE");
+  const orderAt = indexOfTopLevelKeyword(rest, "ORDER");
+  const limitAt = indexOfTopLevelKeyword(rest, "LIMIT");
+  const offsetAt = indexOfTopLevelKeyword(rest, "OFFSET");
+
+  const cuts = [whereAt, orderAt, limitAt, offsetAt].filter((i) => i >= 0);
+  const firstCut = cuts.length ? Math.min(...cuts) : rest.length;
+  const fromChunk = rest.slice(0, firstCut).trim();
+
+  let whereSql: string | null = null;
+  let orderSql: string | null = null;
+  let limit: number | undefined;
+  let offsetN = 0;
+
+  if (whereAt >= 0) {
+    const endCandidates = [orderAt, limitAt, offsetAt].filter((i) => i > whereAt);
+    const end = endCandidates.length ? Math.min(...endCandidates) : rest.length;
+    whereSql = rest.slice(whereAt + "WHERE".length, end).trim();
+  }
+  if (orderAt >= 0) {
+    const relRest = rest.slice(orderAt);
+    const limRel = indexOfTopLevelKeyword(relRest, "LIMIT");
+    const offRel = indexOfTopLevelKeyword(relRest, "OFFSET");
+    const endRel = [limRel, offRel].filter((i) => i >= 0);
+    const end = endRel.length ? Math.min(...endRel) : relRest.length;
+    orderSql = relRest
+      .slice(0, end)
+      .replace(/^\s*ORDER\s+BY\s+/i, "")
+      .trim();
+  }
+  if (limitAt >= 0) {
+    const limChunk = rest.slice(limitAt).match(/^\s*LIMIT\s+(\d+)/i);
+    if (limChunk) limit = Number(limChunk[1]);
+  }
+  if (offsetAt >= 0) {
+    const offChunk = rest.slice(offsetAt).match(/^\s*OFFSET\s+(\d+)/i);
+    if (offChunk) offsetN = Number(offChunk[1]);
+  }
+
+  return { selectSql, fromChunk, whereSql, orderSql, limit, offsetN };
+}
+
+/** Pull correlated "latest shift as of date" JOIN out of FROM chunk. */
+function extractLatestShiftJoin(fromChunk: string): {
+  fromChunk: string;
+  shiftAlias: string | null;
+  dateField: string | null;
+} {
+  const re =
+    /\bLEFT\s+JOIN\s+shift_assignments\s+(?:AS\s+)?(\w+)\s+ON\s+[\s\S]*?SELECT\s+MAX\s*\(\s*\w+\.assigned_date\s*\)[\s\S]*?assigned_date\s*<=\s*([\w.]+)\s*\)/i;
+  const m = fromChunk.match(re);
+  if (!m) return { fromChunk, shiftAlias: null, dateField: null };
+  return {
+    fromChunk: fromChunk.replace(m[0], " ").replace(/\s+/g, " ").trim(),
+    shiftAlias: m[1],
+    dateField: m[2].includes(".") ? m[2].split(".").pop()! : m[2],
+  };
+}
+
+function attachLatestShift(
+  rows: Document[],
+  assignments: Document[],
+  dateField: string,
+): Document[] {
+  const byEmp = new Map<string, Document[]>();
+  for (const a of assignments) {
+    const k = String(a.employee_id ?? "");
+    if (!byEmp.has(k)) byEmp.set(k, []);
+    byEmp.get(k)!.push(a);
+  }
+  for (const list of byEmp.values()) {
+    list.sort((a, b) => {
+      const da = toDateKey(a.assigned_date) || "";
+      const db = toDateKey(b.assigned_date) || "";
+      if (da < db) return -1;
+      if (da > db) return 1;
+      return Number(b.id || 0) - Number(a.id || 0);
+    });
+  }
+
+  return rows.map((row) => {
+    const empId = String(row.employee_id ?? "");
+    const rowDate = toDateKey(row[dateField] ?? row.date);
+    const list = byEmp.get(empId) || [];
+    let best: Document | null = null;
+    for (const a of list) {
+      const ad = toDateKey(a.assigned_date);
+      if (!ad || !rowDate) continue;
+      if (ad <= rowDate) {
+        if (
+          !best ||
+          ad > (toDateKey(best.assigned_date) || "") ||
+          (ad === (toDateKey(best.assigned_date) || "") &&
+            Number(a.id || 0) > Number(best.id || 0))
+        ) {
+          best = a;
+        }
+      }
+    }
+    if (!best) return row;
+    return {
+      ...row,
+      shift_name: best.shift_name ?? row.shift_name,
+      shift_start_time: best.start_time ?? null,
+      shift_end_time: best.end_time ?? null,
+      shift_assigned_date: best.assigned_date ?? null,
+      start_time: best.start_time ?? row.start_time,
+      end_time: best.end_time ?? row.end_time,
+      assigned_date: best.assigned_date ?? row.assigned_date,
+    };
+  });
+}
+
 function coerceParam(v: any): any {
   if (v === undefined) return null;
   if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) {
@@ -220,6 +383,23 @@ function buildFilterFromWhere(
       const pattern = String(take());
       const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".");
       return { [ref.field]: { $regex: `^${escaped}$`, $options: "i" } };
+    }
+
+    // DATE(col) BETWEEN ? AND ?  /  col BETWEEN ? AND ?
+    m = s.match(
+      /^(?:DATE\s*\(\s*([\w.`]+)\s*\)|([\w.`]+))\s+BETWEEN\s+\?\s+AND\s+\?\s*$/i,
+    );
+    if (m) {
+      const ref = fieldRef(m[1] || m[2]);
+      const from = take();
+      const to = take();
+      return { [ref.field]: { $gte: from, $lte: to } };
+    }
+
+    // col = other.col (correlated — ignore for base filter)
+    m = s.match(/^([\w.`]+)\s*(=|!=|<>|>=|<=|>|<)\s*([\w.`]+)\s*$/i);
+    if (m && m[3] !== "?" && !/^[-'\d]/.test(m[3])) {
+      return {};
     }
 
     m = s.match(/^([\w.`]+)\s*(=|!=|<>|>=|<=|>|<)\s*\?\s*$/i);
@@ -427,17 +607,15 @@ export async function mongoExecute(
     return [resultHeader(res.deletedCount || 0), undefined];
   }
 
-  // SELECT
-  const selectMatch = raw.match(
-    /^SELECT\s+(.+?)\s+FROM\s+(.+?)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*$/i,
-  );
-  if (selectMatch) {
-    const selectSql = selectMatch[1];
-    const fromChunk = selectMatch[2];
-    const whereSql = selectMatch[3] || null;
-    const orderSql = selectMatch[4] || null;
-    const limit = selectMatch[5] ? Number(selectMatch[5]) : undefined;
-    const offsetN = selectMatch[6] ? Number(selectMatch[6]) : 0;
+  // SELECT (paren-aware — subquery WHERE must not win)
+  const parsedSelect = parseSelectSql(raw);
+  if (parsedSelect) {
+    let { selectSql, fromChunk, whereSql, orderSql, limit, offsetN } =
+      parsedSelect;
+
+    const shiftExtract = extractLatestShiftJoin(fromChunk);
+    fromChunk = shiftExtract.fromChunk;
+    const shiftDateField = shiftExtract.dateField;
 
     // COUNT(*)
     if (/^\s*COUNT\s*\(\s*\*\s*\)\s*(?:AS\s+[`\w]+)?\s*$/i.test(selectSql) && !/\bJOIN\b/i.test(fromChunk)) {
@@ -454,22 +632,47 @@ export async function mongoExecute(
     const select = parseSelectList(selectSql);
     const offset = { i: 0 };
 
-    // Base filter: only conditions on primary alias / unqualified fields
     const filter = buildFilterFromWhere(whereSql, p, offset, {
       [from.alias]: from.table,
     });
-    if ((filter as any).__unsupported_where) {
-      // For JOIN queries, fetch all base and filter in memory later
-    }
 
     let baseFilter: Filter<Document> = filter;
-    // If WHERE references other aliases, strip to {} and filter after join
     const whereUsesOtherAlias =
       whereSql &&
       joins.some((j) => new RegExp(`\\b${j.alias}\\.`, "i").test(whereSql));
 
-    if (whereUsesOtherAlias || (filter as any).__unsupported_where) {
-      baseFilter = {};
+    // Date BETWEEN / mixed Date|string storage: filter in memory after load
+    const hasDateRange =
+      whereSql &&
+      /\bBETWEEN\b/i.test(whereSql) &&
+      /\bdate\b/i.test(whereSql);
+
+    if (
+      whereUsesOtherAlias ||
+      (filter as any).__unsupported_where ||
+      hasDateRange ||
+      shiftDateField
+    ) {
+      // Keep simple equality on primary table fields when possible
+      const safe: Filter<Document> = {};
+      const walk = (f: Filter<Document>) => {
+        if (!f || typeof f !== "object") return;
+        if ((f as any).$and) {
+          for (const part of (f as any).$and) walk(part);
+          return;
+        }
+        if ((f as any).$or || (f as any).__unsupported_where) return;
+        for (const [k, v] of Object.entries(f)) {
+          if (k.startsWith("$")) continue;
+          if (k === "date" || k === "__unsupported_where") continue;
+          if (v && typeof v === "object" && ("$gte" in (v as any) || "$lte" in (v as any))) {
+            continue;
+          }
+          (safe as any)[k] = v;
+        }
+      };
+      walk(filter);
+      baseFilter = Object.keys(safe).length ? safe : {};
     }
 
     const sort: Record<string, 1 | -1> = {};
@@ -482,10 +685,11 @@ export async function mongoExecute(
       }
     }
 
+    const needsJoinWork = joins.length > 0 || !!shiftDateField;
     let cursor = db.collection(from.table).find(baseFilter);
-    if (Object.keys(sort).length && !joins.length) cursor = cursor.sort(sort);
-    if (!joins.length && offsetN) cursor = cursor.skip(offsetN);
-    if (!joins.length && limit != null) cursor = cursor.limit(limit);
+    if (Object.keys(sort).length && !needsJoinWork) cursor = cursor.sort(sort);
+    if (!needsJoinWork && offsetN) cursor = cursor.skip(offsetN);
+    if (!needsJoinWork && limit != null) cursor = cursor.limit(limit);
 
     let rows = (await cursor.toArray()).map(normalizeDocDates);
 
@@ -516,12 +720,15 @@ export async function mongoExecute(
           const merged: Document = { ...left };
           for (const [k, v] of Object.entries(right)) {
             if (k === "_id") continue;
-            // Prefer alias-prefixed for conflicts only when left already has key
             if (merged[k] === undefined) merged[k] = v;
             else merged[`${join.alias}_${k}`] = v;
-            // Also set common join projection names
             if (join.table === "departments" && k === "name") {
               merged.department_name = v;
+            }
+            if (join.table === "hrm_employees") {
+              if (k === "first_name" || k === "last_name" || k === "pseudonym" || k === "gender") {
+                merged[k] = v;
+              }
             }
           }
           joined.push(merged);
@@ -530,13 +737,21 @@ export async function mongoExecute(
       rows = joined;
     }
 
-    // Post-filter when WHERE used joined aliases or unsupported pieces
-    if (whereSql && (whereUsesOtherAlias || (filter as any).__unsupported_where || joins.length)) {
-      // Re-parse params from start for in-memory evaluate of simple equality only
-      // Prefer applying original filter fields that exist on merged rows
+    if (shiftDateField) {
+      const assignments = (
+        await db.collection("shift_assignments").find({}).toArray()
+      ).map(normalizeDocDates);
+      rows = attachLatestShift(rows, assignments, shiftDateField);
+    }
+
+    // Post-filter with alias-stripped WHERE (params from start)
+    if (whereSql) {
       try {
         const off = { i: 0 };
-        const f = buildFilterFromWhere(whereSql.replace(/\b\w+\./g, ""), p, off, {});
+        const stripped = whereSql
+          .replace(/\bDATE\s*\(\s*([\w.]+)\s*\)/gi, "$1")
+          .replace(/\b\w+\./g, "");
+        const f = buildFilterFromWhere(stripped, p, off, {});
         if (!(f as any).__unsupported_where && Object.keys(f).length) {
           rows = rows.filter((row) => matchFilter(row, f));
         }
@@ -545,21 +760,23 @@ export async function mongoExecute(
       }
     }
 
-    if (joins.length && Object.keys(sort).length) {
-      const [[field, dir]] = Object.entries(sort);
+    if (needsJoinWork && Object.keys(sort).length) {
+      const entries = Object.entries(sort);
       rows.sort((a, b) => {
-        const av = a[field];
-        const bv = b[field];
-        if (av == null && bv == null) return 0;
-        if (av == null) return 1;
-        if (bv == null) return -1;
-        if (av < bv) return -1 * (dir as number);
-        if (av > bv) return 1 * (dir as number);
+        for (const [field, dir] of entries) {
+          const av = a[field];
+          const bv = b[field];
+          if (av == null && bv == null) continue;
+          if (av == null) return 1;
+          if (bv == null) return -1;
+          if (av < bv) return -1 * (dir as number);
+          if (av > bv) return 1 * (dir as number);
+        }
         return 0;
       });
     }
-    if (joins.length && offsetN) rows = rows.slice(offsetN);
-    if (joins.length && limit != null) rows = rows.slice(0, limit);
+    if (needsJoinWork && offsetN) rows = rows.slice(offsetN);
+    if (needsJoinWork && limit != null) rows = rows.slice(0, limit);
 
     // Project columns
     if (!select.star) {
@@ -570,10 +787,34 @@ export async function mongoExecute(
             Object.assign(out, row);
             continue;
           }
+          if (/COALESCE|CONCAT|NULLIF|TRIM/i.test(col.expr)) {
+            if (col.as === "employee_name") {
+              const built = [row.first_name, row.last_name]
+                .filter((x) => x != null && String(x).trim() !== "")
+                .join(" ")
+                .trim();
+              out[col.as] =
+                built || row.employee_name || null;
+            } else {
+              out[col.as] = getByPath(row, col.expr) ?? row[col.as] ?? null;
+            }
+            continue;
+          }
           out[col.as] = getByPath(row, col.expr);
-          // department_name already set during join
           if (col.as === "department_name" && out[col.as] == null) {
             out[col.as] = row.department_name ?? null;
+          }
+          if (col.as === "shift_start_time" && out[col.as] == null) {
+            out[col.as] = row.shift_start_time ?? row.start_time ?? null;
+          }
+          if (col.as === "shift_end_time" && out[col.as] == null) {
+            out[col.as] = row.shift_end_time ?? row.end_time ?? null;
+          }
+          if (col.as === "shift_assigned_date" && out[col.as] == null) {
+            out[col.as] = row.shift_assigned_date ?? row.assigned_date ?? null;
+          }
+          if (col.as === "shift_name" && out[col.as] == null) {
+            out[col.as] = row.shift_name ?? null;
           }
         }
         return out;
@@ -609,14 +850,33 @@ function matchFilter(row: Document, filter: Filter<Document>): boolean {
         continue;
       }
       if ("$ne" in obj && String(rv) === String(obj.$ne) && obj.$exists !== true) return false;
-      if ("$gt" in obj && !(rv > obj.$gt)) return false;
-      if ("$gte" in obj && !(rv >= obj.$gte)) return false;
-      if ("$lt" in obj && !(rv < obj.$lt)) return false;
-      if ("$lte" in obj && !(rv <= obj.$lte)) return false;
+      const cmp = (op: string, bound: any) => {
+        const rk = toDateKey(rv);
+        const bk = toDateKey(bound);
+        if (rk && bk) {
+          if (op === "gt") return rk > bk;
+          if (op === "gte") return rk >= bk;
+          if (op === "lt") return rk < bk;
+          if (op === "lte") return rk <= bk;
+        }
+        if (op === "gt") return rv > bound;
+        if (op === "gte") return rv >= bound;
+        if (op === "lt") return rv < bound;
+        if (op === "lte") return rv <= bound;
+        return true;
+      };
+      if ("$gt" in obj && !cmp("gt", obj.$gt)) return false;
+      if ("$gte" in obj && !cmp("gte", obj.$gte)) return false;
+      if ("$lt" in obj && !cmp("lt", obj.$lt)) return false;
+      if ("$lte" in obj && !cmp("lte", obj.$lte)) return false;
       if ("$regex" in obj) {
         const re = new RegExp(obj.$regex, obj.$options || "");
         if (!re.test(String(rv ?? ""))) return false;
       }
+      continue;
+    }
+    if (toDateKey(rv) && toDateKey(v)) {
+      if (!dateKeysCompatible(rv, v)) return false;
       continue;
     }
     if (String(rv) !== String(v)) return false;
