@@ -26,6 +26,8 @@ yarn-error.log*
 
 # local diagnostics
 /mongo-*.txt
+/mongo-export/
+/interact_hrm-mongo-export.zip
 
 # OS
 .DS_Store
