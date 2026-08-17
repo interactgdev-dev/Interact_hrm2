@@ -85,14 +85,9 @@ export const pool = (
 
 if (typeof window === "undefined") {
   console.log(`[db] driver=${driver}`);
-  if (driver === "mysql") {
-    void import("./register-auto-presence-cron").then((mod) =>
-      mod.registerAutoPresenceCron(),
-    );
-  } else {
-    // Auto-presence sweep uses MySQL-specific SQL — skip on mongo until ported.
-    console.log("[db] mongo mode: auto-presence cron not started");
-  }
+  void import("./register-auto-presence-cron").then((mod) =>
+    mod.registerAutoPresenceCron(),
+  );
 }
 
 export async function query(sql: string, params?: any[]) {

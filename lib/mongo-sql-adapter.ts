@@ -366,7 +366,11 @@ function buildFilterFromWhere(
     if (m) {
       const ref = fieldRef(m[1]);
       return {
-        $or: [{ [ref.field]: null }, { [ref.field]: { $exists: false } }],
+        $or: [
+          { [ref.field]: null },
+          { [ref.field]: { $exists: false } },
+          { [ref.field]: "" },
+        ],
       };
     }
     m = s.match(/^([\w.`]+)\s+IS\s+NOT\s+NULL\s*$/i);
@@ -476,8 +480,26 @@ function parseSelectList(selectSql: string): { star: boolean; cols: { expr: stri
   return { star: false, cols };
 }
 
+function hoursBetween(clockIn: any, clockOut: any): number {
+  const a = clockIn instanceof Date ? clockIn.getTime() : new Date(String(clockIn).replace(" ", "T")).getTime();
+  const b = clockOut instanceof Date ? clockOut.getTime() : new Date(String(clockOut).replace(" ", "T")).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0;
+  return Math.min(999.99, Math.round(((b - a) / 3600000) * 100) / 100);
+}
+
+function formatDateTimeSql(v: any): string | null {
+  if (v == null || v === "") return null;
+  const d = v instanceof Date ? v : new Date(String(v).replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return String(v);
+  return d.toISOString().slice(0, 19);
+}
+
 function getByPath(row: Document, expr: string): any {
   const clean = expr.replace(/`/g, "").trim();
+  const df = clean.match(/^DATE_FORMAT\s*\(\s*([\w.`]+)\s*,/i);
+  if (df) {
+    return formatDateTimeSql(getByPath(row, df[1]));
+  }
   if (clean.includes(".")) {
     const [alias, field] = clean.split(".");
     if (row[alias] && typeof row[alias] === "object") return (row[alias] as any)[field];
@@ -512,6 +534,13 @@ export async function mongoExecute(
 ): Promise<[any, any]> {
   const raw = stripComments(sql);
   const p = Array.isArray(params) ? [...params] : [];
+
+  if (/^SELECT\s+GET_LOCK\s*\(/i.test(raw)) {
+    return [[{ got_lock: 1 }], []];
+  }
+  if (/^SELECT\s+RELEASE_LOCK\s*\(/i.test(raw)) {
+    return [[{}], []];
+  }
 
   // DDL / introspection — no-op friendly for Mongo
   if (/^(CREATE|ALTER|DROP|TRUNCATE|SHOW|DESCRIBE|DESC|USE)\b/i.test(raw)) {
@@ -559,6 +588,7 @@ export async function mongoExecute(
     const whereSql = updateMatch[3] || null;
     const setParts = splitTopLevel(setSql, ",");
     const $set: Document = {};
+    let hoursFromClockOut: any = undefined;
     let pi = 0;
     for (const part of setParts) {
       const m = part.match(/^([`\w]+)\s*=\s*(.+)$/);
@@ -569,12 +599,14 @@ export async function mongoExecute(
       else if (/^null$/i.test(rhs)) $set[field] = null;
       else if (/^'.*'$/.test(rhs)) $set[field] = rhs.slice(1, -1);
       else if (/^-?\d+(\.\d+)?$/.test(rhs)) $set[field] = Number(rhs);
-      else if (/\?/.test(rhs)) {
-        // expressions like LEAST(999.99, ROUND(...)) — store next params loosely
-        while (/\?/.test(rhs) && pi < p.length) {
-          // skip complex expr: use last param as best effort if single field assign failed
-          pi++;
-        }
+      else if (/TIMESTAMPDIFF\s*\(\s*MINUTE\s*,\s*clock_in\s*,\s*\?\s*\)/i.test(rhs)) {
+        hoursFromClockOut = coerceParam(p[pi++]);
+      } else if (/^COALESCE\s*\(\s*[\w.`]+\s*,\s*\?\s*\)\s*$/i.test(rhs)) {
+        const fallback = coerceParam(p[pi++]);
+        if (fallback != null && fallback !== "") $set[field] = fallback;
+      } else if (/\?/.test(rhs)) {
+        const n = (rhs.match(/\?/g) || []).length;
+        for (let i = 0; i < n; i++) pi++;
         console.warn("[mongo-sql] skipped complex SET expr:", part);
       } else {
         $set[field] = rhs;
@@ -585,7 +617,21 @@ export async function mongoExecute(
     if ((filter as any).__unsupported_where) {
       throw new Error(`Mongo adapter unsupported UPDATE WHERE: ${whereSql}`);
     }
-    const res = await db.collection(table).updateMany(filter, { $set });
+    const col = db.collection(table);
+    if (hoursFromClockOut !== undefined) {
+      const docs = await col.find(filter).toArray();
+      let modified = 0;
+      for (const doc of docs) {
+        const next: Document = {
+          ...$set,
+          total_hours: hoursBetween(doc.clock_in, $set.clock_out ?? hoursFromClockOut),
+        };
+        const res = await col.updateOne({ _id: doc._id }, { $set: next });
+        modified += res.modifiedCount;
+      }
+      return [resultHeader(modified || docs.length), undefined];
+    }
+    const res = await col.updateMany(filter, { $set });
     return [resultHeader(res.modifiedCount || res.matchedCount), undefined];
   }
 
