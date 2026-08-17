@@ -7,6 +7,13 @@ import { ensureLegacyEmployeeRow } from "@/lib/ensure-legacy-employee-row";
 
 const ATTENDANCE_TABLE = "employee_attendance";
 
+/** YYYY-MM-DD exclusive end bound (same as DATE_ADD(date, INTERVAL 1 DAY)). */
+function exclusiveEndDate(value: string): string {
+  const [y, m, d] = String(value).slice(0, 10).split("-").map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + 1));
+  return dt.toISOString().slice(0, 10);
+}
+
 async function ensureAttendanceTable(conn: any) {
   const createSql = `
     CREATE TABLE IF NOT EXISTS ${ATTENDANCE_TABLE} (
@@ -67,18 +74,18 @@ export async function GET(req: NextRequest) {
       params.push(Number(employeeId));
     }
     if (date) {
-      query += " AND pb.prayer_break_start >= ? AND pb.prayer_break_start < DATE_ADD(?, INTERVAL 1 DAY)";
-      params.push(date, date);
+      query += " AND pb.prayer_break_start >= ? AND pb.prayer_break_start < ?";
+      params.push(date, exclusiveEndDate(date));
     }
     if (fromDate && toDate) {
-      query += " AND pb.prayer_break_start >= ? AND pb.prayer_break_start < DATE_ADD(?, INTERVAL 1 DAY)";
-      params.push(fromDate, toDate);
+      query += " AND pb.prayer_break_start >= ? AND pb.prayer_break_start < ?";
+      params.push(fromDate, exclusiveEndDate(toDate));
     } else if (fromDate) {
       query += " AND pb.prayer_break_start >= ?";
       params.push(fromDate);
     } else if (toDate) {
-      query += " AND pb.prayer_break_start < DATE_ADD(?, INTERVAL 1 DAY)";
-      params.push(toDate);
+      query += " AND pb.prayer_break_start < ?";
+      params.push(exclusiveEndDate(toDate));
     }
     query += " ORDER BY pb.prayer_break_start DESC";
     const [rows] = await conn.execute(query, params);

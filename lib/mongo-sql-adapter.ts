@@ -354,21 +354,25 @@ function buildFilterFromWhere(
       return buildFilterFromWhere(inner, params, paramOffset, aliasMap);
     }
 
-    // col < DATE_ADD(?, INTERVAL n UNIT) — match before other ops
-    m = s.match(
-      /^(?:[\w`]+\.)?([\w`]+)\s*(>=|<=|>|<)\s*DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+(\w+)\s*\)\s*$/i,
-    );
-    if (!m) {
-      m = s.match(/^(.*?)\s*(>=|<=|>|<)\s*DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+(\w+)/i);
-    }
-    if (m && /DATE_ADD/i.test(s)) {
-      const ref = fieldRef(m[1].replace(/.*\./, "") || m[1]);
-      const op = m[2];
-      const bound = addInterval(take(), Number(m[3]), m[4]);
-      if (op === "<") return { [ref.field]: { $lt: bound } };
-      if (op === "<=") return { [ref.field]: { $lte: bound } };
-      if (op === ">") return { [ref.field]: { $gt: bound } };
-      if (op === ">=") return { [ref.field]: { $gte: bound } };
+    // col < DATE_ADD(?, INTERVAL n UNIT) — string split, not a fragile regex
+    {
+      const daAt = s.search(/DATE_ADD\s*\(/i);
+      if (daAt >= 0) {
+        const left = s.slice(0, daAt).trim();
+        const opm = left.match(/^(?:[\w.]+\.)?([\w]+)\s*(>=|<=|>|<)$/);
+        const im = s.slice(daAt).match(/^DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+(\w+)/i);
+        if (opm && im) {
+          const col = opm[1];
+          const op = opm[2];
+          const bound = addInterval(take(), Number(im[1]), im[2]);
+          if (op === "<") return { [col]: { $lt: bound } };
+          if (op === "<=") return { [col]: { $lte: bound } };
+          if (op === ">") return { [col]: { $gt: bound } };
+          if (op === ">=") return { [col]: { $gte: bound } };
+        }
+        console.warn("[mongo-sql] DATE_ADD skipped:", s);
+        return {};
+      }
     }
 
     // IN (?, ?)
@@ -991,8 +995,8 @@ export async function mongoExecute(
       try {
         const off = { i: 0 };
         const stripped = whereSql
-          .replace(/\bDATE\s*\(\s*([\w.]+)\s*\)/gi, "$1")
-          .replace(/\b\w+\./g, "");
+          .replace(/\bDATE(?!_ADD)\s*\(\s*([\w.]+)\s*\)/gi, "$1")
+          .replace(/\b(?!DATE_ADD\b)[A-Za-z_]\w*\./g, "");
         const f = buildFilterFromWhere(stripped, p, off, {});
         if (!(f as any).__unsupported_where && Object.keys(f).length) {
           rows = rows.filter((row) => matchFilter(row, f));
