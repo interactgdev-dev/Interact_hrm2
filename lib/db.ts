@@ -50,6 +50,9 @@ function createMysqlPool() {
 
 function createMongoPool() {
   const run = async (sql: string, params?: any[]) => {
+    const text = typeof sql === "string" ? sql : String(sql ?? "");
+    if (/\bGET_LOCK\b/i.test(text)) return [[{ got_lock: 1 }], []];
+    if (/\bRELEASE_LOCK\b/i.test(text)) return [[{}], []];
     const db = await getMongoDb();
     return mongoExecute(db, sql, params);
   };

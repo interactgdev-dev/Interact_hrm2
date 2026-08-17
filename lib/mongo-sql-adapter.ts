@@ -400,6 +400,12 @@ function buildFilterFromWhere(
       return { [ref.field]: { $regex: `^${escaped}$`, $options: "i" } };
     }
 
+    // CAST(id AS CHAR) = ?
+    m = s.match(/^CAST\s*\(\s*([\w.`]+)\s+AS\s+\w+\s*\)\s*(=|!=|<>|>=|<=|>|<)\s*\?\s*$/i);
+    if (m) {
+      s = `${m[1]} ${m[2]} ?`;
+    }
+
     // DATE(col) BETWEEN ? AND ?  /  col BETWEEN ? AND ?
     m = s.match(
       /^(?:DATE\s*\(\s*([\w.`]+)\s*\)|([\w.`]+))\s+BETWEEN\s+\?\s+AND\s+\?\s*$/i,
