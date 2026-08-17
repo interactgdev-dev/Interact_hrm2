@@ -3,9 +3,14 @@ import { registerAutoPresenceCron } from "@/lib/register-auto-presence-cron";
 import { enforceBiometricOrRespond } from "@/lib/require-biometric";
 import { isGraceExpiredForEmployee } from "@/lib/attendance-presence";
 import { closeActiveBreaksForEmployee } from "@/lib/auto-clock-out";
+import { getDbDriver, pool } from "../../../lib/db";
+import {
+  mongoClockOut,
+  mongoFindOpenAttendance,
+  mongoHasActiveBreak,
+} from "@/lib/mongo-attendance";
 
 registerAutoPresenceCron();
-import { pool } from "../../../lib/db";
 import { ATTENDANCE_TABLE, ensureAttendanceTable } from "../../../lib/attendance-table";
 import {
   getDateStringInTimeZone,
@@ -35,7 +40,10 @@ export async function GET(req: NextRequest) {
     await ensureAttendanceTable(conn);
 
     if (activeBreakCheck && employeeId) {
-      const breakStatus = await checkActiveBreaks(conn, employeeId);
+      const breakStatus =
+        getDbDriver() === "mongo"
+          ? await mongoHasActiveBreak(employeeId)
+          : await checkActiveBreaks(conn, employeeId);
       return NextResponse.json({ success: true, ...breakStatus });
     }
     let rows;
@@ -285,14 +293,16 @@ export async function POST(req: NextRequest) {
       );
       if (bioBlock) return bioBlock;
 
-      lockName = `attendance_clock_in_emp_${String(employee_id).trim()}`;
-      const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
-      const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
-      if (gotLock !== 1) {
-        return NextResponse.json(
-          { success: false, error: "Could not acquire clock-in lock. Please try again." },
-          { status: 409 }
-        );
+      if (getDbDriver() === "mysql") {
+        lockName = `attendance_clock_in_emp_${String(employee_id).trim()}`;
+        const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
+        const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
+        if (gotLock !== 1) {
+          return NextResponse.json(
+            { success: false, error: "Could not acquire clock-in lock. Please try again." },
+            { status: 409 }
+          );
+        }
       }
 
       // Prevent duplicate clock-ins when multiple taps/concurrent requests happen.
@@ -363,6 +373,45 @@ export async function POST(req: NextRequest) {
       console.log("Clock-in record inserted successfully");
     } else if (clock_out !== undefined && clock_out !== null) {
       let isAutoClockOut = Boolean(auto_clock_out);
+
+      if (getDbDriver() === "mongo") {
+        const breakStatus = await mongoHasActiveBreak(employee_id);
+        if (!isAutoClockOut && breakStatus.hasActiveBreak) {
+          const breakName = breakStatus.breakType === "prayer_break" ? "Prayer Break" : "Break";
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Cannot clock out. ${breakName} is still active. Please end your ${breakName.toLowerCase()} first.`,
+              errorCode: "ACTIVE_BREAK",
+            },
+            { status: 400 },
+          );
+        }
+        const openSession = await mongoFindOpenAttendance(employee_id);
+        const openDate = openSession?.clock_in
+          ? getDateStringInTimeZone(openSession.clock_in, SERVER_TIMEZONE)
+          : "";
+        const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
+        if (!isAutoClockOut && openDate && openDate >= todayKey) {
+          const bioBlock = await enforceBiometricOrRespond(
+            biometric_token,
+            String(employee_id),
+            "clock_out",
+            employee_name,
+          );
+          if (bioBlock) return bioBlock;
+        }
+        const closed = await mongoClockOut({
+          employeeId: employee_id,
+          clockOut: String(clock_out),
+          employeeName: employee_name || null,
+          autoClockOut: isAutoClockOut || (openDate !== "" && openDate < todayKey),
+        });
+        if (!closed) {
+          return NextResponse.json({ success: true, message: "already_closed" });
+        }
+        return NextResponse.json({ success: true, message: "updated" });
+      }
 
       if (!isAutoClockOut) {
         const graceExpired = await isGraceExpiredForEmployee(conn, String(employee_id));

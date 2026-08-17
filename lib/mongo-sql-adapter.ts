@@ -660,15 +660,16 @@ export async function mongoExecute(
   sql: string,
   params: SqlParams = [],
 ): Promise<[any, any]> {
-  const raw = stripComments(sql).replace(/;\s*$/, "");
-  const p = Array.isArray(params) ? [...params] : [];
-
-  if (/^SELECT\s+GET_LOCK\s*\(/i.test(raw)) {
+  const sqlText = typeof sql === "string" ? sql : String(sql ?? "");
+  if (/\bGET_LOCK\b/i.test(sqlText)) {
     return [[{ got_lock: 1 }], []];
   }
-  if (/^SELECT\s+RELEASE_LOCK\s*\(/i.test(raw)) {
+  if (/\bRELEASE_LOCK\b/i.test(sqlText)) {
     return [[{}], []];
   }
+
+  const raw = stripComments(sqlText).replace(/;\s*$/, "");
+  const p = Array.isArray(params) ? [...params] : [];
 
   // DDL / introspection — no-op friendly for Mongo
   if (/^(CREATE|ALTER|DROP|TRUNCATE|SHOW|DESCRIBE|DESC|USE)\b/i.test(raw)) {

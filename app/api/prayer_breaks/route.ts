@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enforceBiometricOrRespond } from "@/lib/require-biometric";
-import { pool } from "../../../lib/db";
+import { pool, getDbDriver } from "../../../lib/db";
 import { getDateStringInTimeZone, SERVER_TIMEZONE } from "../../../lib/timezone";
 import { getActiveShiftAssignment } from "../../../lib/get-active-shift";
 import { ensureLegacyEmployeeRow } from "@/lib/ensure-legacy-employee-row";
@@ -144,14 +144,16 @@ export async function POST(req: NextRequest) {
       );
       if (bioBlock) return bioBlock;
 
-      lockName = `prayer_break_start_emp_${canonicalEmployeeId}`;
-      const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
-      const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
-      if (gotLock !== 1) {
-        return NextResponse.json(
-          { success: false, error: "Could not acquire prayer break lock. Please try again." },
-          { status: 409 }
-        );
+      if (getDbDriver() === "mysql") {
+        lockName = `prayer_break_start_emp_${canonicalEmployeeId}`;
+        const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
+        const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
+        if (gotLock !== 1) {
+          return NextResponse.json(
+            { success: false, error: "Could not acquire prayer break lock. Please try again." },
+            { status: 409 }
+          );
+        }
       }
 
       // Get active shift assignment for this employee at prayer break start time
