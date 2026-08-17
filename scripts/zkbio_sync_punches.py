@@ -12,6 +12,7 @@ Manual range:  --start / --end  (start is clamped to ZKBIO_SYNC_SINCE unless ZKB
 
 Setup:
   pip install requests mysql-connector-python
+  On Mongo (10.98): pip3 install requests pymongo
   Copy scripts/zkbio-sync.env.example → scripts/zkbio-sync.local.env
 
 Run:
@@ -79,17 +80,53 @@ def _load_zkbio_env_file() -> None:
 
 _load_zkbio_env_file()
 
+
+def _load_root_env_local() -> None:
+    """Pick DB_DRIVER / MONGO_* from app .env.local when the ZKBio env file omits them."""
+    path = Path(__file__).resolve().parent.parent / ".env.local"
+    if not path.is_file():
+        return
+    keys = {
+        "DB_DRIVER",
+        "DATABASE_DRIVER",
+        "MONGO_URI",
+        "MONGODB_URI",
+        "MONGO_DB",
+        "DB_NAME",
+    }
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key in keys and not str(os.environ.get(key) or "").strip():
+            os.environ[key] = val
+
+
+_load_root_env_local()
+
+
+def db_is_mongo() -> bool:
+    d = (os.environ.get("DB_DRIVER") or os.environ.get("DATABASE_DRIVER") or "").strip().lower()
+    return d in ("mongo", "mongodb")
+
+
 try:
     import requests
 except ImportError:
-    print("Install: pip install requests mysql-connector-python", file=sys.stderr)
+    print("Install: pip install requests pymongo mysql-connector-python", file=sys.stderr)
     raise
 
 try:
-    import mysql.connector
+    import mysql.connector as mysql_connector
 except ImportError:
-    print("Install: pip install mysql-connector-python", file=sys.stderr)
-    raise
+    mysql_connector = None
 
 START_PARAM = os.environ.get("ZKBIO_START_PARAM", "startTime")
 END_PARAM = os.environ.get("ZKBIO_END_PARAM", "endTime")
@@ -115,6 +152,8 @@ def default_sync_since_march_floor() -> datetime:
 def parse_dt(v: Any) -> Optional[datetime]:
     if v is None or v == "":
         return None
+    if isinstance(v, datetime):
+        return v.replace(tzinfo=None) if v.tzinfo else v
     if isinstance(v, (int, float)):
         try:
             return datetime.fromtimestamp(float(v))
@@ -537,8 +576,102 @@ def _missing_dedupe_indexes(cur: Any) -> List[str]:
     return missing
 
 
+class MongoPunchStore:
+    """ZKBio punches → Mongo collection zkbio_punch_log (10.98)."""
+
+    def __init__(self) -> None:
+        try:
+            from pymongo import ASCENDING, MongoClient
+            from pymongo.errors import DuplicateKeyError
+        except ImportError as e:
+            raise SystemExit("Install: pip3 install pymongo requests") from e
+
+        self._DuplicateKeyError = DuplicateKeyError
+        uri = (
+            os.environ.get("MONGO_URI")
+            or os.environ.get("MONGODB_URI")
+            or "mongodb://127.0.0.1:27017"
+        )
+        name = os.environ.get("MONGO_DB") or os.environ.get("DB_NAME") or "interact_hrm"
+        self.client = MongoClient(uri)
+        self.col = self.client[name]["zkbio_punch_log"]
+        try:
+            self.col.create_index("log_id", unique=True, sparse=True, name="uq_zkbio_log_id")
+            self.col.create_index(
+                [("pin", ASCENDING), ("event_time", ASCENDING)],
+                unique=True,
+                name="uq_zkbio_pin_event",
+            )
+        except Exception as exc:
+            print(f"WARNING: Mongo punch indexes: {exc}", file=sys.stderr)
+
+    def max_event_time(self, sync_since: datetime) -> Optional[datetime]:
+        best: Optional[datetime] = None
+        doc = self.col.find_one(
+            {"event_time": {"$exists": True, "$ne": None}}, sort=[("event_time", -1)]
+        )
+        if doc:
+            best = parse_dt(doc.get("event_time"))
+        for extra in self.col.find({}, {"event_time": 1}).sort([("_id", -1)]).limit(500):
+            t = parse_dt(extra.get("event_time"))
+            if t and (best is None or t > best):
+                best = t
+        if best is not None and best < sync_since:
+            return None
+        return best
+
+    def insert(
+        self,
+        log_id: Optional[str],
+        event_time: datetime,
+        pin: str,
+        first_name: Any,
+        last_name: Any,
+        event_name: Any,
+        verify_mode: Any,
+        device_name: Any,
+        reader_name: Any,
+        dept_name: Any,
+        raw_json: str,
+    ) -> bool:
+        or_filt: List[Dict[str, Any]] = []
+        if log_id:
+            or_filt.append({"log_id": log_id})
+        pin_s = (pin or "").strip()
+        if pin_s:
+            or_filt.append({"pin": pin_s, "event_time": event_time})
+            or_filt.append({"pin": pin_s, "event_time": event_time.strftime("%Y-%m-%d %H:%M:%S")})
+        if or_filt and self.col.find_one({"$or": or_filt}):
+            return False
+        last = self.col.find_one({"id": {"$type": ["int", "long", "double"]}}, sort=[("id", -1)])
+        next_id = int(last["id"]) + 1 if last and last.get("id") is not None else 1
+        doc = {
+            "id": next_id,
+            "log_id": log_id,
+            "event_time": event_time,
+            "pin": pin_s,
+            "first_name": first_name,
+            "last_name": last_name,
+            "event_name": event_name,
+            "verify_mode": verify_mode,
+            "device_name": device_name,
+            "reader_name": reader_name,
+            "dept_name": dept_name,
+            "raw_json": raw_json,
+            "imported_at": datetime.now(),
+        }
+        try:
+            self.col.insert_one(doc)
+            return True
+        except self._DuplicateKeyError:
+            return False
+
+    def close(self) -> None:
+        self.client.close()
+
+
 def resolve_sync_window(
-    cur: Any,
+    last: Optional[datetime],
     args: argparse.Namespace,
     sync_since: datetime,
 ) -> tuple[str, str, str]:
@@ -564,16 +697,6 @@ def resolve_sync_window(
             )
         return start_str, end_str, "manual"
 
-    cur.execute(
-        """
-        SELECT MAX(event_time) AS m
-        FROM zkbio_punch_log
-        WHERE event_time IS NOT NULL AND event_time >= %s
-        """,
-        (sync_since,),
-    )
-    row = cur.fetchone()
-    last = row[0] if row else None
     if last is not None and not isinstance(last, datetime):
         last = parse_dt(str(last))
 
@@ -620,49 +743,77 @@ def main() -> int:
 
     sync_since = parse_dt(os.environ.get("ZKBIO_SYNC_SINCE", "").strip()) or default_sync_since_march_floor()
 
-    db_cfg = {
-        "host": os.environ.get("DB_HOST", "localhost"),
-        "port": int(os.environ.get("DB_PORT", "3306")),
-        "user": os.environ.get("DB_USER", "root"),
-        "password": os.environ.get("DB_PASSWORD", ""),
-        "database": os.environ.get("DB_NAME", "interact_hrm"),
-    }
-    socket_path = os.environ.get("DB_SOCKET_PATH", "").strip()
-    if not socket_path and platform.system() != "Windows":
-        default_sock = "/var/run/mysqld/mysqld.sock"
-        if os.path.exists(default_sock):
-            socket_path = default_sock
-    if socket_path:
-        # Ubuntu: root@localhost often uses auth_socket via unix socket (same as lib/db.ts).
-        db_cfg["unix_socket"] = socket_path
-        db_cfg.pop("host", None)
-        db_cfg.pop("port", None)
-        if not os.environ.get("DB_PASSWORD", "").strip():
-            db_cfg["password"] = ""
+    mongo_store: Optional[MongoPunchStore] = None
+    conn = None
+    cur = None
+    last_event: Optional[datetime] = None
 
-    try:
-        conn = mysql.connector.connect(**db_cfg)
-    except mysql.connector.Error as e:
-        if getattr(e, "errno", None) == 1698:
+    if db_is_mongo():
+        mongo_store = MongoPunchStore()
+        last_event = mongo_store.max_event_time(sync_since)
+    else:
+        if mysql_connector is None:
+            print("Install: pip install mysql-connector-python", file=sys.stderr)
+            return 1
+        db_cfg = {
+            "host": os.environ.get("DB_HOST", "localhost"),
+            "port": int(os.environ.get("DB_PORT", "3306")),
+            "user": os.environ.get("DB_USER", "root"),
+            "password": os.environ.get("DB_PASSWORD", ""),
+            "database": os.environ.get("DB_NAME", "interact_hrm"),
+        }
+        socket_path = os.environ.get("DB_SOCKET_PATH", "").strip()
+        if not socket_path and platform.system() != "Windows":
+            default_sock = "/var/run/mysqld/mysqld.sock"
+            if os.path.exists(default_sock):
+                socket_path = default_sock
+        if socket_path:
+            db_cfg["unix_socket"] = socket_path
+            db_cfg.pop("host", None)
+            db_cfg.pop("port", None)
+            if not os.environ.get("DB_PASSWORD", "").strip():
+                db_cfg["password"] = ""
+
+        try:
+            conn = mysql_connector.connect(**db_cfg)
+        except mysql_connector.Error as e:
+            if getattr(e, "errno", None) == 1698:
+                print(
+                    "MySQL auth failed (1698): root@localhost is likely socket-auth on Ubuntu.\n"
+                    "Set DB_SOCKET_PATH=/var/run/mysqld/mysqld.sock in scripts/zkbio-sync.local.env\n"
+                    "and run the script with sudo, or use a dedicated DB user/password.",
+                    file=sys.stderr,
+                )
+            raise
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT MAX(event_time) AS m
+            FROM zkbio_punch_log
+            WHERE event_time IS NOT NULL AND event_time >= %s
+            """,
+            (sync_since,),
+        )
+        row = cur.fetchone()
+        last_event = row[0] if row else None
+        miss = _missing_dedupe_indexes(cur)
+        if miss:
             print(
-                "MySQL auth failed (1698): root@localhost is likely socket-auth on Ubuntu.\n"
-                "Set DB_SOCKET_PATH=/var/run/mysqld/mysqld.sock in scripts/zkbio-sync.local.env\n"
-                "and run the script with sudo, or use a dedicated DB user/password.",
+                "WARNING: Missing MySQL index(es): "
+                + ", ".join(miss)
+                + " — duplicates will not be skipped. Run: mysql ... < scripts/zkbio-punch-log-dedupe.sql",
                 file=sys.stderr,
             )
-        raise
-    cur = conn.cursor()
 
-    start_str, end_str, window_mode = resolve_sync_window(cur, args, sync_since)
+    start_str, end_str, window_mode = resolve_sync_window(last_event, args, sync_since)
 
-    miss = _missing_dedupe_indexes(cur)
-    if miss:
-        print(
-            "WARNING: Missing MySQL index(es): "
-            + ", ".join(miss)
-            + " — duplicates will not be skipped. Run: mysql ... < scripts/zkbio-punch-log-dedupe.sql",
-            file=sys.stderr,
-        )
+    def _close_db() -> None:
+        if mongo_store:
+            mongo_store.close()
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
 
     referer = f"{base}/main.do?home&selectSysCode=Acc"
 
@@ -687,6 +838,7 @@ def main() -> int:
             "ZKBio: auto-login failed. Check ZKBIO_USERNAME / ZKBIO_PASSWORD in zkbio-sync.local.env.",
             file=sys.stderr,
         )
+        _close_db()
         return 1
 
     insert_sql = """
@@ -720,8 +872,7 @@ def main() -> int:
 
         data = fetch_grid_json(session_req, list_url, params, http_method, verify_ssl)
         if data is None:
-            cur.close()
-            conn.close()
+            _close_db()
             return 1
 
         # Auto re-login on expired session wrapper, then retry once.
@@ -736,8 +887,7 @@ def main() -> int:
                     "(or ZKBIO_PASSWORD_HASH) in zkbio-sync.local.env.",
                     file=sys.stderr,
                 )
-                cur.close()
-                conn.close()
+                _close_db()
                 return 1
 
         rows = normalize_rows(data)
@@ -805,9 +955,8 @@ def main() -> int:
             reader_name = row.get("readerName") or row.get("reader_name")
             dept_name = row.get("deptName") or row.get("dept_name")
 
-            cur.execute(
-                insert_sql,
-                (
+            if mongo_store is not None:
+                if mongo_store.insert(
                     log_id,
                     event_time,
                     pin,
@@ -819,12 +968,30 @@ def main() -> int:
                     reader_name,
                     dept_name,
                     json.dumps(row, ensure_ascii=False),
-                ),
-            )
-            if cur.rowcount and cur.rowcount > 0:
-                inserted += cur.rowcount
+                ):
+                    inserted += 1
+            else:
+                cur.execute(
+                    insert_sql,
+                    (
+                        log_id,
+                        event_time,
+                        pin,
+                        first_name,
+                        last_name,
+                        event_name,
+                        verify_mode,
+                        device_name,
+                        reader_name,
+                        dept_name,
+                        json.dumps(row, ensure_ascii=False),
+                    ),
+                )
+                if cur.rowcount and cur.rowcount > 0:
+                    inserted += cur.rowcount
 
-        conn.commit()
+        if conn is not None:
+            conn.commit()
 
         if reached_end_dhtmlx:
             break
@@ -836,8 +1003,7 @@ def main() -> int:
             break
         page += 1
 
-    cur.close()
-    conn.close()
+    _close_db()
 
     summary = (
         f"ZKBio sync ({window_mode}): window {start_str} .. {end_str}. "

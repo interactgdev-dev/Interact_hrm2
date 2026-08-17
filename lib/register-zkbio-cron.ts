@@ -13,14 +13,6 @@ export function registerZkbioCron(): void {
     return;
   }
 
-  const driver = String(process.env.DB_DRIVER || process.env.DATABASE_DRIVER || "mysql")
-    .trim()
-    .toLowerCase();
-  if (driver === "mongo" || driver === "mongodb") {
-    console.log("[zkbio-sync] Auto sync skipped on Mongo (Python sync is MySQL-only).");
-    return;
-  }
-
   const root = process.cwd();
   const pyScript = path.join(root, "scripts", "zkbio_sync_punches.py");
   const localEnv = path.join(root, "scripts", "zkbio-sync.local.env");
@@ -51,7 +43,7 @@ export function registerZkbioCron(): void {
 
   const tick = () => {
     const started = ts();
-    console.log(`[zkbio-sync] ▶ ${started} — sync started (ZKBio → MySQL zkbio_punch_log)`);
+    console.log(`[zkbio-sync] ▶ ${started} — sync started (ZKBio → zkbio_punch_log)`);
 
     runZkbioSync()
       .then((r) => {

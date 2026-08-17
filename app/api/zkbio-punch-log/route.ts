@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { getDbDriver, pool } from "@/lib/db";
+import { mongoListZkbioPunches } from "@/lib/mongo-zkbio";
 
 export const runtime = "nodejs";
 
@@ -101,6 +102,28 @@ export async function GET(req: NextRequest) {
       const t = timeTo.length === 5 ? `${timeTo}:59` : timeTo;
       conditions.push(`TIME(COALESCE(event_time, imported_at)) <= ?`);
       params.push(t);
+    }
+
+    if (getDbDriver() === "mongo") {
+      const listed = await mongoListZkbioPunches({
+        page,
+        pageSize,
+        name: nameRaw,
+        dept,
+        dateFrom: useDateRange ? dateFrom : undefined,
+        dateTo: useDateRange ? dateTo : undefined,
+        timeFrom,
+        timeTo,
+      });
+      return NextResponse.json({
+        success: true,
+        columns: [...COLUMNS],
+        rows: listed.rows,
+        total: listed.total,
+        page,
+        pageSize,
+        departments: listed.departments,
+      });
     }
 
     const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

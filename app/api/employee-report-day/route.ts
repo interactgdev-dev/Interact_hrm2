@@ -5,7 +5,8 @@ import {
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "@/lib/timezone";
-import { pool } from "@/lib/db";
+import { getDbDriver, pool } from "@/lib/db";
+import { mongoZkbioDepartments, mongoZkbioPunchesForDate } from "@/lib/mongo-zkbio";
 
 export const runtime = "nodejs";
 
@@ -138,43 +139,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const zkConditions = ["DATE(COALESCE(z.event_time, z.imported_at)) = ?"];
-    const zkParams: (string | number)[] = [date];
-    if (nameRaw) {
-      const nameLike = `%${nameRaw.replace(/[%_\\]/g, " ").trim()}%`;
-      zkConditions.push(
-        `(CONCAT(IFNULL(z.first_name,''), ' ', IFNULL(z.last_name,'')) LIKE ? OR z.first_name LIKE ? OR z.last_name LIKE ?)`,
-      );
-      zkParams.push(nameLike, nameLike, nameLike);
-    }
-    if (dept) {
-      zkConditions.push("z.dept_name = ?");
-      zkParams.push(dept);
-    }
-
-    const groupCols = `COALESCE(NULLIF(TRIM(z2.log_id), ''), CONCAT(IFNULL(z2.pin,''), '|', DATE_FORMAT(COALESCE(z2.event_time, z2.imported_at), '%Y-%m-%d %H:%i:%s')))`;
-    const zkWhere = zkConditions.map((c) => c.replace(/\bz\./g, "z2.")).join(" AND ");
-    const zkSql = `
-      SELECT z.first_name, z.last_name, z.dept_name, z.reader_name, z.event_name,
-             COALESCE(z.event_time, z.imported_at) AS punch_at
-      FROM zkbio_punch_log z
-      INNER JOIN (
-        SELECT MIN(z2.id) AS mid FROM zkbio_punch_log z2
-        WHERE ${zkWhere} GROUP BY ${groupCols}
-      ) k ON z.id = k.mid
-      ORDER BY punch_at ASC
-    `;
-    const [zkRows] = await pool.query(zkSql, zkParams);
-    for (const row of zkRows as Record<string, unknown>[]) {
+    const pushZkRow = (row: Record<string, unknown>) => {
       const first = String(row.first_name || "").trim();
       const last = String(row.last_name || "").trim();
       const employeeName = `${first} ${last}`.trim() || "—";
       const department = String(row.dept_name || "");
       const raw = row.punch_at;
-      if (!raw) continue;
+      if (!raw) return;
       const s = String(raw);
       const at = new Date(s.includes("T") ? s : s.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, "$1T$2"));
-      if (Number.isNaN(at.getTime())) continue;
+      if (Number.isNaN(at.getTime())) return;
       const reader = String(row.reader_name || "").trim() || "-";
       const event = String(row.event_name || "").trim() || "Punch";
       merged.push({
@@ -186,6 +160,40 @@ export async function GET(req: NextRequest) {
         department: department || "-",
         detail: `${reader} — ${event}`,
       });
+    };
+
+    if (getDbDriver() === "mongo") {
+      const zkRows = await mongoZkbioPunchesForDate({ date, name: nameRaw, dept });
+      zkRows.forEach((row) => pushZkRow(row));
+    } else {
+      const zkConditions = ["DATE(COALESCE(z.event_time, z.imported_at)) = ?"];
+      const zkParams: (string | number)[] = [date];
+      if (nameRaw) {
+        const nameLike = `%${nameRaw.replace(/[%_\\]/g, " ").trim()}%`;
+        zkConditions.push(
+          `(CONCAT(IFNULL(z.first_name,''), ' ', IFNULL(z.last_name,'')) LIKE ? OR z.first_name LIKE ? OR z.last_name LIKE ?)`,
+        );
+        zkParams.push(nameLike, nameLike, nameLike);
+      }
+      if (dept) {
+        zkConditions.push("z.dept_name = ?");
+        zkParams.push(dept);
+      }
+
+      const groupCols = `COALESCE(NULLIF(TRIM(z2.log_id), ''), CONCAT(IFNULL(z2.pin,''), '|', DATE_FORMAT(COALESCE(z2.event_time, z2.imported_at), '%Y-%m-%d %H:%i:%s')))`;
+      const zkWhere = zkConditions.map((c) => c.replace(/\bz\./g, "z2.")).join(" AND ");
+      const zkSql = `
+      SELECT z.first_name, z.last_name, z.dept_name, z.reader_name, z.event_name,
+             COALESCE(z.event_time, z.imported_at) AS punch_at
+      FROM zkbio_punch_log z
+      INNER JOIN (
+        SELECT MIN(z2.id) AS mid FROM zkbio_punch_log z2
+        WHERE ${zkWhere} GROUP BY ${groupCols}
+      ) k ON z.id = k.mid
+      ORDER BY punch_at ASC
+    `;
+      const [zkRows] = await pool.query(zkSql, zkParams);
+      for (const row of zkRows as Record<string, unknown>[]) pushZkRow(row);
     }
 
     merged.sort((a, b) => {
@@ -194,15 +202,20 @@ export async function GET(req: NextRequest) {
       return a.sortAt.localeCompare(b.sortAt);
     });
 
-    const [deptRows] = await pool.query(
-      `SELECT DISTINCT TRIM(dept_name) AS d FROM zkbio_punch_log
+    let departments: string[] = [];
+    if (getDbDriver() === "mongo") {
+      departments = await mongoZkbioDepartments();
+    } else {
+      const [deptRows] = await pool.query(
+        `SELECT DISTINCT TRIM(dept_name) AS d FROM zkbio_punch_log
        WHERE dept_name IS NOT NULL AND TRIM(dept_name) <> ''
        UNION
        SELECT DISTINCT TRIM(d.name) AS d FROM departments d
        WHERE d.name IS NOT NULL AND TRIM(d.name) <> ''
        ORDER BY d ASC`,
-    );
-    const departments = (deptRows as { d: string }[]).map((r) => r.d).filter(Boolean);
+      );
+      departments = (deptRows as { d: string }[]).map((r) => r.d).filter(Boolean);
+    }
 
     return NextResponse.json({
       success: true,
