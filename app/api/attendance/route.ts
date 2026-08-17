@@ -39,6 +39,14 @@ export async function GET(req: NextRequest) {
     const summaryOnly = searchParams.get("summary") === "1";
 
     if (getDbDriver() === "mongo") {
+      console.log("[mongo-attendance] GET native", {
+        employeeId,
+        date,
+        fromDate,
+        toDate,
+        openOnly,
+        summaryOnly,
+      });
       if (activeBreakCheck && employeeId) {
         const breakStatus = await mongoHasActiveBreak(employeeId);
         return NextResponse.json({ success: true, ...breakStatus });
