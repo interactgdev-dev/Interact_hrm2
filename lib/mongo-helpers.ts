@@ -1,5 +1,6 @@
 import type { Document } from "mongodb";
 import { getMongoDb } from "./mongo";
+import { getDateStringInTimeZone, SERVER_TIMEZONE } from "./timezone";
 
 export function employeeIdValues(employeeId: string | number): Array<string | number> {
   const s = String(employeeId ?? "").trim();
@@ -31,6 +32,37 @@ export function ymd(v: unknown): string {
   if (v == null || v === "") return "";
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
   return String(v).slice(0, 10);
+}
+
+/** Calendar day in Asia/Karachi — imported MySQL DATE often lands as BSON Date. */
+export function calendarDay(v: unknown): string {
+  if (v == null || v === "") return "";
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && !v.includes("T")) {
+    return v.slice(0, 10);
+  }
+  return getDateStringInTimeZone(v as string | Date | number, SERVER_TIMEZONE) || ymd(v);
+}
+
+/**
+ * Match YYYY-MM-DD strings and BSON Date / ISO datetimes for the same calendar range.
+ */
+export function flexibleDayRangeFilter(
+  fromYmd: string,
+  toYmdInclusive: string,
+  fields: string[] = ["date", "clock_in"],
+): Document {
+  const next = exclusiveEndDate(toYmdInclusive);
+  const startDt = new Date(`${fromYmd}T00:00:00+05:00`);
+  const endDt = new Date(`${next}T00:00:00+05:00`);
+  const padStart = new Date(startDt.getTime() - 36 * 3600000);
+  const padEnd = new Date(endDt.getTime() + 36 * 3600000);
+  const or: Document[] = [];
+  for (const field of fields) {
+    or.push({ [field]: { $gte: fromYmd, $lte: toYmdInclusive } });
+    or.push({ [field]: { $gte: fromYmd, $lt: next } });
+    or.push({ [field]: { $gte: padStart, $lt: padEnd } });
+  }
+  return { $or: or };
 }
 
 export function toMs(v: unknown): number | null {

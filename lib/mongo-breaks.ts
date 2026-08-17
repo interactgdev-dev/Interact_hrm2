@@ -3,7 +3,7 @@ import { getMongoDb } from "./mongo";
 import {
   employeeDisplayName,
   employeeIdValues,
-  exclusiveEndDate,
+  flexibleDayRangeFilter,
   formatSqlDateTime,
   idFilter,
   idKey,
@@ -23,26 +23,12 @@ type ListOpts = {
 };
 
 function rangeFilter(field: string, opts: ListOpts): Document {
-  if (opts.date) {
-    const next = exclusiveEndDate(opts.date);
-    return {
-      $or: [{ [field]: { $gte: opts.date, $lt: next } }, { date: opts.date }],
-    };
-  }
+  if (opts.date) return flexibleDayRangeFilter(opts.date, opts.date, [field, "date"]);
   if (opts.fromDate && opts.toDate) {
-    const next = exclusiveEndDate(opts.toDate);
-    return {
-      $or: [
-        { [field]: { $gte: opts.fromDate, $lt: next } },
-        { date: { $gte: opts.fromDate, $lte: opts.toDate } },
-      ],
-    };
+    return flexibleDayRangeFilter(opts.fromDate, opts.toDate, [field, "date"]);
   }
-  if (opts.fromDate) return { $or: [{ [field]: { $gte: opts.fromDate } }, { date: { $gte: opts.fromDate } }] };
-  if (opts.toDate) {
-    const next = exclusiveEndDate(opts.toDate);
-    return { $or: [{ [field]: { $lt: next } }, { date: { $lte: opts.toDate } }] };
-  }
+  if (opts.fromDate) return flexibleDayRangeFilter(opts.fromDate, "2099-12-31", [field, "date"]);
+  if (opts.toDate) return flexibleDayRangeFilter("2000-01-01", opts.toDate, [field, "date"]);
   return {};
 }
 

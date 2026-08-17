@@ -2,8 +2,10 @@ import type { Document } from "mongodb";
 import { getMongoDb } from "./mongo";
 import { computeClockInLateStatus } from "./monthly-attendance-status";
 import {
+  calendarDay,
   employeeDisplayName,
   employeeIdValues,
+  flexibleDayRangeFilter,
   formatSqlDateTime,
   idFilter,
   idKey,
@@ -140,21 +142,30 @@ export async function mongoListAttendance(opts: {
   if (opts.openOnly) {
     filter.$or = [{ clock_out: null }, { clock_out: { $exists: false } }, { clock_out: "" }];
   } else if (opts.date) {
-    filter.date = opts.date;
+    Object.assign(filter, flexibleDayRangeFilter(opts.date, opts.date));
   } else if (opts.fromDate && opts.toDate) {
-    filter.date = { $gte: opts.fromDate, $lte: opts.toDate };
+    Object.assign(filter, flexibleDayRangeFilter(opts.fromDate, opts.toDate));
   }
   let cursor = db.collection("employee_attendance").find(filter).sort({ clock_in: -1 });
   if (!opts.employeeId && !opts.date && !(opts.fromDate && opts.toDate)) cursor = cursor.limit(1000);
-  const rows = await cursor.toArray();
+  let rows = await cursor.toArray();
+  if (!opts.openOnly && (opts.date || (opts.fromDate && opts.toDate))) {
+    const from = opts.date || opts.fromDate!;
+    const to = opts.date || opts.toDate!;
+    rows = rows.filter((row) => {
+      const key = calendarDay(row.date) || calendarDay(row.clock_in);
+      return key >= from && key <= to;
+    });
+  }
   const lookups = await loadEmployeeLookups(rows.map((r) => r.employee_id).filter(Boolean));
 
   return rows.map((row) => {
+    const day = calendarDay(row.date) || calendarDay(row.clock_in);
     const emp = lookups.employees.get(idKey(row.employee_id));
     const contact = lookups.contacts.get(idKey(row.employee_id));
     const job = lookups.jobs.get(idKey(row.employee_id));
     const dept = job ? lookups.departments.get(idKey(job.department_id)) : undefined;
-    const sa = pickLatestShift(lookups.assignments, row.employee_id, ymd(row.date));
+    const sa = pickLatestShift(lookups.assignments, row.employee_id, day);
     const computedLate = computeClockInLateStatus(
       row.clock_in,
       sa?.start_time as string | undefined,
@@ -169,6 +180,7 @@ export async function mongoListAttendance(opts: {
     const { _id, ...rest } = row;
     return {
       ...rest,
+      date: day || rest.date,
       employee_name: employeeDisplayName(emp, row.employee_name),
       pseudonym: emp?.pseudonym || null,
       gender: emp?.gender || null,
