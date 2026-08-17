@@ -351,8 +351,24 @@ function buildFilterFromWhere(
     let m: RegExpMatchArray | null;
     if (s.startsWith("(") && s.endsWith(")")) {
       const inner = s.slice(1, -1).trim();
-      // If balanced paren group of ORs/ANDs, recurse
       return buildFilterFromWhere(inner, params, paramOffset, aliasMap);
+    }
+
+    // col < DATE_ADD(?, INTERVAL n UNIT) — match before other ops
+    m = s.match(
+      /^(?:[\w`]+\.)?([\w`]+)\s*(>=|<=|>|<)\s*DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+(\w+)\s*\)\s*$/i,
+    );
+    if (!m) {
+      m = s.match(/^(.*?)\s*(>=|<=|>|<)\s*DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+(\w+)/i);
+    }
+    if (m && /DATE_ADD/i.test(s)) {
+      const ref = fieldRef(m[1].replace(/.*\./, "") || m[1]);
+      const op = m[2];
+      const bound = addInterval(take(), Number(m[3]), m[4]);
+      if (op === "<") return { [ref.field]: { $lt: bound } };
+      if (op === "<=") return { [ref.field]: { $lte: bound } };
+      if (op === ">") return { [ref.field]: { $gt: bound } };
+      if (op === ">=") return { [ref.field]: { $gte: bound } };
     }
 
     // IN (?, ?)
