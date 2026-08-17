@@ -143,13 +143,18 @@ export async function mongoListAttendance(opts: {
   }
   // Do not filter `date` in Mongo — import stores BSON Date, new rows store YYYY-MM-DD strings.
   let rows = await db.collection("employee_attendance").find(filter).sort({ clock_in: -1 }).toArray();
+  const before = rows.length;
   if (!opts.openOnly && (opts.date || (opts.fromDate && opts.toDate))) {
     const from = opts.date || opts.fromDate!;
     const to = opts.date || opts.toDate!;
     rows = rows.filter((row) => {
-      const key = calendarDay(row.date) || calendarDay(row.clock_in);
+      const key = calendarDay(row.date) || calendarDay(row.clock_in) || calendarDay(row.clock_out);
       return key >= from && key <= to;
     });
+    console.log(
+      `[mongo-attendance] ${rows.length}/${before} rows in ${from}..${to}` +
+        (opts.employeeId ? ` employee=${opts.employeeId}` : ""),
+    );
   } else if (!opts.employeeId && !opts.openOnly) {
     rows = rows.slice(0, 1000);
   }

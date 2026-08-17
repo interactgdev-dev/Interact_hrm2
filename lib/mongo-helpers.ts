@@ -53,10 +53,24 @@ export function ymd(v: unknown): string {
 export function calendarDay(v: unknown): string {
   const u = unwrapMongoDate(v);
   if (u == null || u === "") return "";
-  if (typeof u === "string" && /^\d{4}-\d{2}-\d{2}/.test(u) && !u.includes("T")) {
-    return u.slice(0, 10);
+  if (u instanceof Date && !Number.isNaN(u.getTime())) {
+    return getDateStringInTimeZone(u, SERVER_TIMEZONE) || u.toISOString().slice(0, 10);
   }
-  return getDateStringInTimeZone(u as string | Date | number, SERVER_TIMEZONE) || ymd(u);
+  if (typeof u === "string") {
+    const m = u.match(/(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+    return getDateStringInTimeZone(u, SERVER_TIMEZONE) || "";
+  }
+  if (typeof u === "number" && Number.isFinite(u)) {
+    return calendarDay(new Date(u));
+  }
+  try {
+    const m = JSON.stringify(u).match(/(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  } catch {
+    /* ignore */
+  }
+  return "";
 }
 
 /**
