@@ -9,6 +9,7 @@ import {
   FaPhone,
   FaMapMarkerAlt,
   FaIdBadge,
+  FaDatabase,
 } from "react-icons/fa";
 import {
   getLastAdminMessage,
@@ -382,6 +383,16 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
                   <FaUsers />
                 </span>
                 My team
+              </button>
+              <button
+                type="button"
+                className={styles.actionBtn}
+                onClick={() => onNavigate("/employee-dashboard/mongo-check")}
+              >
+                <span className={`${styles.actionIcon} ${styles.actionBlue}`}>
+                  <FaDatabase />
+                </span>
+                Mongo DB check
               </button>
             </div>
           </article>

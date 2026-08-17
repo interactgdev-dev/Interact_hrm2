@@ -10,6 +10,7 @@ import {
   FaUsers,
   FaSearch,
   FaTicketAlt,
+  FaDatabase,
 } from "react-icons/fa";
 import styles from "../layout-dashboard.module.css";
 import empStyles from "./emp-shell.module.css";
@@ -68,6 +69,7 @@ const employeeTabs = [
   { name: "My Team", path: "/employee-dashboard/my-team", icon: <FaUsers /> },
   { name: "My Info", path: "/employee-dashboard/my-info", icon: <FaUser /> },
   { name: "Generate Ticket", path: "/employee-dashboard/generate-ticket", icon: <FaTicketAlt /> },
+  { name: "Mongo Check", path: "/employee-dashboard/mongo-check", icon: <FaDatabase /> },
 ];
 
 const PREFETCH_PATHS = [
@@ -77,6 +79,7 @@ const PREFETCH_PATHS = [
   "/employee-dashboard/generate-ticket",
   "/employee-dashboard/time",
   "/employee-dashboard/attendance",
+  "/employee-dashboard/mongo-check",
 ];
 
 export default function EmployeeDashboardLayout({ children }: { children: React.ReactNode }) {
