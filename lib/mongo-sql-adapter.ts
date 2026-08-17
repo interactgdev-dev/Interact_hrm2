@@ -400,6 +400,34 @@ function buildFilterFromWhere(
       return { [ref.field]: { $gte: from, $lte: to } };
     }
 
+    // DATE(col) < CURDATE()
+    m = s.match(
+      /^DATE\s*\(\s*([\w.`]+)\s*\)\s*(<|>|<=|>=)\s*CURDATE\s*\(\s*\)\s*$/i,
+    );
+    if (m) {
+      const ref = fieldRef(m[1]);
+      const today = new Date().toISOString().slice(0, 10);
+      const op = m[2];
+      if (op === "<") return { [ref.field]: { $lt: today } };
+      if (op === "<=") return { [ref.field]: { $lte: today } };
+      if (op === ">") return { [ref.field]: { $gt: today } };
+      if (op === ">=") return { [ref.field]: { $gte: today } };
+    }
+
+    // col < DATE_ADD(?, INTERVAL n UNIT)
+    m = s.match(
+      /^([\w.`]+)\s*(<|>|<=|>=)\s*DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+(\w+)\s*\)\s*$/i,
+    );
+    if (m) {
+      const ref = fieldRef(m[1]);
+      const op = m[2];
+      const bound = addInterval(take(), Number(m[3]), m[4]);
+      if (op === "<") return { [ref.field]: { $lt: bound } };
+      if (op === "<=") return { [ref.field]: { $lte: bound } };
+      if (op === ">") return { [ref.field]: { $gt: bound } };
+      if (op === ">=") return { [ref.field]: { $gte: bound } };
+    }
+
     // col = other.col (correlated — ignore for base filter)
     m = s.match(/^([\w.`]+)\s*(=|!=|<>|>=|<=|>|<)\s*([\w.`]+)\s*$/i);
     if (m && m[3] !== "?" && !/^[-'\d]/.test(m[3])) {
@@ -518,6 +546,106 @@ async function nextNumericId(db: Db, collection: string): Promise<number> {
   return typeof max === "number" ? max + 1 : 1;
 }
 
+function sqlNow(): string {
+  return new Date().toISOString().slice(0, 19).replace("T", " ");
+}
+
+function addInterval(base: any, amount: number, unit: string): string {
+  const d =
+    base instanceof Date
+      ? new Date(base.getTime())
+      : new Date(String(base).includes("T") ? String(base) : String(base).replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) {
+    const today = new Date();
+    const u = unit.toUpperCase();
+    if (u.startsWith("DAY")) today.setDate(today.getDate() + amount);
+    else if (u.startsWith("HOUR")) today.setHours(today.getHours() + amount);
+    else if (u.startsWith("MINUTE")) today.setMinutes(today.getMinutes() + amount);
+    return sqlNow();
+  }
+  const u = unit.toUpperCase();
+  if (u.startsWith("DAY")) d.setDate(d.getDate() + amount);
+  else if (u.startsWith("HOUR")) d.setHours(d.getHours() + amount);
+  else if (u.startsWith("MINUTE")) d.setMinutes(d.getMinutes() + amount);
+  return d.toISOString().slice(0, 19).replace("T", " ");
+}
+
+const UPSERT_KEYS: Record<string, string[]> = {
+  hrm_profile_pictures: ["subject_type", "subject_id"],
+  hrm_org_chart_photos: ["subject_type", "subject_id"],
+  hrm_login_carousel_settings: ["setting_key"],
+  hrm_admin_settings: ["setting_key"],
+  hrm_saved_logins: ["device_key", "login_id"],
+  hrm_tardy_notes: ["attendance_id"],
+  monthly_payroll_adjustments: ["employee_id", "month"],
+  employee_leave_allowances: ["employee_id"],
+  company_calendar_days: ["date"],
+  loan_records: ["employee_id", "month"],
+  employee_commissions: ["employee_id", "year", "month_number"],
+};
+
+function uniqueKeyFields(table: string, insertCols: string[], updateFields: string[]): string[] {
+  if (UPSERT_KEYS[table]) return UPSERT_KEYS[table];
+  const updated = new Set(updateFields.map((f) => f.toLowerCase()));
+  const keys = insertCols.filter((c) => !updated.has(c.toLowerCase()));
+  return keys.length ? keys : insertCols;
+}
+
+function parseValueToken(token: string, take: () => any): any {
+  const t = token.trim();
+  if (t === "?") return take();
+  if (/^null$/i.test(t)) return null;
+  if (/^(NOW\s*\(\s*\)|CURRENT_TIMESTAMP)$/i.test(t)) return sqlNow();
+  if (/^'.*'$/.test(t)) return t.slice(1, -1);
+  if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+  return take();
+}
+
+function parseInsertSql(raw: string): {
+  table: string;
+  cols: string[];
+  valueTokens: string[];
+  dupUpdate: string | null;
+} | null {
+  const head = raw.match(
+    /^INSERT\s+(?:IGNORE\s+)?INTO\s+([`\w.]+)\s*\(([^)]*)\)\s*VALUES\s*/i,
+  );
+  if (!head) return null;
+  const rest = raw.slice(head[0].length).trim();
+  if (!rest.startsWith("(")) return null;
+  let depth = 0;
+  let i = 0;
+  for (; i < rest.length; i++) {
+    if (rest[i] === "(") depth++;
+    else if (rest[i] === ")") {
+      depth--;
+      if (depth === 0) {
+        i++;
+        break;
+      }
+    }
+  }
+  const inner = rest.slice(1, i - 1);
+  const after = rest.slice(i).trim();
+  const dup = after.match(/^ON DUPLICATE KEY UPDATE\s+(.+)\s*$/i);
+  return {
+    table: unquoteIdent(head[1].split(".").pop()!),
+    cols: splitTopLevel(head[2], ",").map((c) => unquoteIdent(c)),
+    valueTokens: splitTopLevel(inner, ","),
+    dupUpdate: dup ? dup[1].trim() : after ? null : null,
+  };
+}
+
+function flexIdFilter(field: string, val: any): Filter<Document> {
+  if (typeof val === "string" && /^\d+$/.test(val)) {
+    return { [field]: { $in: [val, Number(val)] } };
+  }
+  if (typeof val === "number") {
+    return { [field]: { $in: [val, String(val)] } };
+  }
+  return { [field]: val };
+}
+
 function resultHeader(affectedRows: number, insertId: number | null = null) {
   return {
     affectedRows,
@@ -532,7 +660,7 @@ export async function mongoExecute(
   sql: string,
   params: SqlParams = [],
 ): Promise<[any, any]> {
-  const raw = stripComments(sql);
+  const raw = stripComments(sql).replace(/;\s*$/, "");
   const p = Array.isArray(params) ? [...params] : [];
 
   if (/^SELECT\s+GET_LOCK\s*\(/i.test(raw)) {
@@ -549,32 +677,54 @@ export async function mongoExecute(
     return [resultHeader(0), undefined];
   }
 
-  // INSERT
-  const insertMatch = raw.match(
-    /^INSERT\s+INTO\s+([`\w.]+)\s*(?:\(([^)]*)\))?\s*VALUES\s*\(([^)]*)\)\s*$/i,
-  );
-  if (insertMatch) {
-    const table = unquoteIdent(insertMatch[1].split(".").pop()!);
-    const cols = insertMatch[2]
-      ? splitTopLevel(insertMatch[2], ",").map((c) => unquoteIdent(c))
-      : null;
-    const placeholders = splitTopLevel(insertMatch[3], ",");
+  // INSERT / UPSERT
+  const parsedInsert = parseInsertSql(raw);
+  if (parsedInsert) {
+    const { table, cols, valueTokens, dupUpdate } = parsedInsert;
+    const take = () => coerceParam(p.shift());
     const doc: Document = {};
-    let pi = 0;
-    if (cols) {
-      for (let i = 0; i < cols.length; i++) {
-        const ph = placeholders[i]?.trim();
-        if (ph === "?") doc[cols[i]] = coerceParam(p[pi++]);
-        else if (ph && /^null$/i.test(ph)) doc[cols[i]] = null;
-        else if (ph && /^'.*'$/.test(ph)) doc[cols[i]] = ph.slice(1, -1);
-        else if (ph && /^-?\d/.test(ph)) doc[cols[i]] = Number(ph);
-        else doc[cols[i]] = coerceParam(p[pi++]);
+    for (let i = 0; i < cols.length; i++) {
+      doc[cols[i]] = parseValueToken(valueTokens[i] || "?", take);
+    }
+
+    const col = db.collection(table);
+    if (dupUpdate) {
+      const dupParts = splitTopLevel(dupUpdate, ",");
+      const updateFields: string[] = [];
+      const $set: Document = {};
+      for (const part of dupParts) {
+        const um = part.match(/^([`\w]+)\s*=\s*(.+)$/);
+        if (!um) continue;
+        const field = unquoteIdent(um[1]);
+        const rhs = um[2].trim();
+        updateFields.push(field);
+        const valuesOf = rhs.match(/^VALUES\s*\(\s*([`\w]+)\s*\)\s*$/i);
+        if (valuesOf) {
+          const src = unquoteIdent(valuesOf[1]);
+          $set[field] = doc[src] ?? doc[field];
+        } else if (/^(NOW\s*\(\s*\)|CURRENT_TIMESTAMP)$/i.test(rhs)) {
+          $set[field] = sqlNow();
+        } else if (rhs === "?") {
+          $set[field] = take();
+        }
+      }
+      const keys = uniqueKeyFields(table, cols, updateFields);
+      const filterParts = keys
+        .filter((k) => doc[k] !== undefined)
+        .map((k) => flexIdFilter(k, doc[k]));
+      const filter: Filter<Document> =
+        filterParts.length === 1 ? filterParts[0] : { $and: filterParts };
+      const existing = filterParts.length ? await col.findOne(filter) : null;
+      if (existing) {
+        await col.updateOne({ _id: existing._id }, { $set });
+        return [resultHeader(1, Number(existing.id) || 0), undefined];
       }
     }
+
     if (doc.id == null || doc.id === "") {
       doc.id = await nextNumericId(db, table);
     }
-    await db.collection(table).insertOne(doc);
+    await col.insertOne(doc);
     return [resultHeader(1, Number(doc.id) || 0), undefined];
   }
 
@@ -599,8 +749,13 @@ export async function mongoExecute(
       else if (/^null$/i.test(rhs)) $set[field] = null;
       else if (/^'.*'$/.test(rhs)) $set[field] = rhs.slice(1, -1);
       else if (/^-?\d+(\.\d+)?$/.test(rhs)) $set[field] = Number(rhs);
+      else if (/^(NOW\s*\(\s*\)|CURRENT_TIMESTAMP)$/i.test(rhs)) $set[field] = sqlNow();
       else if (/TIMESTAMPDIFF\s*\(\s*MINUTE\s*,\s*clock_in\s*,\s*\?\s*\)/i.test(rhs)) {
         hoursFromClockOut = coerceParam(p[pi++]);
+      } else if (/^DATE_ADD\s*\(\s*clock_in\s*,\s*INTERVAL\s+(\d+)\s+(\w+)\s*\)$/i.test(rhs)) {
+        const amt = Number(RegExp.$1);
+        const unit = RegExp.$2;
+        $set.__dateAddClockIn = `${amt}|${unit}`;
       } else if (/^COALESCE\s*\(\s*[\w.`]+\s*,\s*\?\s*\)\s*$/i.test(rhs)) {
         const fallback = coerceParam(p[pi++]);
         if (fallback != null && fallback !== "") $set[field] = fallback;
@@ -618,14 +773,21 @@ export async function mongoExecute(
       throw new Error(`Mongo adapter unsupported UPDATE WHERE: ${whereSql}`);
     }
     const col = db.collection(table);
-    if (hoursFromClockOut !== undefined) {
+    const dateAdd = $set.__dateAddClockIn as string | undefined;
+    delete $set.__dateAddClockIn;
+    if (hoursFromClockOut !== undefined || dateAdd) {
       const docs = await col.find(filter).toArray();
       let modified = 0;
       for (const doc of docs) {
-        const next: Document = {
-          ...$set,
-          total_hours: hoursBetween(doc.clock_in, $set.clock_out ?? hoursFromClockOut),
-        };
+        const next: Document = { ...$set };
+        if (dateAdd) {
+          const [amt, unit] = dateAdd.split("|");
+          next.clock_out = addInterval(doc.clock_in, Number(amt), unit);
+          if (next.total_hours == null) next.total_hours = Number(amt) || 8;
+        }
+        if (hoursFromClockOut !== undefined) {
+          next.total_hours = hoursBetween(doc.clock_in, next.clock_out ?? hoursFromClockOut);
+        }
         const res = await col.updateOne({ _id: doc._id }, { $set: next });
         modified += res.modifiedCount;
       }
