@@ -5,7 +5,6 @@ import {
   calendarDay,
   employeeDisplayName,
   employeeIdValues,
-  flexibleDayRangeFilter,
   formatSqlDateTime,
   idFilter,
   idKey,
@@ -141,14 +140,9 @@ export async function mongoListAttendance(opts: {
   if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
   if (opts.openOnly) {
     filter.$or = [{ clock_out: null }, { clock_out: { $exists: false } }, { clock_out: "" }];
-  } else if (opts.date) {
-    Object.assign(filter, flexibleDayRangeFilter(opts.date, opts.date));
-  } else if (opts.fromDate && opts.toDate) {
-    Object.assign(filter, flexibleDayRangeFilter(opts.fromDate, opts.toDate));
   }
-  let cursor = db.collection("employee_attendance").find(filter).sort({ clock_in: -1 });
-  if (!opts.employeeId && !opts.date && !(opts.fromDate && opts.toDate)) cursor = cursor.limit(1000);
-  let rows = await cursor.toArray();
+  // Do not filter `date` in Mongo — import stores BSON Date, new rows store YYYY-MM-DD strings.
+  let rows = await db.collection("employee_attendance").find(filter).sort({ clock_in: -1 }).toArray();
   if (!opts.openOnly && (opts.date || (opts.fromDate && opts.toDate))) {
     const from = opts.date || opts.fromDate!;
     const to = opts.date || opts.toDate!;
@@ -156,6 +150,8 @@ export async function mongoListAttendance(opts: {
       const key = calendarDay(row.date) || calendarDay(row.clock_in);
       return key >= from && key <= to;
     });
+  } else if (!opts.employeeId && !opts.openOnly) {
+    rows = rows.slice(0, 1000);
   }
   const lookups = await loadEmployeeLookups(rows.map((r) => r.employee_id).filter(Boolean));
 

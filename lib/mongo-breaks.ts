@@ -1,9 +1,9 @@
 import type { Document } from "mongodb";
 import { getMongoDb } from "./mongo";
 import {
+  calendarDay,
   employeeDisplayName,
   employeeIdValues,
-  flexibleDayRangeFilter,
   formatSqlDateTime,
   idFilter,
   idKey,
@@ -21,16 +21,6 @@ type ListOpts = {
   fromDate?: string | null;
   toDate?: string | null;
 };
-
-function rangeFilter(field: string, opts: ListOpts): Document {
-  if (opts.date) return flexibleDayRangeFilter(opts.date, opts.date, [field, "date"]);
-  if (opts.fromDate && opts.toDate) {
-    return flexibleDayRangeFilter(opts.fromDate, opts.toDate, [field, "date"]);
-  }
-  if (opts.fromDate) return flexibleDayRangeFilter(opts.fromDate, "2099-12-31", [field, "date"]);
-  if (opts.toDate) return flexibleDayRangeFilter("2000-01-01", opts.toDate, [field, "date"]);
-  return {};
-}
 
 function pickAttendanceSession(
   rows: Document[],
@@ -102,9 +92,17 @@ async function enrichBreakRows(
 
 export async function mongoListBreaks(opts: ListOpts) {
   const db = await getMongoDb();
-  const filter: Document = { ...rangeFilter("break_start", opts) };
+  const filter: Document = {};
   if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
-  const rows = await db.collection("breaks").find(filter).sort({ break_start: -1 }).limit(5000).toArray();
+  let rows = await db.collection("breaks").find(filter).sort({ break_start: -1 }).limit(8000).toArray();
+  const from = opts.date || opts.fromDate;
+  const to = opts.date || opts.toDate;
+  if (from && to) {
+    rows = rows.filter((row) => {
+      const key = calendarDay(row.break_start) || calendarDay(row.date);
+      return key >= from && key <= to;
+    });
+  }
   const enriched = await enrichBreakRows(rows, "break_start");
   return enriched.map((row) => ({
     ...row,
@@ -116,14 +114,22 @@ export async function mongoListBreaks(opts: ListOpts) {
 
 export async function mongoListPrayerBreaks(opts: ListOpts) {
   const db = await getMongoDb();
-  const filter: Document = { ...rangeFilter("prayer_break_start", opts) };
+  const filter: Document = {};
   if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
-  const rows = await db
+  let rows = await db
     .collection("prayer_breaks")
     .find(filter)
     .sort({ prayer_break_start: -1 })
-    .limit(5000)
+    .limit(8000)
     .toArray();
+  const from = opts.date || opts.fromDate;
+  const to = opts.date || opts.toDate;
+  if (from && to) {
+    rows = rows.filter((row) => {
+      const key = calendarDay(row.prayer_break_start) || calendarDay(row.date);
+      return key >= from && key <= to;
+    });
+  }
   const enriched = await enrichBreakRows(rows, "prayer_break_start");
   return enriched.map((row) => ({
     ...row,

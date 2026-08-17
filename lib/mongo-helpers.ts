@@ -23,24 +23,40 @@ export function exclusiveEndDate(value: string): string {
   return dt.toISOString().slice(0, 10);
 }
 
+/** mongoimport EJSON `{ $date: "..." }` or BSON Date or SQL datetime string. */
+export function unwrapMongoDate(v: unknown): unknown {
+  if (v == null || v === "") return v;
+  if (v instanceof Date) return v;
+  if (typeof v === "object" && v !== null && "$date" in (v as object)) {
+    const raw = (v as { $date: unknown }).$date;
+    if (typeof raw === "string" || typeof raw === "number") return new Date(raw);
+    if (raw && typeof raw === "object" && "$numberLong" in (raw as object)) {
+      return new Date(Number((raw as { $numberLong: string }).$numberLong));
+    }
+  }
+  return v;
+}
+
 export function formatSqlDateTime(isoOrDate: string | Date): string {
   const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
   return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
 export function ymd(v: unknown): string {
-  if (v == null || v === "") return "";
-  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
-  return String(v).slice(0, 10);
+  const u = unwrapMongoDate(v);
+  if (u == null || u === "") return "";
+  if (u instanceof Date && !Number.isNaN(u.getTime())) return u.toISOString().slice(0, 10);
+  return String(u).slice(0, 10);
 }
 
 /** Calendar day in Asia/Karachi — imported MySQL DATE often lands as BSON Date. */
 export function calendarDay(v: unknown): string {
-  if (v == null || v === "") return "";
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && !v.includes("T")) {
-    return v.slice(0, 10);
+  const u = unwrapMongoDate(v);
+  if (u == null || u === "") return "";
+  if (typeof u === "string" && /^\d{4}-\d{2}-\d{2}/.test(u) && !u.includes("T")) {
+    return u.slice(0, 10);
   }
-  return getDateStringInTimeZone(v as string | Date | number, SERVER_TIMEZONE) || ymd(v);
+  return getDateStringInTimeZone(u as string | Date | number, SERVER_TIMEZONE) || ymd(u);
 }
 
 /**
@@ -66,21 +82,23 @@ export function flexibleDayRangeFilter(
 }
 
 export function toMs(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  if (v instanceof Date) {
-    const t = v.getTime();
+  const u = unwrapMongoDate(v);
+  if (u == null || u === "") return null;
+  if (u instanceof Date) {
+    const t = u.getTime();
     return Number.isNaN(t) ? null : t;
   }
-  const s = String(v);
+  const s = String(u);
   const d = new Date(s.includes("T") ? s : s.replace(" ", "T"));
   const t = d.getTime();
   return Number.isNaN(t) ? null : t;
 }
 
 export function sqlDateToIso(v: unknown): string | null {
-  if (isBlank(v)) return null;
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
-  const s = String(v);
+  const u = unwrapMongoDate(v);
+  if (isBlank(u)) return null;
+  if (u instanceof Date) return Number.isNaN(u.getTime()) ? null : u.toISOString();
+  const s = String(u);
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:/.test(s) && !s.endsWith("Z") && !/[+-]\d{2}:\d{2}$/.test(s)) {
     const d = new Date(s.replace(" ", "T") + "Z");
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
