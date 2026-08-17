@@ -318,9 +318,20 @@ function buildFilterFromWhere(
     const parts: string[] = [];
     let depth = 0;
     let cur = "";
-    const tokens = s.split(/(\bAND\b)/i);
+    let pendingBetween = false;
+    const tokens = s.split(/(\bAND\b|\bBETWEEN\b)/i);
     for (const t of tokens) {
+      if (/^\s*BETWEEN\s*$/i.test(t) && depth === 0) {
+        pendingBetween = true;
+        cur += t;
+        continue;
+      }
       if (/^\s*AND\s*$/i.test(t) && depth === 0) {
+        if (pendingBetween) {
+          pendingBetween = false;
+          cur += t;
+          continue;
+        }
         parts.push(cur.trim());
         cur = "";
         continue;
@@ -416,7 +427,7 @@ function buildFilterFromWhere(
 
     // col < DATE_ADD(?, INTERVAL n UNIT)
     m = s.match(
-      /^([\w.`]+)\s*(<|>|<=|>=)\s*DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+(\w+)\s*\)\s*$/i,
+      /^([\w.`]+)\s*(<|>|<=|>=)\s*DATE_ADD\s*\(\s*\?\s*,\s*INTERVAL\s+(\d+)\s+([A-Za-z]+)\s*\)\s*$/i,
     );
     if (m) {
       const ref = fieldRef(m[1]);
