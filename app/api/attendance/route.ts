@@ -5,9 +5,14 @@ import { isGraceExpiredForEmployee } from "@/lib/attendance-presence";
 import { closeActiveBreaksForEmployee } from "@/lib/auto-clock-out";
 import { getDbDriver, pool } from "../../../lib/db";
 import {
+  mongoAutoCloseOldOpen,
+  mongoClockIn,
   mongoClockOut,
+  mongoDeleteAttendance,
   mongoFindOpenAttendance,
   mongoHasActiveBreak,
+  mongoListAttendance,
+  mongoUpdateAttendance,
 } from "@/lib/mongo-attendance";
 
 registerAutoPresenceCron();
@@ -32,6 +37,22 @@ export async function GET(req: NextRequest) {
     const openOnly = searchParams.get("openOnly") === "1";
     /** Lighter payload for summary pages — skips shift subquery + contacts */
     const summaryOnly = searchParams.get("summary") === "1";
+
+    if (getDbDriver() === "mongo") {
+      if (activeBreakCheck && employeeId) {
+        const breakStatus = await mongoHasActiveBreak(employeeId);
+        return NextResponse.json({ success: true, ...breakStatus });
+      }
+      const attendance = await mongoListAttendance({
+        employeeId,
+        date,
+        fromDate,
+        toDate,
+        openOnly,
+        summaryOnly,
+      });
+      return NextResponse.json({ success: true, attendance });
+    }
     
     conn = await pool.getConnection();
     if (!conn) {
@@ -40,10 +61,7 @@ export async function GET(req: NextRequest) {
     await ensureAttendanceTable(conn);
 
     if (activeBreakCheck && employeeId) {
-      const breakStatus =
-        getDbDriver() === "mongo"
-          ? await mongoHasActiveBreak(employeeId)
-          : await checkActiveBreaks(conn, employeeId);
+      const breakStatus = await checkActiveBreaks(conn, employeeId);
       return NextResponse.json({ success: true, ...breakStatus });
     }
     let rows;
@@ -281,6 +299,71 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing required fields: employee_id or date" }, { status: 400 });
     }
 
+    if (getDbDriver() === "mongo") {
+      if (clock_in !== undefined && clock_in !== null) {
+        const bioBlock = await enforceBiometricOrRespond(
+          biometric_token,
+          String(employee_id),
+          "clock_in",
+          employee_name
+        );
+        if (bioBlock) return bioBlock;
+        const result = await mongoClockIn({
+          employeeId: employee_id,
+          employeeName: employee_name,
+          date: formattedDate,
+          clockIn: String(clock_in),
+        });
+        if (!result.ok) {
+          return NextResponse.json(
+            { success: false, error: result.error, openAttendanceId: result.openAttendanceId },
+            { status: 400 },
+          );
+        }
+        return NextResponse.json({ success: true, message: "inserted" });
+      }
+      if (clock_out !== undefined && clock_out !== null) {
+        let isAutoClockOut = Boolean(auto_clock_out);
+        const breakStatus = await mongoHasActiveBreak(employee_id);
+        if (!isAutoClockOut && breakStatus.hasActiveBreak) {
+          const breakName = breakStatus.breakType === "prayer_break" ? "Prayer Break" : "Break";
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Cannot clock out. ${breakName} is still active. Please end your ${breakName.toLowerCase()} first.`,
+              errorCode: "ACTIVE_BREAK",
+            },
+            { status: 400 },
+          );
+        }
+        const openSession = await mongoFindOpenAttendance(employee_id);
+        const openDate = openSession?.clock_in
+          ? getDateStringInTimeZone(openSession.clock_in, SERVER_TIMEZONE)
+          : "";
+        const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
+        if (!isAutoClockOut && openDate && openDate >= todayKey) {
+          const bioBlock = await enforceBiometricOrRespond(
+            biometric_token,
+            String(employee_id),
+            "clock_out",
+            employee_name,
+          );
+          if (bioBlock) return bioBlock;
+        }
+        const closed = await mongoClockOut({
+          employeeId: employee_id,
+          clockOut: String(clock_out),
+          employeeName: employee_name || null,
+          autoClockOut: isAutoClockOut || (openDate !== "" && openDate < todayKey),
+        });
+        if (!closed) {
+          return NextResponse.json({ success: true, message: "already_closed" });
+        }
+        return NextResponse.json({ success: true, message: "updated" });
+      }
+      return NextResponse.json({ success: false, error: "Missing clock_in or clock_out" }, { status: 400 });
+    }
+
     conn = await pool.getConnection();
     await ensureAttendanceTable(conn);
 
@@ -374,45 +457,6 @@ export async function POST(req: NextRequest) {
     } else if (clock_out !== undefined && clock_out !== null) {
       let isAutoClockOut = Boolean(auto_clock_out);
 
-      if (getDbDriver() === "mongo") {
-        const breakStatus = await mongoHasActiveBreak(employee_id);
-        if (!isAutoClockOut && breakStatus.hasActiveBreak) {
-          const breakName = breakStatus.breakType === "prayer_break" ? "Prayer Break" : "Break";
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Cannot clock out. ${breakName} is still active. Please end your ${breakName.toLowerCase()} first.`,
-              errorCode: "ACTIVE_BREAK",
-            },
-            { status: 400 },
-          );
-        }
-        const openSession = await mongoFindOpenAttendance(employee_id);
-        const openDate = openSession?.clock_in
-          ? getDateStringInTimeZone(openSession.clock_in, SERVER_TIMEZONE)
-          : "";
-        const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-        if (!isAutoClockOut && openDate && openDate >= todayKey) {
-          const bioBlock = await enforceBiometricOrRespond(
-            biometric_token,
-            String(employee_id),
-            "clock_out",
-            employee_name,
-          );
-          if (bioBlock) return bioBlock;
-        }
-        const closed = await mongoClockOut({
-          employeeId: employee_id,
-          clockOut: String(clock_out),
-          employeeName: employee_name || null,
-          autoClockOut: isAutoClockOut || (openDate !== "" && openDate < todayKey),
-        });
-        if (!closed) {
-          return NextResponse.json({ success: true, message: "already_closed" });
-        }
-        return NextResponse.json({ success: true, message: "updated" });
-      }
-
       if (!isAutoClockOut) {
         const graceExpired = await isGraceExpiredForEmployee(conn, String(employee_id));
         if (graceExpired) {
@@ -503,6 +547,27 @@ export async function PUT(req: NextRequest) {
   try {
     const data = await req.json();
     const { id, employee_id, employee_name, date, clock_in, clock_out, autoCloseOldRecords } = data || {};
+
+    if (getDbDriver() === "mongo") {
+      if (autoCloseOldRecords && employee_id) {
+        await mongoAutoCloseOldOpen(employee_id);
+        return NextResponse.json({ success: true, message: 'Old open records closed' });
+      }
+      if (!id || !employee_id || !date) {
+        return NextResponse.json({ success: false, error: "Missing required fields: id, employee_id or date" }, { status: 400 });
+      }
+      const formattedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(date))
+        ? String(date)
+        : getDateStringInTimeZone(date, SERVER_TIMEZONE);
+      await mongoUpdateAttendance({
+        id,
+        employeeName: employee_name,
+        date: formattedDate,
+        clockIn: clock_in || null,
+        clockOut: clock_out || null,
+      });
+      return NextResponse.json({ success: true, message: 'Attendance updated successfully' });
+    }
 
     conn = await pool.getConnection();
     await ensureAttendanceTable(conn);
@@ -597,6 +662,11 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ success: false, error: "Missing required field: id" }, { status: 400 });
+    }
+
+    if (getDbDriver() === "mongo") {
+      await mongoDeleteAttendance(id);
+      return NextResponse.json({ success: true, message: 'Attendance deleted successfully' });
     }
 
     conn = await pool.getConnection();

@@ -1,33 +1,26 @@
 import type { Document } from "mongodb";
 import { getMongoDb } from "./mongo";
-
-function employeeIdValues(employeeId: string | number): Array<string | number> {
-  const s = String(employeeId ?? "").trim();
-  const vals: Array<string | number> = [s];
-  if (/^\d+$/.test(s)) vals.push(Number(s));
-  return vals;
-}
-
-function isEmptyClockOut(v: unknown): boolean {
-  return v == null || v === "";
-}
+import { computeClockInLateStatus } from "./monthly-attendance-status";
+import {
+  employeeDisplayName,
+  employeeIdValues,
+  formatSqlDateTime,
+  idFilter,
+  idKey,
+  isBlank,
+  loadEmployeeLookups,
+  mongoNextId,
+  pickLatestShift,
+  sqlDateToIso,
+  toMs,
+  ymd,
+} from "./mongo-helpers";
 
 function hoursBetween(clockIn: unknown, clockOut: unknown): number {
-  const a =
-    clockIn instanceof Date
-      ? clockIn.getTime()
-      : new Date(String(clockIn).replace(" ", "T")).getTime();
-  const b =
-    clockOut instanceof Date
-      ? clockOut.getTime()
-      : new Date(String(clockOut).replace(" ", "T")).getTime();
-  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0;
+  const a = toMs(clockIn);
+  const b = toMs(clockOut);
+  if (a == null || b == null || b <= a) return 0;
   return Math.min(999.99, Math.round(((b - a) / 3600000) * 100) / 100);
-}
-
-function formatSqlDateTime(isoOrDate: string | Date): string {
-  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
-  return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
 export async function mongoHasActiveBreak(employeeId: string | number): Promise<{
@@ -36,12 +29,9 @@ export async function mongoHasActiveBreak(employeeId: string | number): Promise<
 }> {
   const db = await getMongoDb();
   const ids = employeeIdValues(employeeId);
-  const openEnd = {
-    $or: [{ break_end: null }, { break_end: { $exists: false } }, { break_end: "" }],
-  };
   const br = await db.collection("breaks").findOne({
     employee_id: { $in: ids },
-    ...openEnd,
+    $or: [{ break_end: null }, { break_end: { $exists: false } }, { break_end: "" }],
   });
   if (br) return { hasActiveBreak: true, breakType: "break" };
 
@@ -61,21 +51,16 @@ export async function mongoFindOpenAttendance(
   employeeId: string | number,
 ): Promise<Document | null> {
   const db = await getMongoDb();
-  const ids = employeeIdValues(employeeId);
   const docs = await db
     .collection("employee_attendance")
     .find({
-      employee_id: { $in: ids },
-      $or: [
-        { clock_out: null },
-        { clock_out: { $exists: false } },
-        { clock_out: "" },
-      ],
+      employee_id: { $in: employeeIdValues(employeeId) },
+      $or: [{ clock_out: null }, { clock_out: { $exists: false } }, { clock_out: "" }],
     })
     .sort({ clock_in: -1, id: -1 })
     .limit(20)
     .toArray();
-  return docs.find((d) => isEmptyClockOut(d.clock_out)) ?? null;
+  return docs.find((d) => isBlank(d.clock_out)) ?? null;
 }
 
 export async function mongoClockOut(opts: {
@@ -96,11 +81,175 @@ export async function mongoClockOut(opts: {
         auto_clock_out: opts.autoClockOut ? 1 : 0,
         last_presence_ack_at: null,
         total_hours: hoursBetween(open.clock_in, formatted),
-        ...(opts.employeeName
-          ? { employee_name: opts.employeeName }
-          : {}),
+        ...(opts.employeeName ? { employee_name: opts.employeeName } : {}),
       },
     },
   );
   return true;
+}
+
+export async function mongoClockIn(opts: {
+  employeeId: string | number;
+  employeeName?: string | null;
+  date: string;
+  clockIn: string;
+}): Promise<{ ok: true } | { ok: false; error: string; openAttendanceId?: unknown }> {
+  const open = await mongoFindOpenAttendance(opts.employeeId);
+  if (open) {
+    return {
+      ok: false,
+      error: "You are already clocked in. Please clock out first.",
+      openAttendanceId: open.id,
+    };
+  }
+  const lookups = await loadEmployeeLookups(employeeIdValues(opts.employeeId));
+  const emp = lookups.employees.get(idKey(opts.employeeId));
+  const shift = pickLatestShift(lookups.assignments, opts.employeeId, opts.date);
+  const clockInDb = formatSqlDateTime(opts.clockIn);
+  const lateMinutes = shift?.start_time
+    ? computeClockInLateStatus(clockInDb, String(shift.start_time), emp?.gender as string | undefined)
+        .lateMinutes
+    : 0;
+  const db = await getMongoDb();
+  await db.collection("employee_attendance").insertOne({
+    id: await mongoNextId("employee_attendance"),
+    employee_id: /^\d+$/.test(String(opts.employeeId)) ? Number(opts.employeeId) : opts.employeeId,
+    employee_name: opts.employeeName || employeeDisplayName(emp, ""),
+    date: opts.date,
+    clock_in: clockInDb,
+    clock_out: null,
+    total_hours: null,
+    late_minutes: lateMinutes,
+    auto_clock_out: 0,
+    last_presence_ack_at: null,
+  });
+  return { ok: true };
+}
+
+export async function mongoListAttendance(opts: {
+  employeeId?: string | null;
+  date?: string | null;
+  fromDate?: string | null;
+  toDate?: string | null;
+  openOnly?: boolean;
+  summaryOnly?: boolean;
+}) {
+  const db = await getMongoDb();
+  const filter: Document = {};
+  if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
+  if (opts.openOnly) {
+    filter.$or = [{ clock_out: null }, { clock_out: { $exists: false } }, { clock_out: "" }];
+  } else if (opts.date) {
+    filter.date = opts.date;
+  } else if (opts.fromDate && opts.toDate) {
+    filter.date = { $gte: opts.fromDate, $lte: opts.toDate };
+  }
+  let cursor = db.collection("employee_attendance").find(filter).sort({ clock_in: -1 });
+  if (!opts.employeeId && !opts.date && !(opts.fromDate && opts.toDate)) cursor = cursor.limit(1000);
+  const rows = await cursor.toArray();
+  const lookups = await loadEmployeeLookups(rows.map((r) => r.employee_id).filter(Boolean));
+
+  return rows.map((row) => {
+    const emp = lookups.employees.get(idKey(row.employee_id));
+    const contact = lookups.contacts.get(idKey(row.employee_id));
+    const job = lookups.jobs.get(idKey(row.employee_id));
+    const dept = job ? lookups.departments.get(idKey(job.department_id)) : undefined;
+    const sa = pickLatestShift(lookups.assignments, row.employee_id, ymd(row.date));
+    const computedLate = computeClockInLateStatus(
+      row.clock_in,
+      sa?.start_time as string | undefined,
+      emp?.gender as string | undefined,
+    );
+    const storedLate =
+      row.late_minutes != null && row.late_minutes !== "" ? Number(row.late_minutes) : null;
+    const late_minutes =
+      storedLate != null && Number.isFinite(storedLate) ? storedLate : computedLate.lateMinutes;
+    const is_late =
+      storedLate != null && Number.isFinite(storedLate) ? storedLate > 0 : computedLate.isLate;
+    const { _id, ...rest } = row;
+    return {
+      ...rest,
+      employee_name: employeeDisplayName(emp, row.employee_name),
+      pseudonym: emp?.pseudonym || null,
+      gender: emp?.gender || null,
+      department_name: dept?.name || null,
+      email_work: opts.summaryOnly ? undefined : contact?.email_work || null,
+      email_other: opts.summaryOnly ? undefined : contact?.email_other || null,
+      email: contact?.email_work || contact?.email_other || null,
+      shift_name: opts.summaryOnly ? undefined : sa?.shift_name || null,
+      shift_start_time: sa?.start_time || null,
+      shift_end_time: opts.summaryOnly ? undefined : sa?.end_time || null,
+      shift_assigned_date: opts.summaryOnly ? undefined : sa?.assigned_date || null,
+      clock_in: sqlDateToIso(row.clock_in),
+      clock_out: sqlDateToIso(row.clock_out),
+      is_late,
+      late_minutes,
+    };
+  });
+}
+
+export async function mongoUpdateAttendance(opts: {
+  id: string | number;
+  employeeName?: string | null;
+  date: string;
+  clockIn?: string | null;
+  clockOut?: string | null;
+}) {
+  const db = await getMongoDb();
+  const existing = await db.collection("employee_attendance").findOne(idFilter(opts.id));
+  const employeeId = existing?.employee_id;
+  const lookups = employeeId != null ? await loadEmployeeLookups(employeeIdValues(employeeId)) : null;
+  const emp = lookups?.employees.get(idKey(employeeId));
+  const shift = lookups ? pickLatestShift(lookups.assignments, employeeId, opts.date) : null;
+  const clockInDb = opts.clockIn ? formatSqlDateTime(opts.clockIn) : null;
+  const clockOutDb = opts.clockOut ? formatSqlDateTime(opts.clockOut) : null;
+  const lateMinutes = clockInDb
+    ? shift?.start_time
+      ? computeClockInLateStatus(clockInDb, String(shift.start_time), emp?.gender as string | undefined)
+          .lateMinutes
+      : 0
+    : null;
+  await db.collection("employee_attendance").updateOne(idFilter(opts.id), {
+    $set: {
+      employee_name: opts.employeeName || "",
+      date: opts.date,
+      clock_in: clockInDb,
+      clock_out: clockOutDb,
+      late_minutes: lateMinutes,
+      total_hours: clockInDb && clockOutDb ? hoursBetween(clockInDb, clockOutDb) : null,
+    },
+  });
+}
+
+export async function mongoDeleteAttendance(id: string | number) {
+  const db = await getMongoDb();
+  await db.collection("employee_attendance").deleteOne(idFilter(id));
+}
+
+export async function mongoAutoCloseOldOpen(employeeId: string | number) {
+  const db = await getMongoDb();
+  const today = new Date().toISOString().slice(0, 10);
+  const open = await db
+    .collection("employee_attendance")
+    .find({
+      employee_id: { $in: employeeIdValues(employeeId) },
+      $or: [{ clock_out: null }, { clock_out: { $exists: false } }, { clock_out: "" }],
+    })
+    .toArray();
+  for (const row of open) {
+    const day = ymd(row.date) || ymd(row.clock_in);
+    if (!day || day >= today) continue;
+    const cin = toMs(row.clock_in);
+    if (cin == null || !row._id) continue;
+    const clockOut = new Date(cin + 8 * 3600000);
+    await db.collection("employee_attendance").updateOne(
+      { _id: row._id },
+      {
+        $set: {
+          clock_out: formatSqlDateTime(clockOut),
+          total_hours: 8,
+        },
+      },
+    );
+  }
 }
