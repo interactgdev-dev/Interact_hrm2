@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "../../../lib/db";
-import { getLeaveCycleStartYmd } from "../../../lib/leave-cycle";
+import {
+  getLeaveCycleStartYmd,
+  leaveDateToYmd,
+} from "../../../lib/leave-cycle";
 
-function toYmd(value: any): string | null {
-  if (!value) return null;
-  if (typeof value === "string") {
-    const m = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim());
-    if (m) return m[1];
-  }
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function parseLeaveDays(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n * 2) / 2;
+}
+
+function roundLeaveDays(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 2) / 2;
 }
 
 // GET: Fetch all employees with their leave allowances
@@ -22,7 +23,6 @@ export async function GET(req: NextRequest) {
   try {
     conn = await pool.getConnection();
 
-    // Fetch active employees with fixed allowances and adjustments.
     const [rows]: any = await conn.execute(`
       SELECT 
         e.id,
@@ -70,7 +70,8 @@ export async function GET(req: NextRequest) {
       if (!current) return;
 
       const cycleStart = cycleStartByEmployee.get(empId) || null;
-      if (cycleStart && leave?.start_date && String(leave.start_date).slice(0, 10) < cycleStart) {
+      const startYmd = leaveDateToYmd(leave?.start_date);
+      if (cycleStart && startYmd && startYmd < cycleStart) {
         return;
       }
 
@@ -83,30 +84,30 @@ export async function GET(req: NextRequest) {
         current.annual_used += days;
       }
     });
-    
-    // Calculate current balances with current-cycle-only adjustments.
+
     const employeesWithBalance = rows.map((emp: any) => {
       const empId = Number(emp.id);
       const annualUsed = usedByEmployee.get(empId)?.annual_used || 0;
       const bereavementUsed = usedByEmployee.get(empId)?.bereavement_used || 0;
       const cycleStart = cycleStartByEmployee.get(empId) || null;
-      const adjustmentUpdatedAt = toYmd(emp?.allowance_updated_at);
-      const isCurrentCycleAdjustment =
-        !cycleStart || (adjustmentUpdatedAt !== null && adjustmentUpdatedAt >= cycleStart);
-      const annualAdjustment = isCurrentCycleAdjustment ? Number(emp.annual_balance_adjustment || 0) : 0;
-      const bereavementAdjustment = isCurrentCycleAdjustment
-        ? Number(emp.bereavement_balance_adjustment || 0)
-        : 0;
+      const annualAdjustment = Number(emp.annual_balance_adjustment || 0);
+      const bereavementAdjustment = Number(emp.bereavement_balance_adjustment || 0);
+      const annualAllowance = Number(emp.annual_allowance || 0);
+      const bereavementAllowance = Number(emp.bereavement_allowance || 0);
 
       return {
         ...emp,
+        annual_allowance: annualAllowance,
+        bereavement_allowance: bereavementAllowance,
         annual_used: annualUsed,
         bereavement_used: bereavementUsed,
         annual_balance_adjustment: annualAdjustment,
         bereavement_balance_adjustment: bereavementAdjustment,
         leave_cycle_start: cycleStart,
-        annual_current_balance: emp.annual_allowance - annualUsed + annualAdjustment,
-        bereavement_current_balance: emp.bereavement_allowance - bereavementUsed + bereavementAdjustment,
+        annual_current_balance: roundLeaveDays(annualAllowance - annualUsed + annualAdjustment),
+        bereavement_current_balance: roundLeaveDays(
+          bereavementAllowance - bereavementUsed + bereavementAdjustment
+        ),
       };
     });
 
@@ -140,7 +141,6 @@ export async function POST(req: NextRequest) {
 
     conn = await pool.getConnection();
 
-    // Get employee info and calculate adjustments needed
     const [empRows]: any = await conn.execute(`
       SELECT 
         e.id,
@@ -162,43 +162,61 @@ export async function POST(req: NextRequest) {
 
     const emp = empRows[0];
     const cycleStart = getLeaveCycleStartYmd(emp.joined_date || null);
+    const annualTarget = parseLeaveDays(annual_current_balance);
+    const bereavementTarget = parseLeaveDays(bereavement_current_balance);
+    const annualAllowance = Number(emp.annual_allowance || 0);
+    const bereavementAllowance = Number(emp.bereavement_allowance || 0);
 
-    let usedSql = `
-      SELECT
-        COALESCE(SUM(CASE WHEN leave_category != 'bereavement' THEN total_days ELSE 0 END), 0) as annual_used,
-        COALESCE(SUM(CASE WHEN leave_category = 'bereavement' THEN total_days ELSE 0 END), 0) as bereavement_used
-      FROM employee_leaves
-      WHERE employee_id = ? AND status = 'approved'
-    `;
-    const usedParams: any[] = [employee_id];
-    if (cycleStart) {
-      usedSql += " AND start_date >= ?";
-      usedParams.push(cycleStart);
-    }
-    const [usedRows]: any = await conn.execute(usedSql, usedParams);
-    const annualUsed = Number(usedRows?.[0]?.annual_used || 0);
-    const bereavementUsed = Number(usedRows?.[0]?.bereavement_used || 0);
-    
-    // Calculate balance adjustments
-    // current_balance = (allowance - used) + adjustment
-    // So: adjustment = current_balance - (allowance - used)
-    const annualAdjustment = annual_current_balance - (emp.annual_allowance - annualUsed);
-    const bereavementAdjustment = bereavement_current_balance - (emp.bereavement_allowance - bereavementUsed);
+    const [leaveRows]: any = await conn.execute(
+      `SELECT leave_category, total_days, start_date
+       FROM employee_leaves
+       WHERE employee_id = ? AND status = 'approved'`,
+      [employee_id]
+    );
 
-    // Insert or update balance adjustments
-    const [result]: any = await conn.execute(`
-      INSERT INTO employee_leave_allowances 
-        (employee_id, annual_balance_adjustment, bereavement_balance_adjustment, annual_allowance, bereavement_allowance, casual_allowance, sick_allowance)
-      VALUES (?, ?, ?, ?, ?, 10, 15)
+    let annualUsed = 0;
+    let bereavementUsed = 0;
+    (Array.isArray(leaveRows) ? leaveRows : []).forEach((leave: any) => {
+      const startYmd = leaveDateToYmd(leave?.start_date);
+      if (cycleStart && startYmd && startYmd < cycleStart) return;
+      const days = Number(leave.total_days || 0);
+      if (!Number.isFinite(days) || days <= 0) return;
+      if (String(leave.leave_category || "").toLowerCase() === "bereavement") {
+        bereavementUsed += days;
+      } else {
+        annualUsed += days;
+      }
+    });
+
+    const annualAdjustment = roundLeaveDays(annualTarget - (annualAllowance - annualUsed));
+    const bereavementAdjustment = roundLeaveDays(
+      bereavementTarget - (bereavementAllowance - bereavementUsed)
+    );
+
+    await conn.execute(
+      `INSERT INTO employee_leave_allowances
+        (employee_id, annual_balance_adjustment, bereavement_balance_adjustment, annual_allowance, bereavement_allowance, casual_allowance, sick_allowance, updated_at)
+      VALUES (?, ?, ?, ?, ?, 10, 15, NOW())
       ON DUPLICATE KEY UPDATE
-        annual_balance_adjustment = VALUES(annual_balance_adjustment),
-        bereavement_balance_adjustment = VALUES(bereavement_balance_adjustment),
-        updated_at = CURRENT_TIMESTAMP
-    `, [employee_id, annualAdjustment, bereavementAdjustment, emp.annual_allowance, emp.bereavement_allowance]);
+        annual_balance_adjustment = ?,
+        bereavement_balance_adjustment = ?,
+        updated_at = NOW()`,
+      [
+        employee_id,
+        annualAdjustment,
+        bereavementAdjustment,
+        annualAllowance,
+        bereavementAllowance,
+        annualAdjustment,
+        bereavementAdjustment,
+      ]
+    );
 
     return NextResponse.json({
       success: true,
-      message: "Leave balance updated successfully"
+      message: "Leave balance updated successfully",
+      annual_current_balance: annualTarget,
+      bereavement_current_balance: bereavementTarget,
     });
   } catch (error) {
     console.error("Error updating leave allowance:", error);

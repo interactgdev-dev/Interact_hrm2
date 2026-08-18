@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import LayoutDashboard from "../../layout-dashboard";
 import styles from "./shift-management.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
@@ -60,6 +60,7 @@ export default function ShiftManagementPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
   const [selectedScope, setSelectedScope] = useState<string>(""); // all, dept-<id>, emp-<id>
   const [selectedAll, setSelectedAll] = useState(false);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<number[]>([]);
@@ -84,6 +85,7 @@ export default function ShiftManagementPage() {
   const [overtimeDropdownOpen, setOvertimeDropdownOpen] = useState(false);
   const [overtimeTargetSearch, setOvertimeTargetSearch] = useState("");
   const [updatingOvertimeId, setUpdatingOvertimeId] = useState<number | null>(null);
+  const [listPopup, setListPopup] = useState<"inactive" | "unassigned" | null>(null);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
   useEffect(() => {
@@ -92,12 +94,23 @@ export default function ShiftManagementPage() {
     fetchMasterShifts();
   }, []);
 
+  const isActiveStatus = (status?: string) => {
+    const s = String(status || "").toLowerCase();
+    return s === "active" || s === "enabled";
+  };
+
+  const matchesStatusFilter = (status?: string) => {
+    if (statusFilter === "all") return true;
+    const active = isActiveStatus(status);
+    return statusFilter === "active" ? active : !active;
+  };
+
   // Keep selections in sync when "all" is toggled or list changes
   useEffect(() => {
     if (selectedAll) {
-      setSelectedEmployeeIds(employees.map(e => e.id));
+      setSelectedEmployeeIds(employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id));
     }
-  }, [selectedAll, employees]);
+  }, [selectedAll, employees, statusFilter]);
 
   const fetchEmployees = async () => {
     try {
@@ -156,18 +169,21 @@ export default function ShiftManagementPage() {
       }
 
       // Merge enrichment maps
-      const enrichedEmployees = baseEmployees.map((emp: Employee) => ({
-        ...emp,
-        first_name: emp.first_name || employeeInfoMap.get(Number(emp.id))?.first_name || "",
-        last_name: emp.last_name || employeeInfoMap.get(Number(emp.id))?.last_name || "",
-        status: emp.status || employeeInfoMap.get(Number(emp.id))?.status || "",
-        department_name: deptMap.get(Number(emp.id)) || emp.department_name || "-",
-        pseudonym:
-          pseudonymMap.get(Number(emp.id)) ||
-          emp.pseudonym ||
-          employeeInfoMap.get(Number(emp.id))?.pseudonym ||
-          "-",
-      }));
+      const enrichedEmployees = baseEmployees.map((emp: Employee) => {
+        const info = employeeInfoMap.get(Number(emp.id));
+        return {
+          ...emp,
+          first_name: emp.first_name || info?.first_name || "",
+          last_name: emp.last_name || info?.last_name || "",
+          status: info?.status || emp.status || "",
+          department_name: deptMap.get(Number(emp.id)) || emp.department_name || "-",
+          pseudonym:
+            pseudonymMap.get(Number(emp.id)) ||
+            emp.pseudonym ||
+            info?.pseudonym ||
+            "-",
+        };
+      });
       setEmployees(enrichedEmployees);
     } catch (err) {
       setError("Failed to fetch employees");
@@ -211,6 +227,47 @@ export default function ShiftManagementPage() {
       setEndTime(shift.shift_out);
     }
   };
+
+  const toTimeValue = (time?: string) => {
+    if (!time) return "";
+    return String(time).slice(0, 5);
+  };
+
+  const handleAssignMasterShiftToEmployee = async (employeeId: number, masterShiftId: number) => {
+    const shift = masterShifts.find((s) => s.id === masterShiftId);
+    if (!shift) {
+      setError("Shift not found");
+      return;
+    }
+    setAssigningId(employeeId);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch("/api/hrm-shifts-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: employeeId,
+          shift_name: shift.name,
+          start_time: toTimeValue(shift.shift_in),
+          end_time: toTimeValue(shift.shift_out),
+          allow_overtime: Number(shift.overtime_daily) === 1,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSuccess(`Shift "${shift.name}" assigned.`);
+        fetchEmployees();
+        setTimeout(() => setSuccess(""), 3000);
+      } else {
+        setError(data.error || "Failed to assign shift");
+      }
+    } catch {
+      setError("Failed to assign shift");
+    } finally {
+      setAssigningId(null);
+    }
+  };
   const handleAssignShift = async () => {
     const hasManualEmployees = selectedEmployeeIds.length > 0;
 
@@ -234,13 +291,22 @@ export default function ShiftManagementPage() {
     };
 
     if (isAll) {
-      payload.assign_all = true;
+      payload.employee_ids = employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id);
     } else if (isDept) {
-      payload.department_id = parseInt(selectedScope.replace("dept-", ""));
+      const deptId = parseInt(selectedScope.replace("dept-", ""));
+      const deptName = departments.find((d) => d.id === deptId)?.name;
+      payload.employee_ids = employees
+        .filter((e) => e.department_name === deptName && matchesStatusFilter(e.status))
+        .map((e) => e.id);
     } else if (hasManualEmployees) {
       payload.employee_ids = selectedEmployeeIds;
     } else {
       setError("Invalid selection");
+      return;
+    }
+
+    if (!Array.isArray(payload.employee_ids) || payload.employee_ids.length === 0) {
+      setError("No employees found for the current status filter");
       return;
     }
 
@@ -280,10 +346,19 @@ export default function ShiftManagementPage() {
     setEditingId(emp.id);
     setEditAssignmentId(emp.assignment_id || null);
     setEditShiftName(emp.shift_name || "");
-    setEditStartTime(emp.start_time || "");
-    setEditEndTime(emp.end_time || "");
+    setEditStartTime(toTimeValue(emp.start_time));
+    setEditEndTime(toTimeValue(emp.end_time));
     setEditAllowOvertime((emp as any).allow_overtime !== false);
     setError("");
+  };
+
+  const applyMasterShiftToEdit = (shiftId: string) => {
+    const shift = masterShifts.find((s) => String(s.id) === String(shiftId));
+    if (!shift) return;
+    setEditShiftName(shift.name);
+    setEditStartTime(toTimeValue(shift.shift_in));
+    setEditEndTime(toTimeValue(shift.shift_out));
+    setEditAllowOvertime(Number(shift.overtime_daily) === 1);
   };
 
   const handleUpdateShift = async () => {
@@ -368,15 +443,13 @@ export default function ShiftManagementPage() {
       let targetEmployees: number[] = [];
 
       if (isAll) {
-        targetEmployees = employees.map(e => e.id);
+        targetEmployees = employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id);
       } else if (isDept) {
         const deptId = parseInt(overtimeScope.replace("dept-", ""));
+        const deptName = departments.find((d) => d.id === deptId)?.name;
         targetEmployees = employees
-          .filter(e => {
-            const empListItem = employees.find(emp => emp.id === e.id);
-            return empListItem && empListItem.department_name === departments.find(d => d.id === deptId)?.name;
-          })
-          .map(e => e.id);
+          .filter((e) => e.department_name === deptName && matchesStatusFilter(e.status))
+          .map((e) => e.id);
       } else {
         targetEmployees = overtimeSelectedEmployeeIds;
       }
@@ -433,15 +506,13 @@ export default function ShiftManagementPage() {
       let targetEmployees: number[] = [];
 
       if (isAll) {
-        targetEmployees = employees.map(e => e.id);
+        targetEmployees = employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id);
       } else if (isDept) {
         const deptId = parseInt(overtimeScope.replace("dept-", ""));
+        const deptName = departments.find((d) => d.id === deptId)?.name;
         targetEmployees = employees
-          .filter(e => {
-            const empListItem = employees.find(emp => emp.id === e.id);
-            return empListItem && empListItem.department_name === departments.find(d => d.id === deptId)?.name;
-          })
-          .map(e => e.id);
+          .filter((e) => e.department_name === deptName && matchesStatusFilter(e.status))
+          .map((e) => e.id);
       } else {
         targetEmployees = overtimeSelectedEmployeeIds;
       }
@@ -514,6 +585,7 @@ export default function ShiftManagementPage() {
   };
 
   const filteredEmployees = employees.filter((emp) => {
+    if (!matchesStatusFilter(emp.status)) return false;
     const term = search.trim().toLowerCase();
     const matchesSearch =
       !term ||
@@ -531,9 +603,35 @@ export default function ShiftManagementPage() {
       return matchesSearch && matchesDepartment;
     }
     
-    // If no department selected or "all" selected, just use search filter
     return matchesSearch;
   });
+
+  const hasAssignedShift = (emp: Employee) =>
+    Boolean(emp.shift_name && emp.start_time && emp.end_time);
+
+  const stats = useMemo(() => {
+    const total = employees.length;
+    const active = employees.filter((e) => isActiveStatus(e.status)).length;
+    const inactiveEmployees = employees.filter((e) => !isActiveStatus(e.status));
+    const inactive = inactiveEmployees.length;
+    const unassigned = employees.filter((e) => !hasAssignedShift(e));
+    const deptCount = new Set(
+      employees
+        .map((e) => (e.department_name || "").trim())
+        .filter((name) => name && name !== "-")
+    ).size;
+    return {
+      total,
+      active,
+      inactive,
+      inactiveEmployees,
+      unassigned,
+      unassignedCount: unassigned.length,
+      deptCount,
+      activePct: total ? Math.round((active / total) * 100) : 0,
+      inactivePct: total ? Math.round((inactive / total) * 100) : 0,
+    };
+  }, [employees]);
 
   return (
     <LayoutDashboard>
@@ -551,6 +649,41 @@ export default function ShiftManagementPage() {
           </div>
         </div>
 
+        <div className={styles.statsRow}>
+          <div className={`${styles.statCard} ${styles.statPurple}`}>
+            <span className={styles.statLabel}>Total Employees</span>
+            <span className={styles.statValue}>{stats.total}</span>
+            <span className={styles.statHint}>
+              across {stats.deptCount} department{stats.deptCount === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className={`${styles.statCard} ${styles.statGreen}`}>
+            <span className={styles.statLabel}>Active</span>
+            <span className={styles.statValue}>{stats.active}</span>
+            <span className={styles.statHint}>{stats.activePct}% of workforce</span>
+          </div>
+          <button
+            type="button"
+            className={`${styles.statCard} ${styles.statRed} ${styles.statClickable}`}
+            onClick={() => setListPopup("inactive")}
+            title="Show inactive employees"
+          >
+            <span className={styles.statLabel}>Inactive</span>
+            <span className={styles.statValue}>{stats.inactive}</span>
+            <span className={styles.statHint}>{stats.inactivePct}% of workforce</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.statCard} ${styles.statOrange} ${styles.statClickable}`}
+            onClick={() => setListPopup("unassigned")}
+            title="Show employees without an assigned shift"
+          >
+            <span className={styles.statLabel}>Not Assigned</span>
+            <span className={styles.statValue}>{stats.unassignedCount}</span>
+            <span className={styles.statHint}>need a shift today</span>
+          </button>
+        </div>
+
         {success && <div className={styles.successMessage}>✓ {success}</div>}
         {error && (
           <div className={styles.error}>
@@ -559,6 +692,16 @@ export default function ShiftManagementPage() {
         )}
 
         <div className={styles.searchContainer}>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "inactive")}
+            className={styles.statusFilter}
+            title="Filter employees by status"
+          >
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
           <input
             type="text"
             placeholder="Search by name, pseudo name, or ID..."
@@ -567,7 +710,7 @@ export default function ShiftManagementPage() {
             className={styles.searchInput}
           />
           <span className={styles.searchCount}>
-            {filteredEmployees.length} / {employees.length} employees
+            {filteredEmployees.length} / {employees.filter((e) => matchesStatusFilter(e.status)).length} employees
           </span>
         </div>
 
@@ -607,7 +750,7 @@ export default function ShiftManagementPage() {
                       onClick={() => {
                         setSelectedAll(true);
                         setSelectedScope("all");
-                        setSelectedEmployeeIds(employees.map(e => e.id));
+                        setSelectedEmployeeIds(employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id));
                         setDropdownOpen(false);
                         setTargetSearch("");
                       }}
@@ -653,6 +796,7 @@ export default function ShiftManagementPage() {
                     <div className={styles.dropdownGroup}>Employees</div>
                     {employees
                       .filter(emp => {
+                        if (!matchesStatusFilter(emp.status)) return false;
                         const term = targetSearch.toLowerCase();
                         return (
                           emp.first_name?.toLowerCase().includes(term) ||
@@ -793,7 +937,7 @@ export default function ShiftManagementPage() {
                         onClick={() => {
                           setOvertimeSelectedAll(true);
                           setOvertimeScope("all");
-                          setOvertimeSelectedEmployeeIds(employees.map(e => e.id));
+                          setOvertimeSelectedEmployeeIds(employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id));
                           setOvertimeDropdownOpen(false);
                           setOvertimeTargetSearch("");
                         }}
@@ -837,6 +981,7 @@ export default function ShiftManagementPage() {
                       <div className={styles.dropdownGroup}>Employees</div>
                       {employees
                         .filter(emp => {
+                          if (!matchesStatusFilter(emp.status)) return false;
                           const term = overtimeTargetSearch.toLowerCase();
                           return (
                             emp.first_name?.toLowerCase().includes(term) ||
@@ -966,13 +1111,30 @@ export default function ShiftManagementPage() {
                       </td>
                       <td>
                         {editingId === emp.id ? (
-                          <input
-                            type="text"
-                            value={editShiftName}
-                            onChange={(e) => setEditShiftName(e.target.value)}
+                          <select
                             className={styles.controlInput}
-                            placeholder="e.g., Morning, Afternoon"
-                          />
+                            value={
+                              masterShifts.find((s) => s.name === editShiftName)?.id?.toString() ||
+                              (editShiftName ? "__current__" : "")
+                            }
+                            onChange={(e) => {
+                              if (e.target.value === "__current__") return;
+                              applyMasterShiftToEdit(e.target.value);
+                            }}
+                          >
+                            <option value="" disabled>
+                              {masterShifts.length ? "Select shift" : "No shifts"}
+                            </option>
+                            {editShiftName &&
+                            !masterShifts.some((s) => s.name === editShiftName) ? (
+                              <option value="__current__">{editShiftName}</option>
+                            ) : null}
+                            {masterShifts.map((shift) => (
+                              <option key={shift.id} value={shift.id}>
+                                {shift.name} ({formatTimeTo12Hour(toTimeValue(shift.shift_in))} - {formatTimeTo12Hour(toTimeValue(shift.shift_out))})
+                              </option>
+                            ))}
+                          </select>
                         ) : emp.shift_name ? (
                           <span className={styles.shiftName}>
                             {emp.shift_name}
@@ -1059,7 +1221,31 @@ export default function ShiftManagementPage() {
                               🗑
                             </button>
                           </div>
-                        ) : null}
+                        ) : (
+                          <select
+                            className={styles.rowAssignSelect}
+                            value=""
+                            disabled={assigningId === emp.id || masterShifts.length === 0}
+                            onChange={(e) => {
+                              const shiftId = Number(e.target.value);
+                              if (shiftId) handleAssignMasterShiftToEmployee(emp.id, shiftId);
+                            }}
+                            title="Assign a shift"
+                          >
+                            <option value="">
+                              {assigningId === emp.id
+                                ? "Assigning..."
+                                : masterShifts.length === 0
+                                  ? "No shifts"
+                                  : "Assign shift"}
+                            </option>
+                            {masterShifts.map((shift) => (
+                              <option key={shift.id} value={shift.id}>
+                                {shift.name} ({formatTimeTo12Hour(toTimeValue(shift.shift_in))} - {formatTimeTo12Hour(toTimeValue(shift.shift_out))})
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -1070,6 +1256,79 @@ export default function ShiftManagementPage() {
       </div>
       </div>
       {popup}
+      {listPopup && (
+        <div
+          className={styles.popupOverlay}
+          onClick={() => setListPopup(null)}
+        >
+          <div className={styles.popupCard} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.popupHeader}>
+              <div>
+                <h2 className={styles.popupTitle}>
+                  {listPopup === "inactive" ? "Inactive employees" : "Employees without a shift"}
+                </h2>
+                <p className={styles.popupSubtitle}>
+                  {listPopup === "inactive"
+                    ? `${stats.inactive} employee${stats.inactive === 1 ? "" : "s"} with inactive status`
+                    : `${stats.unassignedCount} employee${stats.unassignedCount === 1 ? "" : "s"} still need a shift assignment`}
+                </p>
+              </div>
+              <button
+                type="button"
+                className={styles.popupClose}
+                onClick={() => setListPopup(null)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className={styles.popupBody}>
+              {(listPopup === "inactive" ? stats.inactiveEmployees : stats.unassigned).length === 0 ? (
+                <p className={styles.popupEmpty}>
+                  {listPopup === "inactive"
+                    ? "No inactive employees."
+                    : "All employees have a shift assigned."}
+                </p>
+              ) : (
+                <table className={styles.popupTable}>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Name</th>
+                      <th>P.Name</th>
+                      <th>Department</th>
+                      <th>Status</th>
+                      <th>Shift</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(listPopup === "inactive" ? stats.inactiveEmployees : stats.unassigned).map((emp) => (
+                      <tr key={emp.id}>
+                        <td>{emp.id}</td>
+                        <td>{`${emp.first_name || ""} ${emp.last_name || ""}`.trim() || "-"}</td>
+                        <td>{emp.pseudonym || "-"}</td>
+                        <td>{emp.department_name || "-"}</td>
+                        <td>
+                          <span
+                            className={
+                              isActiveStatus(emp.status)
+                                ? styles.popupStatusActive
+                                : styles.popupStatusInactive
+                            }
+                          >
+                            {isActiveStatus(emp.status) ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td>{hasAssignedShift(emp) ? emp.shift_name || "Assigned" : "Not assigned"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </LayoutDashboard>
   );
 }
