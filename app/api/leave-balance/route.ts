@@ -1,21 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "../../../lib/db";
-import { getLeaveCycleStartYmd } from "../../../lib/leave-cycle";
+import { getLeaveCycleStartYmd, leaveDateToYmd, shouldApplyLeaveAdjustment } from "../../../lib/leave-cycle";
 import { getDateStringInTimeZone } from "../../../lib/timezone";
-
-function toYmd(value: any): string | null {
-  if (!value) return null;
-  if (typeof value === "string") {
-    const m = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim());
-    if (m) return m[1];
-  }
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
 
 export async function GET(req: NextRequest) {
   let conn: any;
@@ -69,14 +55,15 @@ export async function GET(req: NextRequest) {
     console.log(`[LEAVE-BALANCE] Employee ${resolvedEmployeeId}: joined_date=${job?.joined_date}, cycleStart=${leaveCycleStart}`);
 
     // Apply manual adjustments only if they were set in the current leave cycle.
-    const adjustmentUpdatedAt = toYmd(customAllowance?.updated_at);
-    const isCurrentCycleAdjustment =
-      !leaveCycleStart || (adjustmentUpdatedAt !== null && adjustmentUpdatedAt >= leaveCycleStart);
+    const isCurrentCycleAdjustment = shouldApplyLeaveAdjustment(
+      customAllowance?.updated_at,
+      leaveCycleStart
+    );
     const annualBalanceAdjustment = isCurrentCycleAdjustment
-      ? (customAllowance?.annual_balance_adjustment ?? 0)
+      ? Number(customAllowance?.annual_balance_adjustment ?? 0)
       : 0;
     const bereavementBalanceAdjustment = isCurrentCycleAdjustment
-      ? (customAllowance?.bereavement_balance_adjustment ?? 0)
+      ? Number(customAllowance?.bereavement_balance_adjustment ?? 0)
       : 0;
 
     // Fetch approved leaves in current cycle by approval/update date.
@@ -117,7 +104,7 @@ export async function GET(req: NextRequest) {
     
     leaves.forEach((leave: any) => {
       const category = leave.leave_category;
-      const days = parseInt(leave.total_days || 0);
+      const days = Number(leave.total_days || 0);
       usedLeave[category] = (usedLeave[category] || 0) + days;
       totalUsedDays += days;
     });

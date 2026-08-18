@@ -29,6 +29,29 @@ interface Employee {
   pseudonym?: string;
 }
 
+function isLeaveDaysInput(value: string): boolean {
+  return value === "" || /^\d*\.?\d{0,2}$/.test(value);
+}
+
+function parseLeaveDays(value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n * 2) / 2;
+}
+
+function formatLeaveDays(value: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0";
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function formatLeaveDelta(next: number, current: number): string {
+  const delta = Math.round((next - current) * 2) / 2;
+  if (delta === 0) return "";
+  const abs = formatLeaveDays(Math.abs(delta));
+  return delta > 0 ? `+${abs} leaves added` : `-${abs} leaves removed`;
+}
+
 type SortKey =
   | "id"
   | "full_name"
@@ -46,8 +69,8 @@ export default function ManageLeavesPage() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({
-    annual_current_balance: 20,
-    bereavement_current_balance: 3
+    annual_current_balance: "20",
+    bereavement_current_balance: "3"
   });
   const [saving, setSaving] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection } | null>(null);
@@ -122,8 +145,8 @@ export default function ManageLeavesPage() {
   function handleEdit(employee: Employee) {
     setEditingEmployee(employee);
     setFormData({
-      annual_current_balance: employee.annual_current_balance,
-      bereavement_current_balance: employee.bereavement_current_balance
+      annual_current_balance: formatLeaveDays(employee.annual_current_balance),
+      bereavement_current_balance: formatLeaveDays(employee.bereavement_current_balance)
     });
     setShowModal(true);
   }
@@ -138,7 +161,8 @@ export default function ManageLeavesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employee_id: editingEmployee.id,
-          ...formData
+          annual_current_balance: parseLeaveDays(formData.annual_current_balance),
+          bereavement_current_balance: parseLeaveDays(formData.bereavement_current_balance)
         })
       });
 
@@ -410,12 +434,12 @@ export default function ManageLeavesPage() {
                       </td>
                       <td>
                         <span style={{ fontWeight: 600, color: "#007a5a" }}>
-                          {emp.annual_current_balance} / {emp.annual_allowance}
+                          {formatLeaveDays(emp.annual_current_balance)} / {formatLeaveDays(emp.annual_allowance)}
                         </span>
                       </td>
                       <td>
                         <span style={{ fontWeight: 600, color: "#007a5a" }}>
-                          {emp.bereavement_current_balance} / {emp.bereavement_allowance}
+                          {formatLeaveDays(emp.bereavement_current_balance)} / {formatLeaveDays(emp.bereavement_allowance)}
                         </span>
                       </td>
                       <td>
@@ -455,18 +479,18 @@ export default function ManageLeavesPage() {
                 <div className={styles.balanceCard}>
                   <div className={styles.balanceLabel}>Current Annual Leave</div>
                   <div className={styles.balanceValue}>
-                    <span className={styles.remaining}>{editingEmployee.annual_current_balance}</span>
+                    <span className={styles.remaining}>{formatLeaveDays(editingEmployee.annual_current_balance)}</span>
                     <span className={styles.separator}>/</span>
-                    <span className={styles.total}>{editingEmployee.annual_allowance}</span>
+                    <span className={styles.total}>{formatLeaveDays(editingEmployee.annual_allowance)}</span>
                   </div>
                 </div>
                 
                 <div className={styles.balanceCard}>
                   <div className={styles.balanceLabel}>Current Bereavement Leave</div>
                   <div className={styles.balanceValue}>
-                    <span className={styles.remaining}>{editingEmployee.bereavement_current_balance}</span>
+                    <span className={styles.remaining}>{formatLeaveDays(editingEmployee.bereavement_current_balance)}</span>
                     <span className={styles.separator}>/</span>
-                    <span className={styles.total}>{editingEmployee.bereavement_allowance}</span>
+                    <span className={styles.total}>{formatLeaveDays(editingEmployee.bereavement_allowance)}</span>
                   </div>
                 </div>
               </div>
@@ -474,44 +498,76 @@ export default function ManageLeavesPage() {
               <div className={styles.formGroup}>
                 <label>Update Annual Current Balance</label>
                 <input
-                  type="number"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   value={formData.annual_current_balance}
-                  onChange={(e) => setFormData({ ...formData, annual_current_balance: parseInt(e.target.value) || 0 })}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(",", ".");
+                    if (!isLeaveDaysInput(raw)) return;
+                    setFormData({ ...formData, annual_current_balance: raw });
+                  }}
                   className={styles.input}
                 />
                 <div className={styles.helpText}>
-                  {formData.annual_current_balance > editingEmployee.annual_current_balance && 
-                    <span style={{color: '#10b981'}}>+{formData.annual_current_balance - editingEmployee.annual_current_balance} leaves added</span>
-                  }
-                  {formData.annual_current_balance < editingEmployee.annual_current_balance && 
-                    <span style={{color: '#ef4444'}}>{formData.annual_current_balance - editingEmployee.annual_current_balance} leaves removed</span>
-                  }
-                  {formData.annual_current_balance === editingEmployee.annual_current_balance && 
+                  {formatLeaveDelta(
+                    parseLeaveDays(formData.annual_current_balance),
+                    editingEmployee.annual_current_balance
+                  ) ? (
+                    <span
+                      style={{
+                        color:
+                          parseLeaveDays(formData.annual_current_balance) >
+                          editingEmployee.annual_current_balance
+                            ? "#10b981"
+                            : "#ef4444"
+                      }}
+                    >
+                      {formatLeaveDelta(
+                        parseLeaveDays(formData.annual_current_balance),
+                        editingEmployee.annual_current_balance
+                      )}
+                    </span>
+                  ) : (
                     <span>No change</span>
-                  }
+                  )}
                 </div>
               </div>
 
               <div className={styles.formGroup}>
                 <label>Update Bereavement Current Balance</label>
                 <input
-                  type="number"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   value={formData.bereavement_current_balance}
-                  onChange={(e) => setFormData({ ...formData, bereavement_current_balance: parseInt(e.target.value) || 0 })}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(",", ".");
+                    if (!isLeaveDaysInput(raw)) return;
+                    setFormData({ ...formData, bereavement_current_balance: raw });
+                  }}
                   className={styles.input}
                 />
                 <div className={styles.helpText}>
-                  {formData.bereavement_current_balance > editingEmployee.bereavement_current_balance && 
-                    <span style={{color: '#10b981'}}>+{formData.bereavement_current_balance - editingEmployee.bereavement_current_balance} leaves added</span>
-                  }
-                  {formData.bereavement_current_balance < editingEmployee.bereavement_current_balance && 
-                    <span style={{color: '#ef4444'}}>{formData.bereavement_current_balance - editingEmployee.bereavement_current_balance} leaves removed</span>
-                  }
-                  {formData.bereavement_current_balance === editingEmployee.bereavement_current_balance && 
+                  {formatLeaveDelta(
+                    parseLeaveDays(formData.bereavement_current_balance),
+                    editingEmployee.bereavement_current_balance
+                  ) ? (
+                    <span
+                      style={{
+                        color:
+                          parseLeaveDays(formData.bereavement_current_balance) >
+                          editingEmployee.bereavement_current_balance
+                            ? "#10b981"
+                            : "#ef4444"
+                      }}
+                    >
+                      {formatLeaveDelta(
+                        parseLeaveDays(formData.bereavement_current_balance),
+                        editingEmployee.bereavement_current_balance
+                      )}
+                    </span>
+                  ) : (
                     <span>No change</span>
-                  }
+                  )}
                 </div>
               </div>
 

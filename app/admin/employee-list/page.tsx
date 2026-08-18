@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import LayoutDashboard from "../../layout-dashboard";
 import styles from "../../break-summary/break-summary.module.css";
 import {
@@ -15,10 +15,9 @@ import {
 } from "react-icons/fa";
 import Modal from "react-modal";
 import AddEmployeeForm from "../../add-employee/AddEmployeeForm";
-import * as XLSX from "xlsx";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
-import { toastError } from "@/lib/app-toast";
+import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
 import { showAppConfirm } from "@/lib/app-confirm";
 
 type SortKey =
@@ -32,6 +31,72 @@ type SortKey =
 
 type SortDirection = "asc" | "desc";
 
+type ExtraColumn = {
+  key: string;
+  label: string;
+  field: string;
+  format?: "date" | "salary";
+  width?: number;
+  wrap?: boolean;
+};
+
+const EXTRA_COLUMNS: ExtraColumn[] = [
+  { key: "phone", label: "Phone #", field: "phone_mobile", width: 90 },
+  { key: "personalEmail", label: "Personal Email", field: "email_other", width: 120 },
+  { key: "professionalEmail", label: "Professional Email", field: "email_work", width: 120 },
+  { key: "jobTitle", label: "Job Title/Designation", field: "job_title", width: 140 },
+  { key: "fatherName", label: "Father Name", field: "father_name", width: 130 },
+  { key: "dob", label: "Date of Birth", field: "dob", format: "date", width: 110 },
+  { key: "cnic", label: "CNIC Number", field: "cnic_number", width: 130 },
+  { key: "cnicIssuance", label: "Date of Issuance", field: "cnic_issuance_date", format: "date", width: 120 },
+  { key: "cnicExpiry", label: "Date of Expiry of CNIC", field: "cnic_expiry_date", format: "date", width: 130 },
+  { key: "presentAddress", label: "Present Address", field: "present_address", width: 280, wrap: true },
+  { key: "permanentAddress", label: "Permanent Address", field: "permanent_address", width: 280, wrap: true },
+  { key: "basicSalary", label: "Basic Salary", field: "basic_salary", format: "salary", width: 110 },
+  { key: "bankName", label: "Bank Name", field: "bank_name", width: 140 },
+  { key: "accountNumber", label: "Account Number", field: "account_number", width: 150 },
+  { key: "fuelAllowance", label: "Fuel Allowance", field: "fuel_allowance", format: "salary", width: 120 },
+  { key: "emergencyPhone", label: "Emergency Contact Number", field: "emergency_phone", width: 150 },
+  { key: "bloodGroup", label: "Blood Group", field: "blood_group", width: 90 },
+];
+
+function emptyExtraVisibility(): Record<string, boolean> {
+  return Object.fromEntries(EXTRA_COLUMNS.map((col) => [col.key, false]));
+}
+
+function formatListDate(value: unknown) {
+  if (value == null || value === "") return "-";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const raw = String(value).trim();
+  // Calendar dates only — do not slice YYYY-MM-DD off an ISO UTC timestamp
+  // (e.g. 2000-01-18 PK becomes 2000-01-17T19:00:00.000Z).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, "0");
+  const d = String(parsed.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function formatListSalary(value: unknown) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return "-";
+  return amount.toLocaleString();
+}
+
+function extraColumnValue(employee: any, col: ExtraColumn) {
+  if (col.format === "date") return formatListDate(employee[col.field]);
+  if (col.format === "salary") return formatListSalary(employee[col.field]);
+  const value = employee[col.field];
+  return value == null || String(value).trim() === "" ? "-" : String(value);
+}
+
 export default function EmployeeListStyledPage() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,10 +109,12 @@ export default function EmployeeListStyledPage() {
   const [selectedEmployee, setSelectedEmployee] = useState<any | null>(null);
   // Dropdown state
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  // New columns state
-  const [showPhone, setShowPhone] = useState(false);
-  const [showPersonalEmail, setShowPersonalEmail] = useState(false);
-  const [showProfessionalEmail, setShowProfessionalEmail] = useState(false);
+  const [visibleExtras, setVisibleExtras] = useState<Record<string, boolean>>(() => emptyExtraVisibility());
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
   useEffect(() => {
@@ -76,6 +143,78 @@ export default function EmployeeListStyledPage() {
   useEffect(() => {
     refreshEmployees();
   }, []);
+
+  const handleExportList = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) {
+      toastError("Select at least one employee to export.");
+      return;
+    }
+    try {
+      setExporting(true);
+      const res = await fetch(`/api/employee-import?export=1&ids=${ids.join(",")}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toastError(data.error || "Could not export employees");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "employee-list-export.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toastError("Export failed: " + String(err));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportList = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/employee-import", { method: "POST", body });
+      const data = await res.json();
+      if (!data.success) {
+        toastError(data.error || "Import failed");
+        return;
+      }
+      const s = data.summary || { inserted: 0, updated: 0, skipped: 0, failed: 0 };
+      const failedRows = (data.results || [])
+        .filter((r: any) => r.status === "failed" || r.status === "skipped")
+        .slice(0, 8)
+        .map((r: any) => `Row ${r.row}: ${r.reason || r.status}`)
+        .join("\n");
+      if (s.updated || s.inserted) {
+        toastSuccess(
+          `Updated ${s.updated || 0}, created ${s.inserted || 0}. Skipped ${s.skipped || 0}, failed ${s.failed || 0}.`
+        );
+        refreshEmployees();
+      } else {
+        toastInfo(
+          `No employees changed. Skipped ${s.skipped || 0}, failed ${s.failed || 0}.${
+            failedRows ? ` ${failedRows}` : ""
+          }`
+        );
+      }
+      if ((s.skipped || 0) + (s.failed || 0) > 0 && (s.updated || s.inserted)) {
+        toastInfo(failedRows || `${s.skipped} skipped, ${s.failed} failed.`);
+      }
+    } catch (err) {
+      toastError("Import failed: " + String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const handleStatusToggle = async (id: number, currentStatus: string) => {
     const newStatus = currentStatus === "enabled" || currentStatus === "active" ? "inactive" : "active";
@@ -124,6 +263,11 @@ export default function EmployeeListStyledPage() {
 
     if (data.success) {
       setEmployees((prev) => prev.filter((employee) => employee.id !== id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     } else {
       toastError("Delete failed: " + (data.error || "Unknown error"));
     }
@@ -255,6 +399,40 @@ export default function EmployeeListStyledPage() {
     return sorted;
   }, [employees, search, statusFilter, departmentFilter, sortConfig]);
 
+  const filteredIds = useMemo(
+    () => filtered.map((employee) => Number(employee.id)).filter((id) => Number.isFinite(id) && id > 0),
+    [filtered]
+  );
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+  const someFilteredSelected = filteredIds.some((id) => selectedIds.has(id));
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someFilteredSelected && !allFilteredSelected;
+    }
+  }, [someFilteredSelected, allFilteredSelected]);
+
+  const toggleEmployeeSelected = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        filteredIds.forEach((id) => next.delete(id));
+      } else {
+        filteredIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
   const sortButtonStyle: React.CSSProperties = {
     border: "none",
     background: "transparent",
@@ -307,74 +485,13 @@ export default function EmployeeListStyledPage() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [dropdownOpen]);
 
-  const extraColsVisible = showPhone || showPersonalEmail || showProfessionalEmail;
+  const visibleExtraCols = EXTRA_COLUMNS.filter((col) => visibleExtras[col.key]);
+  const extraColsVisible = visibleExtraCols.length > 0;
+  const tableColSpan = 9 + visibleExtraCols.length;
 
   return (
     <LayoutDashboard>
-      <div className={styles.breakSummaryContainer} style={{ position: 'relative' }}>
-              {/* Floating beautiful 3 dots icon button for column menu */}
-              <button
-                id="dropdown-menu-dots"
-                style={{
-                  position: 'absolute',
-                  top: 18,
-                  right: 24,
-                  zIndex: 200,
-                  background: 'white',
-                  border: '1.5px solid #e2e8f0',
-                  borderRadius: '50%',
-                  width: 44,
-                  height: 44,
-                  boxShadow: '0 2px 8px rgba(0,82,204,0.10)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  transition: 'box-shadow 0.2s',
-                }}
-                title="Show/Hide Columns"
-                onClick={() => setDropdownOpen(open => !open)}
-              >
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="7" cy="14" r="2.5" fill="#0052CC" />
-                  <circle cx="14" cy="14" r="2.5" fill="#0052CC" />
-                  <circle cx="21" cy="14" r="2.5" fill="#0052CC" />
-                </svg>
-              </button>
-              {dropdownOpen && (
-                <div id="dropdown-menu-actions" style={{
-                  position: 'absolute',
-                  top: 70,
-                  right: 24,
-                  background: '#f8fafc',
-                  borderRadius: 14,
-                  boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-                  border: '1px solid #e2e8f0',
-                  padding: '12px 18px',
-                  zIndex: 300,
-                  minWidth: 180,
-                  minHeight: 20,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                  color: '#222',
-                  fontWeight: 500,
-                  fontSize: '0.92rem',
-                }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderRadius: 5, cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = '#e9ecef'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
-                    <input type="checkbox" checked={showPhone} onChange={() => setShowPhone(v => !v)} style={{ accentColor: '#0052CC', width: 15, height: 15 }} />
-                    <span style={{ color: '#222', fontSize: '0.92rem' }}>Phone #</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderRadius: 5, cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = '#e9ecef'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
-                    <input type="checkbox" checked={showPersonalEmail} onChange={() => setShowPersonalEmail(v => !v)} style={{ accentColor: '#0052CC', width: 15, height: 15 }} />
-                    <span style={{ color: '#222', fontSize: '0.92rem' }}>Personal Email</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderRadius: 5, cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = '#e9ecef'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
-                    <input type="checkbox" checked={showProfessionalEmail} onChange={() => setShowProfessionalEmail(v => !v)} style={{ accentColor: '#0052CC', width: 15, height: 15 }} />
-                    <span style={{ color: '#222', fontSize: '0.92rem' }}>Professional Email</span>
-                  </label>
-                </div>
-              )}
+      <div className={styles.breakSummaryContainer}>
         <div className={styles.breakSummaryHeader}>Employee List</div>
 
         <div className={styles.breakSummaryFilters} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -405,37 +522,131 @@ export default function EmployeeListStyledPage() {
               return `Total: ${filtered.length}`;
             })()}
           </div>
-          <button
-            style={{ marginLeft: 16, background: '#0052CC', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 18px', fontWeight: 600, fontSize: '1rem', cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
-            onClick={() => {
-              // Prepare columns and data for export
-              const columns = [
-                { key: "id", label: "Id", visible: true },
-                { key: "fullName", label: "Full Name", visible: true },
-                { key: "pseudonym", label: "P.Name", visible: true },
-                { key: "department_name", label: "Department", visible: true },
-                { key: "gender", label: "Gender", visible: true },
-                { key: "nationality", label: "Nationality", visible: true },
-                { key: "status", label: "Status", visible: true },
-                { key: "phone_mobile", label: "Phone #", visible: showPhone },
-                { key: "email_other", label: "P.Email", visible: showPersonalEmail },
-                { key: "email_work", label: "Prof Email", visible: showProfessionalEmail }
-              ];
-              const visibleCols = columns.filter(col => col.visible);
-              const header = visibleCols.map(col => col.label);
-              const data = filtered.map(emp => visibleCols.map(col => {
-                if (col.key === "fullName") return getEmployeeFullName(emp);
-                if (col.key === "status") return getNormalizedStatus(emp.status);
-                return emp[col.key] || "-";
-              }));
-              const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
-              const wb = XLSX.utils.book_new();
-              XLSX.utils.book_append_sheet(wb, ws, "Employees");
-              XLSX.writeFile(wb, "employee-list.xlsx");
-            }}
-          >
-            Export XLS
-          </button>
+          <div style={{ marginLeft: 16, display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+            <div style={{ position: "relative" }}>
+              <button
+                id="dropdown-menu-dots"
+                type="button"
+                title="Show or hide columns"
+                aria-label="Show or hide columns"
+                aria-expanded={dropdownOpen}
+                onClick={() => setDropdownOpen((open) => !open)}
+                style={{
+                  height: 38,
+                  minWidth: 38,
+                  padding: "0 12px",
+                  background: dropdownOpen ? "#0052CC" : "#fff",
+                  color: dropdownOpen ? "#fff" : "#0052CC",
+                  border: `1.5px solid ${dropdownOpen ? "#0052CC" : "#c5d4e8"}`,
+                  borderRadius: 8,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  cursor: "pointer",
+                  boxShadow: dropdownOpen ? "0 2px 8px rgba(0,82,204,0.22)" : "0 1px 3px rgba(15,23,42,0.06)",
+                  fontWeight: 600,
+                  fontSize: "0.9rem",
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <circle cx="8" cy="3.2" r="1.45" />
+                  <circle cx="8" cy="8" r="1.45" />
+                  <circle cx="8" cy="12.8" r="1.45" />
+                </svg>
+                Columns
+                {visibleExtraCols.length > 0 && (
+                  <span
+                    style={{
+                      minWidth: 18,
+                      height: 18,
+                      padding: "0 5px",
+                      borderRadius: 999,
+                      background: dropdownOpen ? "rgba(255,255,255,0.22)" : "#e8f0fc",
+                      color: dropdownOpen ? "#fff" : "#0052CC",
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {visibleExtraCols.length}
+                  </span>
+                )}
+              </button>
+              {dropdownOpen && (
+                <div
+                  id="dropdown-menu-actions"
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    right: 0,
+                    background: "#fff",
+                    borderRadius: 12,
+                    boxShadow: "0 10px 28px rgba(15,23,42,0.14)",
+                    border: "1px solid #e2e8f0",
+                    padding: "10px 8px 8px",
+                    zIndex: 300,
+                    minWidth: 248,
+                    maxHeight: 360,
+                    overflowY: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                  }}
+                >
+                  <div style={{ padding: "2px 10px 8px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", letterSpacing: "0.04em" }}>
+                    SHOW COLUMNS
+                  </div>
+                  {EXTRA_COLUMNS.map((col) => (
+                    <label
+                      key={col.key}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "7px 10px",
+                        borderRadius: 8,
+                        cursor: "pointer",
+                      }}
+                      onMouseOver={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                      onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!visibleExtras[col.key]}
+                        onChange={() => setVisibleExtras((prev) => ({ ...prev, [col.key]: !prev[col.key] }))}
+                        style={{ accentColor: "#0052CC", width: 15, height: 15 }}
+                      />
+                      <span style={{ color: "#1e293b", fontSize: "0.9rem", fontWeight: 500 }}>{col.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              style={{ height: 38, background: '#0052CC', color: '#fff', border: 'none', borderRadius: 8, padding: '0 18px', fontWeight: 600, fontSize: '0.95rem', cursor: exporting ? 'wait' : 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+              onClick={handleExportList}
+              disabled={exporting || importing}
+            >
+              {exporting ? "Exporting…" : selectedIds.size ? `Export XLS (${selectedIds.size})` : "Export XLS"}
+            </button>
+            <button
+              style={{ height: 38, background: '#007a5a', color: '#fff', border: 'none', borderRadius: 8, padding: '0 18px', fontWeight: 600, fontSize: '0.95rem', cursor: importing ? 'wait' : 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+              onClick={() => importInputRef.current?.click()}
+              disabled={exporting || importing}
+            >
+              {importing ? "Importing…" : "Import XLS"}
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              style={{ display: "none" }}
+              onChange={handleImportList}
+            />
+          </div>
         </div>
 
         {/* Table wrapper without horizontal scroll, table fits container */}
@@ -462,6 +673,17 @@ export default function EmployeeListStyledPage() {
           >
             <thead style={{ position: "sticky", top: 0, zIndex: 12 }}>
               <tr>
+                <th style={{ width: 42, minWidth: 42, textAlign: "center" }}>
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleAllFiltered}
+                    disabled={filteredIds.length === 0}
+                    title="Select all in this list"
+                    style={{ width: 16, height: 16, accentColor: "#0052CC", cursor: "pointer" }}
+                  />
+                </th>
                 <th>{renderSortableHeader("Id", "id")}</th>
                 <th>{renderSortableHeader("Full Name", "fullName")}</th>
                 <th>{renderSortableHeader("P.Name", "pseudonym")}</th>
@@ -469,9 +691,19 @@ export default function EmployeeListStyledPage() {
                 <th>{renderSortableHeader("Gender", "gender")}</th>
                 <th>{renderSortableHeader("Nationality", "nationality")}</th>
                 <th>{renderSortableHeader("Status", "status")}</th>
-                {showPhone && <th style={{ maxWidth: 90, width: 90, fontSize: '0.95rem' }}>Phone #</th>}
-                {showPersonalEmail && <th style={{ maxWidth: 120, width: 120, fontSize: '0.95rem' }}>P.Email</th>}
-                {showProfessionalEmail && <th style={{ maxWidth: 120, width: 120, fontSize: '0.95rem' }}>Prof Email</th>}
+                {visibleExtraCols.map((col) => (
+                  <th
+                    key={col.key}
+                    style={{
+                      minWidth: col.width || 120,
+                      width: col.width || 120,
+                      fontSize: '0.95rem',
+                      whiteSpace: col.wrap ? 'normal' : 'nowrap',
+                    }}
+                  >
+                    {col.label}
+                  </th>
+                ))}
                 <th>
                   <span>Actions</span>
                   <select
@@ -500,19 +732,27 @@ export default function EmployeeListStyledPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8}>Loading...</td>
+                  <td colSpan={tableColSpan}>Loading...</td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={8} style={{ color: "red" }}>{error}</td>
+                  <td colSpan={tableColSpan} style={{ color: "red" }}>{error}</td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8}>No records found.</td>
+                  <td colSpan={tableColSpan}>No records found.</td>
                 </tr>
               ) : (
                 filtered.map((employee) => (
                   <tr key={employee.id}>
+                    <td style={{ textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(Number(employee.id))}
+                        onChange={() => toggleEmployeeSelected(Number(employee.id))}
+                        style={{ width: 16, height: 16, accentColor: "#0052CC", cursor: "pointer" }}
+                      />
+                    </td>
                     <td>{employee.id}</td>
                     <td>
                       <EmployeeTableNameCell
@@ -554,9 +794,38 @@ export default function EmployeeListStyledPage() {
                         ? "Active"
                         : "Inactive"}
                     </td>
-                    {showPhone && <td style={{ maxWidth: 90, width: 90, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employee.phone_mobile || '-'}</td>}
-                    {showPersonalEmail && <td style={{ maxWidth: 120, width: 120, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employee.email_other || '-'}</td>}
-                    {showProfessionalEmail && <td style={{ maxWidth: 120, width: 120, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employee.email_work || '-'}</td>}
+                    {visibleExtraCols.map((col) => (
+                      <td
+                        key={col.key}
+                        title={extraColumnValue(employee, col)}
+                        style={
+                          col.wrap
+                            ? {
+                                minWidth: col.width || 280,
+                                width: col.width || 280,
+                                fontSize: "0.95rem",
+                                whiteSpace: "normal",
+                                wordBreak: "break-word",
+                                overflowWrap: "anywhere",
+                                lineHeight: 1.35,
+                                display: "-webkit-box",
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                              }
+                            : {
+                                maxWidth: col.width || 120,
+                                width: col.width || 120,
+                                fontSize: "0.95rem",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }
+                        }
+                      >
+                        {extraColumnValue(employee, col)}
+                      </td>
+                    ))}
                     <td>
                       <button
                         title={

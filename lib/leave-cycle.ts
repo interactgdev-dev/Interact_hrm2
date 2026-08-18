@@ -80,3 +80,25 @@ export function getLeaveCycleStartYmd(
   const joinedYmd = buildYmd(joined.year, joined.month, joined.day);
   return cycleStart < joinedYmd ? joinedYmd : cycleStart;
 }
+
+export function leaveDateToYmd(value: any): string | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim());
+    if (m) return m[1];
+  }
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return getDateStringInTimeZone(d, SERVER_TIMEZONE) || null;
+}
+
+/** Apply a saved adjustment unless we know it belongs to a previous leave cycle. */
+export function shouldApplyLeaveAdjustment(
+  updatedAt: any,
+  cycleStart: string | null
+): boolean {
+  if (!cycleStart) return true;
+  const updatedYmd = leaveDateToYmd(updatedAt);
+  if (!updatedYmd) return true;
+  return updatedYmd >= cycleStart;
+}

@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 // ...existing code...
 import Image from "next/image";
 import styles from "./add-employee.module.css";
@@ -11,6 +11,7 @@ const employeeTabs = [
   { name: "Contact Details" },
   { name: "Emergency Contacts" },
   { name: "Job Details" },
+  { name: "Assign Shift" },
   { name: "Allowances" },
   { name: "Salary" },
   { name: "Appraisal" },
@@ -41,6 +42,22 @@ export default function AddEmployeeForm({
         }
       })
       .catch(() => setDepartments([]));
+  }, []);
+
+  const [masterShifts, setMasterShifts] = useState<
+    { id: number; name: string; shift_in: string; shift_out: string; overtime_daily?: number }[]
+  >([]);
+  const [selectedShiftId, setSelectedShiftId] = useState("");
+
+  useEffect(() => {
+    fetch("/api/master-shifts")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.shifts)) {
+          setMasterShifts(data.shifts);
+        }
+      })
+      .catch(() => setMasterShifts([]));
   }, []);
   const isEdit = edit;
   
@@ -174,12 +191,64 @@ export default function AddEmployeeForm({
       const data = await res.json();
       if (data.success) {
         toastSuccess('Job details saved!');
-        setActiveTab('Allowances');
+        setActiveTab('Assign Shift');
       } else {
         toastError('Save failed: ' + (data.error || 'Unknown'));
       }
     } catch (err) {
       toastError('Save failed: ' + String(err));
+    }
+  };
+
+  const toShiftTime = (time?: string) => {
+    if (!time) return "";
+    return String(time).slice(0, 5);
+  };
+
+  const formatShiftTime = (time?: string) => {
+    const t = toShiftTime(time);
+    if (!t || !t.includes(":")) return "";
+    const [hours, minutes] = t.split(":");
+    const hour = parseInt(hours, 10);
+    if (Number.isNaN(hour)) return t;
+    const ampm = hour >= 12 ? "PM" : "AM";
+    const displayHour = hour % 12 || 12;
+    return `${displayHour}:${minutes} ${ampm}`;
+  };
+
+  const selectedMasterShift = masterShifts.find((s) => String(s.id) === selectedShiftId);
+
+  const handleAssignShiftSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!employeeId) {
+      toastInfo("Please save Personal Details first.");
+      return;
+    }
+    if (!selectedMasterShift) {
+      toastError("Please select a shift");
+      return;
+    }
+    try {
+      const res = await fetch("/api/hrm-shifts-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: employeeId,
+          shift_name: selectedMasterShift.name,
+          start_time: toShiftTime(selectedMasterShift.shift_in),
+          end_time: toShiftTime(selectedMasterShift.shift_out),
+          allow_overtime: Number(selectedMasterShift.overtime_daily) === 1,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toastSuccess("Shift assigned!");
+        setActiveTab("Allowances");
+      } else {
+        toastError("Save failed: " + (data.error || "Unknown"));
+      }
+    } catch (err) {
+      toastError("Save failed: " + String(err));
     }
   };
 
@@ -302,6 +371,21 @@ export default function AddEmployeeForm({
   const [lastName, setLastName] = useState("");
   const [fatherName, setFatherName] = useState("");
   const [employeeId, setEmployeeId] = useState<string | null>(editEmployeeId);
+
+  useEffect(() => {
+    if (!employeeId || masterShifts.length === 0) return;
+    fetch(`/api/hrm-shifts-assignments?employeeId=${employeeId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        const assignment = data.assignment;
+        if (!data.success || !assignment?.shift_name) return;
+        const match = masterShifts.find(
+          (s) => s.name === assignment.shift_name || String(s.id) === String(assignment.shift_id)
+        );
+        if (match) setSelectedShiftId(String(match.id));
+      })
+      .catch(() => {});
+  }, [employeeId, masterShifts]);
   const [dob, setDob] = useState("");
   const [gender, setGender] = useState("");
   const [maritalStatus, setMaritalStatus] = useState("");
@@ -317,6 +401,9 @@ export default function AddEmployeeForm({
   const roleOptions = ["BOD/CEO", "HOD", "Management", "Leader", "Officer"] as const;
   const [role, setRole] = useState<string>("Officer");
   const [createLogin, setCreateLogin] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState("");
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [profileImg, setProfileImg] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [status, setStatus] = useState("disabled");
@@ -326,6 +413,68 @@ export default function AddEmployeeForm({
   useEffect(() => {
     setStatus(createLogin ? "active" : "disabled");
   }, [createLogin]);
+
+  const downloadImportTemplate = async () => {
+    try {
+      const res = await fetch("/api/employee-import?template=1");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toastError(data.error || "Could not download template");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "employee-import-template.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toastError("Template download failed: " + String(err));
+    }
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    setImportSummary("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/employee-import", { method: "POST", body });
+      const data = await res.json();
+      if (!data.success) {
+        toastError(data.error || "Import failed");
+        return;
+      }
+      const s = data.summary || { inserted: 0, updated: 0, skipped: 0, failed: 0 };
+      const failedRows = (data.results || [])
+        .filter((r: any) => r.status !== "inserted" && r.status !== "updated")
+        .slice(0, 8)
+        .map((r: any) => `Row ${r.row}: ${r.reason || r.status}`)
+        .join("\n");
+      setImportSummary(
+        `Updated ${s.updated || 0}, created ${s.inserted || 0}. Skipped ${s.skipped || 0}. Failed ${s.failed || 0}.${
+          failedRows ? `\n${failedRows}` : ""
+        }`
+      );
+      if ((s.inserted || 0) + (s.updated || 0) > 0) {
+        toastSuccess(
+          `Updated ${s.updated || 0} and created ${s.inserted || 0} employee(s) from the sheet.`
+        );
+      } else {
+        toastInfo("No employees were created or updated. Check required yellow columns.");
+      }
+    } catch (err) {
+      toastError("Import failed: " + String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
   
   const [contactAddress, setContactAddress] = useState({ street1: "", street2: "", city: "", state: "", zip: "", country: "" });
   const [permanentAddress, setPermanentAddress] = useState({
@@ -676,10 +825,37 @@ export default function AddEmployeeForm({
       <div className={styles.formPanel}>
         <div className={styles.formCard}>
           <header className={styles.formHeader}>
-            <h1 className={styles.heading}>{isEdit ? "Edit Employee" : "Add Employee"}</h1>
-            <p className={styles.subheading}>
-              {activeTab} — complete the fields below and save to continue onboarding.
-            </p>
+            <div className={styles.headerTop}>
+              <div>
+                <h1 className={styles.heading}>{isEdit ? "Edit Employee" : "Add Employee"}</h1>
+                <p className={styles.subheading}>
+                  {activeTab} — complete the fields below and save to continue onboarding.
+                </p>
+              </div>
+              {!isEdit && (
+                <div className={styles.importActions}>
+                  <button type="button" className={styles.templateBtn} onClick={downloadImportTemplate}>
+                    Download Template
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.importBtn}
+                    disabled={importing}
+                    onClick={() => importInputRef.current?.click()}
+                  >
+                    {importing ? "Importing…" : "Import XLS"}
+                  </button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    style={{ display: "none" }}
+                    onChange={handleImportFile}
+                  />
+                </div>
+              )}
+            </div>
+            {!isEdit && importSummary ? <pre className={styles.importResult}>{importSummary}</pre> : null}
           </header>
           {activeTab === "Personal Details" && (
             <form className={styles.form} onSubmit={handleSave}>
@@ -1116,6 +1292,70 @@ export default function AddEmployeeForm({
                 </div>
                 <div className={styles.actionsLeft}>
                   <button type="submit" className={styles.saveBtn}>Save</button>
+                </div>
+              </form>
+            </div>
+          )}
+          {activeTab === "Assign Shift" && (
+            <div>
+              {employeeId && (
+                <div className={styles.employeeBadge}>
+                  Employee: {firstName} {lastName} (ID: {employeeId})
+                </div>
+              )}
+              <form className={styles.form} style={{ width: "100%" }} onSubmit={handleAssignShiftSave}>
+                <p className={styles.note}>
+                  Choose a predefined shift from Shift Scheduler. Timing and overtime come from that shift.
+                </p>
+                <div className={styles.row}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>Shift</label>
+                    <select
+                      className={styles.select}
+                      value={selectedShiftId}
+                      onChange={(e) => setSelectedShiftId(e.target.value)}
+                      required
+                    >
+                      <option value="">-- Select Shift --</option>
+                      {masterShifts.map((shift) => (
+                        <option key={shift.id} value={shift.id}>
+                          {shift.name} ({formatShiftTime(shift.shift_in)} - {formatShiftTime(shift.shift_out)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {selectedMasterShift ? (
+                  <div className={styles.row}>
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>Shift Timing</label>
+                      <input
+                        className={styles.input}
+                        type="text"
+                        readOnly
+                        value={`${formatShiftTime(selectedMasterShift.shift_in)} - ${formatShiftTime(selectedMasterShift.shift_out)}`}
+                        style={{ background: "#f8fafc", color: "#334155", cursor: "default" }}
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label className={styles.fieldLabel}>Overtime</label>
+                      <input
+                        className={styles.input}
+                        type="text"
+                        readOnly
+                        value={Number(selectedMasterShift.overtime_daily) === 1 ? "Allowed" : "Not allowed"}
+                        style={{ background: "#f8fafc", color: "#334155", cursor: "default" }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+                {masterShifts.length === 0 ? (
+                  <p className={styles.note}>No shifts found. Create them first in Shift Scheduler.</p>
+                ) : null}
+                <div className={styles.actionsLeft}>
+                  <button type="submit" className={styles.saveBtn} disabled={!selectedShiftId}>
+                    Save
+                  </button>
                 </div>
               </form>
             </div>
