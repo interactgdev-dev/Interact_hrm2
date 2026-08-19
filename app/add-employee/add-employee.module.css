@@ -301,6 +301,29 @@
   margin: 0;
 }
 
+.overtimeCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+}
+
+.overtimeCheck input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--brand-purple);
+  cursor: pointer;
+}
+
 .loginBox {
   background: #f8fafc;
   border: 1px solid var(--color-border);
