@@ -280,13 +280,14 @@ export default function MonthlyAttendancePage() {
     if (showingImported) return;
     const refreshPairing = () => {
       setPairingNow(Date.now());
-      loadTungstenPunchContext(fromDate, toDate, selectedDepartment || undefined)
+      // Do not pass HRM department — ZKBio dept_name often differs (e.g. CEst. vs CEst)
+      loadTungstenPunchContext(fromDate, toDate)
         .then(setTungstenCtx)
         .catch(() => {});
     };
     const id = setInterval(refreshPairing, 60_000);
     return () => clearInterval(id);
-  }, [fromDate, toDate, selectedDepartment, showingImported]);
+  }, [fromDate, toDate, showingImported]);
 
   // Fetch departments
   useEffect(() => {
@@ -432,11 +433,7 @@ export default function MonthlyAttendancePage() {
         }
 
         try {
-          const ctx = await loadTungstenPunchContext(
-            fromDate,
-            toDate,
-            selectedDepartment || undefined,
-          );
+          const ctx = await loadTungstenPunchContext(fromDate, toDate);
           if (gen !== fetchGenRef.current) return;
           setTungstenCtx(ctx);
         } catch (err) {
@@ -866,11 +863,7 @@ export default function MonthlyAttendancePage() {
   async function ensureTungstenCtx(): Promise<TungstenPunchContext | null> {
     if (showingImported) return null;
     try {
-      const ctx = await loadTungstenPunchContext(
-        fromDate,
-        toDate,
-        selectedDepartment || undefined,
-      );
+      const ctx = await loadTungstenPunchContext(fromDate, toDate);
       setTungstenCtx(ctx);
       return ctx;
     } catch {
