@@ -485,6 +485,22 @@ export default function EmployeeListStyledPage() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [dropdownOpen]);
 
+  const listStats = useMemo(() => {
+    const scoped = departmentFilter
+      ? employees.filter((e) => (e.department_name || "") === departmentFilter)
+      : employees;
+    const total = scoped.length;
+    const active = scoped.filter((e) => getNormalizedStatus(e.status) === "active").length;
+    const inactive = total - active;
+    return {
+      total,
+      active,
+      inactive,
+      activePct: total ? Math.round((active / total) * 100) : 0,
+      inactivePct: total ? Math.round((inactive / total) * 100) : 0,
+    };
+  }, [employees, departmentFilter]);
+
   const visibleExtraCols = EXTRA_COLUMNS.filter((col) => visibleExtras[col.key]);
   const extraColsVisible = visibleExtraCols.length > 0;
   const tableColSpan = 9 + visibleExtraCols.length;
@@ -493,6 +509,47 @@ export default function EmployeeListStyledPage() {
     <LayoutDashboard>
       <div className={styles.breakSummaryContainer}>
         <div className={styles.breakSummaryHeader}>Employee List</div>
+
+        <div className={styles.listStatsRow}>
+          <button
+            type="button"
+            className={`${styles.listStatCard} ${styles.listStatPurple} ${styles.listStatClickable} ${statusFilter === "all" ? styles.listStatSelected : ""}`}
+            onClick={() => setStatusFilter("all")}
+            title="Show all employees"
+          >
+            <span className={styles.listStatLabel}>All Employees</span>
+            <span className={styles.listStatValue}>{listStats.total}</span>
+            <span className={styles.listStatHint}>
+              {departmentFilter
+                ? departmentFilter
+                : `${uniqueDepartments.length} department${uniqueDepartments.length === 1 ? "" : "s"}`}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.listStatCard} ${styles.listStatGreen} ${styles.listStatClickable} ${statusFilter === "active" ? styles.listStatSelected : ""}`}
+            onClick={() => setStatusFilter("active")}
+            title="Show active employees"
+          >
+            <span className={styles.listStatLabel}>Active</span>
+            <span className={styles.listStatValue}>{listStats.active}</span>
+            <span className={styles.listStatHint}>
+              {listStats.activePct}% of {departmentFilter || "workforce"}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.listStatCard} ${styles.listStatRed} ${styles.listStatClickable} ${statusFilter === "inactive" ? styles.listStatSelected : ""}`}
+            onClick={() => setStatusFilter("inactive")}
+            title="Show inactive employees"
+          >
+            <span className={styles.listStatLabel}>Inactive</span>
+            <span className={styles.listStatValue}>{listStats.inactive}</span>
+            <span className={styles.listStatHint}>
+              {listStats.inactivePct}% of {departmentFilter || "workforce"}
+            </span>
+          </button>
+        </div>
 
         <div className={styles.breakSummaryFilters} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <input
@@ -515,12 +572,7 @@ export default function EmployeeListStyledPage() {
             ))}
           </select>
           <div style={{ marginLeft: 'auto', fontSize: '0.85rem', fontWeight: 600, color: statusFilter === 'active' ? '#38A169' : statusFilter === 'inactive' ? '#E53E3E' : '#0052CC', background: 'rgba(255,255,255,0.18)', borderRadius: 4, padding: '2px 10px', minWidth: 60, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-            {(() => {
-              if (statusFilter === 'all') return `Total: ${filtered.length}`;
-              if (statusFilter === 'active') return `Active: ${filtered.length}`;
-              if (statusFilter === 'inactive') return `Inactive: ${filtered.length}`;
-              return `Total: ${filtered.length}`;
-            })()}
+            {`Showing: ${filtered.length}`}
           </div>
           <div style={{ marginLeft: 16, display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
             <div style={{ position: "relative" }}>
