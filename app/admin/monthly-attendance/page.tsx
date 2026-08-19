@@ -840,7 +840,48 @@ export default function MonthlyAttendancePage() {
     return weekday !== 0 && weekday !== 6;
   }
 
-  function buildEmployeeExcelRows(employee: any): MonthlyAttendanceExcelRow[] {
+  /** Pair T.Punch for this employee even if their card is collapsed (export needs every sheet). */
+  function pairSessionsForEmployee(
+    employee: { employeeId: string; employeeName: string; isImported?: boolean },
+    ctx: TungstenPunchContext | null,
+  ): EmployeeReportSession[] {
+    if (employee.isImported) return [];
+    const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
+    const zkFrom = fromDate ? addDaysToDateKey(fromDate, -1) : "";
+    const zkTo = toDate ? addDaysToDateKey(toDate, 1) : "";
+    const allRecords = attendance.filter(
+      (record: any) => String(record.employee_id) === String(employee.employeeId),
+    );
+    return buildEmployeeReportSessions(
+      employee.employeeName,
+      allRecords,
+      ctx,
+      todayKey,
+      Date.now(),
+      zkFrom,
+      zkTo,
+    );
+  }
+
+  async function ensureTungstenCtx(): Promise<TungstenPunchContext | null> {
+    if (showingImported) return null;
+    try {
+      const ctx = await loadTungstenPunchContext(
+        fromDate,
+        toDate,
+        selectedDepartment || undefined,
+      );
+      setTungstenCtx(ctx);
+      return ctx;
+    } catch {
+      return tungstenCtx;
+    }
+  }
+
+  function buildEmployeeExcelRows(
+    employee: any,
+    pairedSessions?: EmployeeReportSession[],
+  ): MonthlyAttendanceExcelRow[] {
     const dataRows: MonthlyAttendanceExcelRow[] = [];
     if (!monthInfo.days) return dataRows;
 
@@ -931,7 +972,8 @@ export default function MonthlyAttendancePage() {
       return dataRows;
     }
 
-    const employeeSessions = sessionsByEmployeeId.get(employee.employeeId) || [];
+    const employeeSessions =
+      pairedSessions ?? sessionsByEmployeeId.get(employee.employeeId) ?? [];
 
     monthInfo.days.forEach((day) => {
       const dayRecords = employee.byDate[day.dateKey] || [];
@@ -1063,9 +1105,10 @@ export default function MonthlyAttendancePage() {
       return;
     }
 
+    const ctx = await ensureTungstenCtx();
     const sheets = attendanceByEmployee.map((employee) => ({
       name: employee.employeeName,
-      rows: buildEmployeeExcelRows(employee),
+      rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
     }));
 
     const dateRange = fromDate && toDate ? `-${fromDate}-to-${toDate}` : "";
@@ -1075,10 +1118,11 @@ export default function MonthlyAttendancePage() {
   }
 
   async function downloadEmployeeExcel(employee: any) {
+    const ctx = await ensureTungstenCtx();
     const sheets = [
       {
         name: employee.employeeName,
-        rows: buildEmployeeExcelRows(employee),
+        rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
       },
     ];
     const fileName = `attendance-${employee.employeeName.replace(/\s+/g, "_")}-${selectedMonth}.xlsx`;
@@ -1187,7 +1231,10 @@ export default function MonthlyAttendancePage() {
     });
   }
 
-  function buildDeductionSummaryBlock(employee: any): DeductionSummaryEmployeeBlock {
+  function buildDeductionSummaryBlock(
+    employee: any,
+    pairedSessions?: EmployeeReportSession[],
+  ): DeductionSummaryEmployeeBlock {
     const rows: DeductionSummaryDayRow[] = [];
     if (!monthInfo.days) {
       return { employeeName: employee.employeeName, rows, totalDeduction: 0 };
@@ -1216,7 +1263,8 @@ export default function MonthlyAttendancePage() {
         );
       });
     } else {
-      const employeeSessions = sessionsByEmployeeId.get(employee.employeeId) || [];
+      const employeeSessions =
+        pairedSessions ?? sessionsByEmployeeId.get(employee.employeeId) ?? [];
 
       monthInfo.days.forEach((day) => {
         if (!isWorkingDay(day.dateKey)) return;
@@ -1275,8 +1323,9 @@ export default function MonthlyAttendancePage() {
       return;
     }
 
+    const ctx = await ensureTungstenCtx();
     const blocks = attendanceByEmployee.map((employee) =>
-      buildDeductionSummaryBlock(employee),
+      buildDeductionSummaryBlock(employee, pairSessionsForEmployee(employee, ctx)),
     );
 
     const dateRange = fromDate && toDate ? `-${fromDate}-to-${toDate}` : "";
