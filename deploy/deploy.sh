@@ -60,8 +60,16 @@ else
   log "Dependencies unchanged — skipping install."
 fi
 
-log "Running DB migrations…"
-node "$APP_DIR/scripts/run-migrations.mjs" >>"$LOG_FILE" 2>&1
+# Mongo (10.98) has no MySQL schema_migrations — skip SQL runner there.
+DRIVER="$(
+  grep -E '^DB_DRIVER=' "$APP_DIR/.env.local" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '\r' || true
+)"
+if [ "${DRIVER}" = "mongo" ] || [ "${DB_DRIVER:-}" = "mongo" ]; then
+  log "Skipping SQL migrations (DB_DRIVER=mongo)."
+else
+  log "Running DB migrations…"
+  node "$APP_DIR/scripts/run-migrations.mjs" >>"$LOG_FILE" 2>&1
+fi
 
 log "Building…"
 npm run build >>"$LOG_FILE" 2>&1
