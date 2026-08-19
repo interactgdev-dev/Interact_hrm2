@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "../../../lib/db";
 
+function parseAllowOvertime(value: unknown, defaultValue = false): boolean {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  if (value === true || value === 1 || value === "1") return true;
+  return false;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -104,7 +110,7 @@ export async function POST(req: NextRequest) {
     const assignDate = assigned_date || new Date().toISOString().split("T")[0];
 
     // Helper to upsert one employee
-    const upsertOne = async (empId: number, allowOT: boolean = true) => {
+    const upsertOne = async (empId: number, allowOT: boolean = false) => {
       const [existing] = (await query(
         `SELECT id FROM shift_assignments 
          WHERE employee_id = ? AND assigned_date = ?`,
@@ -134,7 +140,7 @@ export async function POST(req: NextRequest) {
         `SELECT id FROM hrm_employees WHERE status IN ('enabled', 'active')`
       )) as any;
 
-      const allowOT = allow_overtime !== false;
+      const allowOT = parseAllowOvertime(allow_overtime, false);
       await Promise.all(
         allEmployees.map((row: { id: number }) => upsertOne(row.id, allowOT)),
       );
@@ -166,7 +172,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const allowOT = allow_overtime !== false;
+      const allowOT = parseAllowOvertime(allow_overtime, false);
       await Promise.all(
         deptEmployees.map((row: { employee_id: number }) => upsertOne(row.employee_id, allowOT)),
       );
@@ -179,7 +185,7 @@ export async function POST(req: NextRequest) {
 
     // Multiple specific employees
     if (employee_ids && Array.isArray(employee_ids) && employee_ids.length > 0) {
-      const allowOT = allow_overtime !== false;
+      const allowOT = parseAllowOvertime(allow_overtime, false);
       await Promise.all(employee_ids.map((empId: number) => upsertOne(empId, allowOT)));
 
       return NextResponse.json({ success: true, message: "Shift assigned to selected employees" });
@@ -193,7 +199,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const allowOT = allow_overtime !== false;
+    const allowOT = parseAllowOvertime(allow_overtime, false);
     await upsertOne(employee_id, allowOT);
 
     return NextResponse.json({

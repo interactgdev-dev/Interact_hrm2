@@ -48,6 +48,7 @@ export default function AddEmployeeForm({
     { id: number; name: string; shift_in: string; shift_out: string; overtime_daily?: number }[]
   >([]);
   const [selectedShiftId, setSelectedShiftId] = useState("");
+  const [allowOvertime, setAllowOvertime] = useState(false);
 
   useEffect(() => {
     fetch("/api/master-shifts")
@@ -237,7 +238,7 @@ export default function AddEmployeeForm({
           shift_name: selectedMasterShift.name,
           start_time: toShiftTime(selectedMasterShift.shift_in),
           end_time: toShiftTime(selectedMasterShift.shift_out),
-          allow_overtime: Number(selectedMasterShift.overtime_daily) === 1,
+          allow_overtime: allowOvertime,
         }),
       });
       const data = await res.json();
@@ -383,6 +384,7 @@ export default function AddEmployeeForm({
           (s) => s.name === assignment.shift_name || String(s.id) === String(assignment.shift_id)
         );
         if (match) setSelectedShiftId(String(match.id));
+        setAllowOvertime(assignment.allow_overtime === 1 || assignment.allow_overtime === true);
       })
       .catch(() => {});
   }, [employeeId, masterShifts]);
@@ -1305,7 +1307,7 @@ export default function AddEmployeeForm({
               )}
               <form className={styles.form} style={{ width: "100%" }} onSubmit={handleAssignShiftSave}>
                 <p className={styles.note}>
-                  Choose a predefined shift from Shift Scheduler. Timing and overtime come from that shift.
+                  Choose a predefined shift from Shift Scheduler. Overtime is off by default; check the box only if this employee&apos;s extra hours should be added in Monthly Payroll.
                 </p>
                 <div className={styles.row}>
                   <div className={styles.field}>
@@ -1337,18 +1339,21 @@ export default function AddEmployeeForm({
                         style={{ background: "#f8fafc", color: "#334155", cursor: "default" }}
                       />
                     </div>
-                    <div className={styles.field}>
-                      <label className={styles.fieldLabel}>Overtime</label>
-                      <input
-                        className={styles.input}
-                        type="text"
-                        readOnly
-                        value={Number(selectedMasterShift.overtime_daily) === 1 ? "Allowed" : "Not allowed"}
-                        style={{ background: "#f8fafc", color: "#334155", cursor: "default" }}
-                      />
-                    </div>
                   </div>
                 ) : null}
+                <div className={styles.row}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>Overtime</label>
+                    <label className={styles.overtimeCheck}>
+                      <input
+                        type="checkbox"
+                        checked={allowOvertime}
+                        onChange={(e) => setAllowOvertime(e.target.checked)}
+                      />
+                      <span>Allow overtime (add extra hours in Monthly Payroll)</span>
+                    </label>
+                  </div>
+                </div>
                 {masterShifts.length === 0 ? (
                   <p className={styles.note}>No shifts found. Create them first in Shift Scheduler.</p>
                 ) : null}
