@@ -34,22 +34,33 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >>"$LOG_FILE"; }
 
 cd "$APP_DIR"
 
-git fetch "$REMOTE" "$BRANCH" --quiet
+# After git reset the running script can keep old file contents (open fd).
+# Re-exec the on-disk script to finish install/migrate/build with the new code.
+if [ "${CONTINUE_DEPLOY:-}" = "1" ]; then
+  LOCK_BEFORE="${LOCK_BEFORE:-none}"
+  REMOTE_HEAD="$(git rev-parse HEAD)"
+else
+  git fetch "$REMOTE" "$BRANCH" --quiet
 
-LOCAL="$(git rev-parse HEAD)"
-REMOTE_HEAD="$(git rev-parse "${REMOTE}/${BRANCH}")"
+  LOCAL="$(git rev-parse HEAD)"
+  REMOTE_HEAD="$(git rev-parse "${REMOTE}/${BRANCH}")"
 
-# Nothing new — exit quietly (keeps logs clean on every-minute cron).
-if [ "$LOCAL" = "$REMOTE_HEAD" ]; then
-  exit 0
+  # Nothing new — exit quietly (keeps logs clean on every-minute cron).
+  if [ "$LOCAL" = "$REMOTE_HEAD" ]; then
+    exit 0
+  fi
+
+  log "New commit detected: ${LOCAL:0:7} -> ${REMOTE_HEAD:0:7}. Deploying…"
+
+  LOCK_BEFORE="$(md5sum package-lock.json 2>/dev/null | awk '{print $1}' || echo none)"
+
+  git reset --hard "${REMOTE}/${BRANCH}" >>"$LOG_FILE" 2>&1
+
+  export CONTINUE_DEPLOY=1
+  export LOCK_BEFORE
+  export APP_DIR REMOTE BRANCH PM2_NAME
+  exec /usr/bin/bash "$APP_DIR/deploy/deploy.sh"
 fi
-
-log "New commit detected: ${LOCAL:0:7} -> ${REMOTE_HEAD:0:7}. Deploying…"
-
-# Remember lockfile state so we only reinstall deps when they actually change.
-LOCK_BEFORE="$(md5sum package-lock.json 2>/dev/null | awk '{print $1}' || echo none)"
-
-git reset --hard "${REMOTE}/${BRANCH}" >>"$LOG_FILE" 2>&1
 
 LOCK_AFTER="$(md5sum package-lock.json 2>/dev/null | awk '{print $1}' || echo none)"
 
