@@ -6,6 +6,7 @@ import tableStyles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
+import { toastError, toastSuccess } from "@/lib/app-toast";
 import {
   FaClock,
   FaCheckCircle,
@@ -57,8 +58,6 @@ export default function ShiftManagementPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [masterShifts, setMasterShifts] = useState<MasterShift[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
   const [selectedScope, setSelectedScope] = useState<string>(""); // all, dept-<id>, emp-<id>
@@ -105,6 +104,56 @@ export default function ShiftManagementPage() {
     return statusFilter === "active" ? active : !active;
   };
 
+  const hasAssignedShift = (emp: Employee) =>
+    Boolean(emp.shift_name && emp.start_time && emp.end_time);
+
+  const overtimeSearchMatches = (emp: Employee, rawTerm: string) => {
+    const term = rawTerm.trim().toLowerCase();
+    if (!term) return true;
+    const pseudo = String(emp.pseudonym || "").trim().toLowerCase();
+    const first = String(emp.first_name || "").toLowerCase();
+    const last = String(emp.last_name || "").toLowerCase();
+    const full = `${first} ${last}`.trim();
+    return (
+      first.includes(term) ||
+      last.includes(term) ||
+      full.includes(term) ||
+      String(emp.id).includes(term) ||
+      (Boolean(pseudo) && pseudo !== "-" && pseudo.includes(term))
+    );
+  };
+
+  const assignedShiftIds = (extraFilter?: (emp: Employee) => boolean) =>
+    employees
+      .filter(
+        (emp) =>
+          matchesStatusFilter(emp.status) &&
+          hasAssignedShift(emp) &&
+          (!extraFilter || extraFilter(emp)),
+      )
+      .map((emp) => emp.id);
+
+  const resolveOvertimeTargets = (): number[] | null => {
+    const hasManualEmployees = overtimeSelectedEmployeeIds.length > 0;
+    if (!overtimeSelectedAll && !overtimeScope && !hasManualEmployees) {
+      return null;
+    }
+
+    const isAll = overtimeSelectedAll || overtimeScope === "all";
+    const isDept = overtimeScope.startsWith("dept-");
+
+    if (isAll) return assignedShiftIds();
+    if (isDept) {
+      const deptId = parseInt(overtimeScope.replace("dept-", ""), 10);
+      const deptName = departments.find((d) => d.id === deptId)?.name;
+      return assignedShiftIds((emp) => emp.department_name === deptName);
+    }
+    return overtimeSelectedEmployeeIds.filter((id) => {
+      const emp = employees.find((e) => e.id === id);
+      return emp ? hasAssignedShift(emp) : false;
+    });
+  };
+
   // Keep selections in sync when "all" is toggled or list changes
   useEffect(() => {
     if (selectedAll) {
@@ -115,11 +164,10 @@ export default function ShiftManagementPage() {
   const fetchEmployees = async () => {
     try {
       setLoading(true);
-      setError("");
       const res = await fetch("/api/hrm-shifts-assignments");
       const data = await res.json();
       if (!data.success || !Array.isArray(data.employees)) {
-        setError(data.error || "Failed to fetch employees");
+        toastError(data.error || "Failed to fetch employees");
         return;
       }
 
@@ -186,7 +234,7 @@ export default function ShiftManagementPage() {
       });
       setEmployees(enrichedEmployees);
     } catch (err) {
-      setError("Failed to fetch employees");
+      toastError("Failed to fetch employees");
     } finally {
       setLoading(false);
     }
@@ -236,12 +284,10 @@ export default function ShiftManagementPage() {
   const handleAssignMasterShiftToEmployee = async (employeeId: number, masterShiftId: number) => {
     const shift = masterShifts.find((s) => s.id === masterShiftId);
     if (!shift) {
-      setError("Shift not found");
+      toastError("Shift not found");
       return;
     }
     setAssigningId(employeeId);
-    setError("");
-    setSuccess("");
     try {
       const res = await fetch("/api/hrm-shifts-assignments", {
         method: "POST",
@@ -256,14 +302,13 @@ export default function ShiftManagementPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setSuccess(`Shift "${shift.name}" assigned.`);
+        toastSuccess(`Shift "${shift.name}" assigned.`);
         fetchEmployees();
-        setTimeout(() => setSuccess(""), 3000);
       } else {
-        setError(data.error || "Failed to assign shift");
+        toastError(data.error || "Failed to assign shift");
       }
     } catch {
-      setError("Failed to assign shift");
+      toastError("Failed to assign shift");
     } finally {
       setAssigningId(null);
     }
@@ -272,12 +317,12 @@ export default function ShiftManagementPage() {
     const hasManualEmployees = selectedEmployeeIds.length > 0;
 
     if (!selectedAll && !selectedScope && !hasManualEmployees) {
-      setError("Please select target (all / department / employees)");
+      toastError("Please select target (all / department / employees)");
       return;
     }
 
     if (!shiftName || !startTime || !endTime) {
-      setError("Please fill all fields");
+      toastError("Please fill all fields");
       return;
     }
 
@@ -301,18 +346,16 @@ export default function ShiftManagementPage() {
     } else if (hasManualEmployees) {
       payload.employee_ids = selectedEmployeeIds;
     } else {
-      setError("Invalid selection");
+      toastError("Invalid selection");
       return;
     }
 
     if (!Array.isArray(payload.employee_ids) || payload.employee_ids.length === 0) {
-      setError("No employees found for the current status filter");
+      toastError("No employees found for the current status filter");
       return;
     }
 
     setAssigningId(null);
-    setError("");
-    setSuccess("");
 
     try {
       const res = await fetch("/api/hrm-shifts-assignments", {
@@ -323,20 +366,19 @@ export default function ShiftManagementPage() {
 
       const data = await res.json();
       if (data.success) {
-        setSuccess(`Shift assigned successfully!`);
+        toastSuccess("Shift assigned successfully!");
         setShiftName("");
         setStartTime("");
         setEndTime("");
         setSelectedScope("");
         setSelectedAll(false);
         setSelectedEmployeeIds([]);
-        fetchEmployees(); // Refresh list
-        setTimeout(() => setSuccess(""), 3000);
+        fetchEmployees();
       } else {
-        setError(data.error || "Failed to assign shift");
+        toastError(data.error || "Failed to assign shift");
       }
     } catch (err) {
-      setError("Failed to assign shift");
+      toastError("Failed to assign shift");
     } finally {
       setAssigningId(null);
     }
@@ -349,7 +391,6 @@ export default function ShiftManagementPage() {
     setEditStartTime(toTimeValue(emp.start_time));
     setEditEndTime(toTimeValue(emp.end_time));
     setEditAllowOvertime((emp as any).allow_overtime !== false);
-    setError("");
   };
 
   const applyMasterShiftToEdit = (shiftId: string) => {
@@ -363,11 +404,11 @@ export default function ShiftManagementPage() {
 
   const handleUpdateShift = async () => {
     if (!editAssignmentId) {
-      setError("Assignment ID is required");
+      toastError("Assignment ID is required");
       return;
     }
     if (!editStartTime || !editEndTime) {
-      setError("Please fill both start and end times");
+      toastError("Please fill both start and end times");
       return;
     }
 
@@ -386,15 +427,14 @@ export default function ShiftManagementPage() {
 
       const data = await res.json();
       if (data.success) {
-        setSuccess("Shift timing updated successfully!");
+        toastSuccess("Shift timing updated successfully!");
         setEditingId(null);
         fetchEmployees();
-        setTimeout(() => setSuccess(""), 3000);
       } else {
-        setError(data.error || "Failed to update shift");
+        toastError(data.error || "Failed to update shift");
       }
     } catch (err) {
-      setError("Failed to update shift");
+      toastError("Failed to update shift");
     }
   };
 
@@ -405,7 +445,6 @@ export default function ShiftManagementPage() {
     setEditStartTime("");
     setEditEndTime("");
     setEditAllowOvertime(true);
-    setError("");
   };
 
   const toggleEmployeeSelection = (empId: number) => {
@@ -425,37 +464,17 @@ export default function ShiftManagementPage() {
   };
 
   const handleAllowOvertime = async () => {
-    const hasManualEmployees = overtimeSelectedEmployeeIds.length > 0;
-
-    if (!overtimeSelectedAll && !overtimeScope && !hasManualEmployees) {
-      setError("Please select target for overtime (all / department / employees)");
+    const targetEmployees = resolveOvertimeTargets();
+    if (targetEmployees == null) {
+      toastError("Please select target for overtime (all / department / employees)");
       return;
     }
 
-    const isAll = overtimeSelectedAll || overtimeScope === "all";
-    const isDept = overtimeScope.startsWith("dept-");
-
     setUpdatingOvertimeId(null);
-    setError("");
-    setSuccess("");
 
     try {
-      let targetEmployees: number[] = [];
-
-      if (isAll) {
-        targetEmployees = employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id);
-      } else if (isDept) {
-        const deptId = parseInt(overtimeScope.replace("dept-", ""));
-        const deptName = departments.find((d) => d.id === deptId)?.name;
-        targetEmployees = employees
-          .filter((e) => e.department_name === deptName && matchesStatusFilter(e.status))
-          .map((e) => e.id);
-      } else {
-        targetEmployees = overtimeSelectedEmployeeIds;
-      }
-
       if (targetEmployees.length === 0) {
-        setError("No target employees found for selected filter");
+        toastError("No employees with an assigned shift in this selection");
         return;
       }
 
@@ -470,55 +489,34 @@ export default function ShiftManagementPage() {
 
       const data = await res.json();
       if (!data.success) {
-        setError(data.error || "Failed to allow overtime for selected employees");
+        toastError(data.error || "Failed to allow overtime for selected employees");
         return;
       }
 
-      setSuccess("Overtime allowed for selected employees!");
+      toastSuccess("Overtime allowed for employees with an assigned shift.");
       setOvertimeScope("");
       setOvertimeSelectedAll(false);
       setOvertimeSelectedEmployeeIds([]);
-      fetchEmployees(); // Refresh list
-      setTimeout(() => setSuccess(""), 3000);
+      fetchEmployees();
     } catch (err) {
-      setError("Failed to update overtime settings");
+      toastError("Failed to update overtime settings");
     } finally {
       setUpdatingOvertimeId(null);
     }
   };
 
   const handleDisallowOvertime = async () => {
-    const hasManualEmployees = overtimeSelectedEmployeeIds.length > 0;
-
-    if (!overtimeSelectedAll && !overtimeScope && !hasManualEmployees) {
-      setError("Please select target (all / department / employees)");
+    const targetEmployees = resolveOvertimeTargets();
+    if (targetEmployees == null) {
+      toastError("Please select target (all / department / employees)");
       return;
     }
 
-    const isAll = overtimeSelectedAll || overtimeScope === "all";
-    const isDept = overtimeScope.startsWith("dept-");
-
     setUpdatingOvertimeId(null);
-    setError("");
-    setSuccess("");
 
     try {
-      let targetEmployees: number[] = [];
-
-      if (isAll) {
-        targetEmployees = employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id);
-      } else if (isDept) {
-        const deptId = parseInt(overtimeScope.replace("dept-", ""));
-        const deptName = departments.find((d) => d.id === deptId)?.name;
-        targetEmployees = employees
-          .filter((e) => e.department_name === deptName && matchesStatusFilter(e.status))
-          .map((e) => e.id);
-      } else {
-        targetEmployees = overtimeSelectedEmployeeIds;
-      }
-
       if (targetEmployees.length === 0) {
-        setError("No target employees found for selected filter");
+        toastError("No employees with an assigned shift in this selection");
         return;
       }
 
@@ -533,24 +531,25 @@ export default function ShiftManagementPage() {
 
       const data = await res.json();
       if (!data.success) {
-        setError(data.error || "Failed to disallow overtime for selected employees");
+        toastError(data.error || "Failed to disallow overtime for selected employees");
         return;
       }
 
-      setSuccess("Overtime disabled for selected employees!");
+      toastSuccess("Overtime turned off for employees with an assigned shift.");
       setOvertimeScope("");
       setOvertimeSelectedAll(false);
       setOvertimeSelectedEmployeeIds([]);
-      fetchEmployees(); // Refresh list
-      setTimeout(() => setSuccess(""), 3000);
+      fetchEmployees();
     } catch (err) {
-      setError("Failed to update overtime settings");
+      toastError("Failed to update overtime settings");
     } finally {
       setUpdatingOvertimeId(null);
     }
-  };  const handleDeleteShift = async (emp: Employee) => {
+  };
+
+  const handleDeleteShift = async (emp: Employee) => {
     if (!emp.assignment_id) {
-      setError("No shift assignment found");
+      toastError("No shift assignment found");
       return;
     }
 
@@ -567,14 +566,13 @@ export default function ShiftManagementPage() {
 
       const data = await res.json();
       if (data.success) {
-        setSuccess("Shift assignment deleted successfully!");
+        toastSuccess("Shift assignment deleted successfully!");
         fetchEmployees();
-        setTimeout(() => setSuccess(""), 3000);
       } else {
-        setError(data.error || "Failed to delete shift");
+        toastError(data.error || "Failed to delete shift");
       }
     } catch (err) {
-      setError("Failed to delete shift");
+      toastError("Failed to delete shift");
     }
   };
 
@@ -605,9 +603,6 @@ export default function ShiftManagementPage() {
     
     return matchesSearch;
   });
-
-  const hasAssignedShift = (emp: Employee) =>
-    Boolean(emp.shift_name && emp.start_time && emp.end_time);
 
   const stats = useMemo(() => {
     const total = employees.length;
@@ -683,13 +678,6 @@ export default function ShiftManagementPage() {
             <span className={styles.statHint}>need a shift today</span>
           </button>
         </div>
-
-        {success && <div className={styles.successMessage}>✓ {success}</div>}
-        {error && (
-          <div className={styles.error}>
-            <FaTimesCircle /> {error}
-          </div>
-        )}
 
         <div className={styles.searchContainer}>
           <select
@@ -923,21 +911,22 @@ export default function ShiftManagementPage() {
                   <div className={styles.dropdownMenu} style={{ maxHeight: "350px", overflowY: "auto" }}>
                     <input
                       type="text"
-                      placeholder="Search..."
+                      placeholder="Search name, ID or P.Name..."
                       value={overtimeTargetSearch}
-                      onChange={(e) => setOvertimeTargetSearch(e.target.value.toLowerCase())}
+                      onChange={(e) => setOvertimeTargetSearch(e.target.value)}
                       className={styles.dropdownSearch}
                       autoFocus
                       style={{ padding: "8px 10px", fontSize: "13px", marginBottom: "6px" }}
                     />
 
                     <div className={styles.dropdownContent}>
+                      {!overtimeTargetSearch.trim() ? (
                       <div
                         className={`${styles.dropdownOption} ${overtimeSelectedAll ? styles.dropdownOptionSelected : ""}`}
                         onClick={() => {
                           setOvertimeSelectedAll(true);
                           setOvertimeScope("all");
-                          setOvertimeSelectedEmployeeIds(employees.filter((e) => matchesStatusFilter(e.status)).map((e) => e.id));
+                          setOvertimeSelectedEmployeeIds(assignedShiftIds());
                           setOvertimeDropdownOpen(false);
                           setOvertimeTargetSearch("");
                         }}
@@ -947,11 +936,12 @@ export default function ShiftManagementPage() {
                           <span className={`${styles.optionCheckbox} ${overtimeSelectedAll ? styles.optionCheckboxChecked : ""}`}>
                             {overtimeSelectedAll ? "✓" : ""}
                           </span>
-                          <span>All employees</span>
+                          <span>All employees with a shift</span>
                         </div>
                       </div>
+                      ) : null}
 
-                      {departments.length > 0 && (
+                      {!overtimeTargetSearch.trim() && departments.length > 0 && (
                         <React.Fragment key="overtime-departments-group">
                           <div className={styles.dropdownGroup}>Departments</div>
                           {departments.map((d, idx) => (
@@ -980,16 +970,9 @@ export default function ShiftManagementPage() {
 
                       <div className={styles.dropdownGroup}>Employees</div>
                       {employees
-                        .filter(emp => {
+                        .filter((emp) => {
                           if (!matchesStatusFilter(emp.status)) return false;
-                          const term = overtimeTargetSearch.toLowerCase();
-                          return (
-                            emp.first_name?.toLowerCase().includes(term) ||
-                            emp.last_name?.toLowerCase().includes(term) ||
-                            emp.id?.toString().includes(term) ||
-                            (emp.pseudonym || "").toLowerCase().includes(term) ||
-                            `${emp.first_name || ""} ${emp.last_name || ""}`.toLowerCase().includes(term)
-                          );
+                          return overtimeSearchMatches(emp, overtimeTargetSearch);
                         })
                         .map((emp, idx) => (
                           <div
@@ -1002,7 +985,10 @@ export default function ShiftManagementPage() {
                               <span className={`${styles.optionCheckbox} ${overtimeSelectedEmployeeIds.includes(emp.id) ? styles.optionCheckboxChecked : ""}`}>
                                 {overtimeSelectedEmployeeIds.includes(emp.id) ? "✓" : ""}
                               </span>
-                              <span>{emp.id} - {emp.first_name} {emp.last_name}</span>
+                              <span>
+                                {emp.id} - {emp.first_name} {emp.last_name}
+                                {emp.pseudonym && emp.pseudonym !== "-" ? ` (${emp.pseudonym})` : ""}
+                              </span>
                             </div>
                           </div>
                         ))}
@@ -1045,6 +1031,40 @@ export default function ShiftManagementPage() {
             >
               <FaCheckCircle style={{ fontSize: "12px" }} />
               <span>{updatingOvertimeId !== null ? "..." : "Allow"}</span>
+            </button>
+            <button
+              onClick={handleDisallowOvertime}
+              disabled={updatingOvertimeId !== null}
+              style={{
+                padding: "8px 14px",
+                fontSize: "13px",
+                backgroundColor: "#E53E3E",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: updatingOvertimeId !== null ? "not-allowed" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "5px",
+                transition: "all 0.2s ease",
+                opacity: updatingOvertimeId !== null ? 0.65 : 1,
+                boxShadow: "0 2px 6px rgba(229, 62, 62, 0.15)",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => {
+                if (updatingOvertimeId === null) {
+                  e.currentTarget.style.backgroundColor = "#C53030";
+                  e.currentTarget.style.boxShadow = "0 3px 10px rgba(229, 62, 62, 0.25)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "#E53E3E";
+                e.currentTarget.style.boxShadow = "0 2px 6px rgba(229, 62, 62, 0.15)";
+              }}
+            >
+              <FaTimesCircle style={{ fontSize: "12px" }} />
+              <span>{updatingOvertimeId !== null ? "..." : "Not Allow"}</span>
             </button>
           </div>
         </div>
