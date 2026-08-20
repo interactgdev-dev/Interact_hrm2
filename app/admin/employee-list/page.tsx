@@ -182,6 +182,7 @@ export default function EmployeeListStyledPage() {
     try {
       const body = new FormData();
       body.append("file", file);
+      body.append("source", "employee-list");
       const res = await fetch("/api/employee-import", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
