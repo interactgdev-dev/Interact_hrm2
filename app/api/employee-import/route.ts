@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "../../../lib/db";
 import ExcelJS from "exceljs";
+import path from "path";
+import fs from "fs/promises";
+import { randomUUID } from "crypto";
 
 type RowResult = {
   row: number;
@@ -643,11 +646,25 @@ async function upsertJob(
 
   const existingId = await firstIdForEmployee(conn, "employee_jobs", employeeId);
   if (existingId) {
+    // Blank / unmatched Department must not clear an existing assignment
+    let nextDeptId = departmentId;
+    if (!deptName || departmentId == null) {
+      const [cur]: any = await conn.execute(
+        `SELECT department_id FROM employee_jobs WHERE id = ? LIMIT 1`,
+        [existingId],
+      );
+      if (cur?.[0]?.department_id != null) nextDeptId = Number(cur[0].department_id);
+    }
     await conn.execute(
       `UPDATE employee_jobs
-       SET joined_date = ?, job_title = ?, job_specification = ?, location = ?, employment_status = ?, department_id = ?
+       SET joined_date = COALESCE(?, joined_date),
+           job_title = COALESCE(?, job_title),
+           job_specification = COALESCE(?, job_specification),
+           location = COALESCE(?, location),
+           employment_status = COALESCE(?, employment_status),
+           department_id = ?
        WHERE id = ?`,
-      [joinedDate, jobTitle, jobSpec, location, employment_status, departmentId, existingId]
+      [joinedDate, jobTitle, jobSpec, location, employment_status, nextDeptId, existingId]
     );
     return;
   }
@@ -938,11 +955,47 @@ export async function POST(req: NextRequest) {
     if (!file || !(file instanceof File)) {
       return NextResponse.json({ success: false, error: "file is required (.xlsx)" }, { status: 400 });
     }
+    const sourceRaw = String(form.get("source") || "unknown").trim().toLowerCase();
+    const source =
+      sourceRaw === "employee-list" || sourceRaw === "add-employee" ? sourceRaw : "unknown";
+    const uploadedBy = String(form.get("uploaded_by") || "").trim() || null;
+
     const arrayBuffer = await file.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuffer);
+    const originalFilename = String(file.name || "employee-import.xlsx").slice(0, 255);
+    const ext = path.extname(originalFilename).toLowerCase() || ".xlsx";
+    const safeExt = ext === ".xls" || ext === ".xlsx" ? ext : ".xlsx";
+    const storedFilename = `${new Date().toISOString().slice(0, 10)}_${randomUUID()}${safeExt}`;
+    const relativePath = `/uploads/employee-imports/${storedFilename}`;
+
+    // Keep a durable copy for audit / proof (best-effort — import still runs if archive fails)
+    let archiveId: number | null = null;
+    try {
+      const absDir = path.join(process.cwd(), "public", "uploads", "employee-imports");
+      await fs.mkdir(absDir, { recursive: true });
+      await fs.writeFile(path.join(absDir, storedFilename), fileBuffer);
+      const [ins]: any = await pool.execute(
+        `INSERT INTO employee_import_uploads
+          (original_filename, stored_filename, relative_path, source, uploaded_by, file_size, mime_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          originalFilename,
+          storedFilename,
+          relativePath,
+          source,
+          uploadedBy,
+          fileBuffer.length,
+          file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ],
+      );
+      archiveId = Number(ins?.insertId) || null;
+    } catch (archiveErr) {
+      console.error("Employee import archive failed:", archiveErr);
+    }
+
     const wb = new ExcelJS.Workbook();
-    const uint8 = new Uint8Array(arrayBuffer);
-    // @ts-ignore ExcelJS accepts Uint8Array at runtime
-    await wb.xlsx.load(uint8);
+    // @ts-ignore ExcelJS accepts Buffer/Uint8Array at runtime
+    await wb.xlsx.load(fileBuffer);
     const ws = wb.worksheets.find((s) => s.name === "Employees") || wb.worksheets[0];
     if (!ws) return NextResponse.json({ success: false, error: "No sheet found" }, { status: 400 });
 
@@ -1258,7 +1311,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, summary: { inserted, updated, skipped, failed }, results });
+    if (archiveId) {
+      try {
+        const summary = { inserted, updated, skipped, failed, results: results.slice(0, 200) };
+        await pool.execute(
+          `UPDATE employee_import_uploads
+           SET inserted_count = ?, updated_count = ?, skipped_count = ?, failed_count = ?, summary_json = ?
+           WHERE id = ?`,
+          [inserted, updated, skipped, failed, JSON.stringify(summary), archiveId],
+        );
+      } catch (summaryErr) {
+        console.error("Employee import archive summary update failed:", summaryErr);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      summary: { inserted, updated, skipped, failed },
+      results,
+      archive: archiveId
+        ? { id: archiveId, path: relativePath, original_filename: originalFilename }
+        : null,
+    });
   } catch (err) {
     console.error("Employee import crashed:", err);
     return NextResponse.json({ success: false, error: String(err) }, { status: 500 });

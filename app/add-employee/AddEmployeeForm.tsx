@@ -447,6 +447,7 @@ export default function AddEmployeeForm({
     try {
       const body = new FormData();
       body.append("file", file);
+      body.append("source", "add-employee");
       const res = await fetch("/api/employee-import", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
