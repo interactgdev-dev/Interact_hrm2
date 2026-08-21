@@ -29,7 +29,6 @@ import {
 import {
   aggregateDayPunches,
   classifyDayAttendance,
-  excessLateMinutesFromRaw,
   lateCountsForStatus,
   STATUS_FIRST_HALF_DAY,
   STATUS_SECOND_HALF_DAY,
@@ -696,20 +695,18 @@ export default function MonthlyAttendancePage() {
     return typeof minutes === "number" && minutes > EXCESS_LATE_SHOW_AFTER_MINUTES;
   }
 
-  /** Resolve billable late for a day: never on Absent/Half Day; 1h already stripped. */
-  function billableLateForDay(
+  /** Resolve display late for a day: same raw minutes as Attendance Summary / DB. */
+  function displayLateForDay(
     statusLabel: string,
     dayStatusLateMinutes: number,
     recordLateMinutes: number | null | undefined,
   ): number {
     if (!lateCountsForStatus(statusLabel)) return 0;
-    // classifyDayAttendance already returns excess; prefer it
-    if (dayStatusLateMinutes > 0) return dayStatusLateMinutes;
-    // DB stores raw minutes from shift start — convert to excess
+    // Prefer stored raw late_minutes (matches attendance summary)
     if (recordLateMinutes != null && Number(recordLateMinutes) > 0) {
-      return excessLateMinutesFromRaw(Number(recordLateMinutes));
+      return Math.floor(Number(recordLateMinutes));
     }
-    return 0;
+    return dayStatusLateMinutes > 0 ? Math.floor(dayStatusLateMinutes) : 0;
   }
 
   function statusCellText(statusLabel: string, lateMinutes?: number | null) {
@@ -1436,8 +1433,8 @@ export default function MonthlyAttendancePage() {
           statusLabel,
           statusColor,
           deduction,
-          // Absent / Half Day → 0; Tardy → minutes after 1h relaxation only
-          lateMinutes: billableLateForDay(
+          // Absent / Half Day → 0; Tardy → raw late minutes (same as Attendance Summary)
+          lateMinutes: displayLateForDay(
             statusLabel,
             dayStatus.lateMinutes || 0,
             record?.late_minutes != null ? Number(record.late_minutes) : null,

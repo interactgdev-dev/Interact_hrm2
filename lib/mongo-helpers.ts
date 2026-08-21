@@ -102,9 +102,23 @@ export function toMs(v: unknown): number | null {
     const t = u.getTime();
     return Number.isNaN(t) ? null : t;
   }
-  const s = String(u);
-  const d = new Date(s.includes("T") ? s : s.replace(" ", "T"));
-  const t = d.getTime();
+  const s = String(u).trim();
+  if (!s) return null;
+  // UTC wall ("YYYY-MM-DD HH:mm:ss") — same as attendance / sqlDateToIso
+  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(s)) {
+    const t = new Date(s).getTime();
+    return Number.isNaN(t) ? null : t;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const t = new Date(`${s}T00:00:00Z`).getTime();
+    return Number.isNaN(t) ? null : t;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const iso = (s.includes("T") ? s : s.replace(" ", "T")).replace(/\.\d+$/, "");
+    const t = new Date(`${iso}Z`).getTime();
+    return Number.isNaN(t) ? null : t;
+  }
+  const t = new Date(s).getTime();
   return Number.isNaN(t) ? null : t;
 }
 

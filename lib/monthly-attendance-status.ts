@@ -266,7 +266,7 @@ export type ClockInLateStatus = {
   isLate: boolean;
   /** Minutes past shift start when late (stored in DB). */
   lateMinutes: number;
-  /** Billable late after 1h tardy relaxation (monthly Total Late / excess display). */
+  /** After 1h tardy relaxation (legacy billable helper; UI shows raw lateMinutes). */
   excessLateMinutes: number;
 };
 
@@ -558,7 +558,7 @@ export function classifyDayAttendance(params: {
     return {
       statusLabel: late.isLate ? "Tardy" : "On Time",
       isLate: late.isLate,
-      lateMinutes: late.isLate ? late.excessLateMinutes : 0,
+      lateMinutes: late.isLate ? late.lateMinutes : 0,
     };
   }
 
@@ -593,7 +593,7 @@ export function classifyDayAttendance(params: {
       return {
         statusLabel: "Tardy",
         isLate: true,
-        lateMinutes: late.excessLateMinutes,
+        lateMinutes: late.lateMinutes,
       };
     }
     return { statusLabel: "On Time", isLate: false, lateMinutes: 0 };
@@ -619,12 +619,12 @@ export function classifyDayAttendance(params: {
     return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
   }
 
-  // Full-ish day: then late → Tardy (billable = raw − 1h relaxation)
+  // Full-ish day: then late → Tardy (display = raw minutes past shift start)
   if (late.isLate) {
     return {
       statusLabel: "Tardy",
       isLate: true,
-      lateMinutes: late.excessLateMinutes,
+      lateMinutes: late.lateMinutes,
     };
   }
 
