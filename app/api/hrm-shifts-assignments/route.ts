@@ -38,42 +38,67 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, assignment: result[0] || null });
     }
 
-    // Get all employees with their latest valid shift assignment.
-    // Prefer rows that actually have shift timing/name. This avoids
-    // overtime-only rows (NULL shift fields) masking real assigned shifts.
-    const [employees] = (await query(
-      `SELECT 
-        e.id,
-        e.first_name,
-        e.last_name,
-        e.status,
-        sa.id as assignment_id,
-        sa.shift_name,
-        sa.start_time,
-        sa.end_time,
-        sa.assigned_date,
-        sa.allow_overtime,
-        sa.created_at
-      FROM hrm_employees e
-      LEFT JOIN shift_assignments sa
-        ON sa.id = (
-          SELECT s2.id
-          FROM shift_assignments s2
-          WHERE s2.employee_id = e.id
-          ORDER BY
-            CASE
-              WHEN s2.shift_name IS NOT NULL
-               AND s2.start_time IS NOT NULL
-               AND s2.end_time IS NOT NULL THEN 0
-              ELSE 1
-            END ASC,
-            s2.assigned_date DESC,
-            s2.id DESC
-          LIMIT 1
-        )
-      WHERE e.status IS NOT NULL
-      ORDER BY e.id ASC`
+    // Avoid correlated subquery JOIN — Mongo SQL adapter cannot evaluate
+    // `LEFT JOIN ... ON id = (SELECT … ORDER BY CASE…)`. Fetch + merge in JS
+    // so MySQL and Mongo both show the latest real shift after assign.
+    const [employeeRows] = (await query(
+      `SELECT id, first_name, last_name, status
+       FROM hrm_employees
+       WHERE status IS NOT NULL
+       ORDER BY id ASC`,
     )) as any;
+
+    const [assignmentRows] = (await query(
+      `SELECT id, employee_id, shift_name, start_time, end_time, assigned_date, allow_overtime, created_at
+       FROM shift_assignments`,
+    )) as any;
+
+    const byEmp = new Map<number, any[]>();
+    for (const a of assignmentRows || []) {
+      const empId = Number(a.employee_id);
+      if (!Number.isFinite(empId)) continue;
+      if (!byEmp.has(empId)) byEmp.set(empId, []);
+      byEmp.get(empId)!.push(a);
+    }
+
+    const dateKey = (v: unknown) => {
+      if (v == null) return "";
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      return String(v).slice(0, 10);
+    };
+    const hasRealShift = (a: any) =>
+      a?.shift_name != null &&
+      String(a.shift_name).trim() !== "" &&
+      a?.start_time != null &&
+      a?.end_time != null;
+
+    const employees = (employeeRows || []).map((e: any) => {
+      const list = byEmp.get(Number(e.id)) || [];
+      list.sort((a, b) => {
+        const ar = hasRealShift(a) ? 0 : 1;
+        const br = hasRealShift(b) ? 0 : 1;
+        if (ar !== br) return ar - br;
+        const da = dateKey(a.assigned_date);
+        const db = dateKey(b.assigned_date);
+        if (da < db) return 1;
+        if (da > db) return -1;
+        return Number(b.id || 0) - Number(a.id || 0);
+      });
+      const sa = list[0] || null;
+      return {
+        id: e.id,
+        first_name: e.first_name,
+        last_name: e.last_name,
+        status: e.status,
+        assignment_id: sa?.id ?? null,
+        shift_name: sa?.shift_name ?? null,
+        start_time: sa?.start_time ?? null,
+        end_time: sa?.end_time ?? null,
+        assigned_date: sa?.assigned_date ?? null,
+        allow_overtime: sa?.allow_overtime ?? null,
+        created_at: sa?.created_at ?? null,
+      };
+    });
 
     return NextResponse.json({ success: true, employees });
   } catch (error: any) {
