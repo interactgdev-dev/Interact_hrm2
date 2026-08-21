@@ -22,6 +22,7 @@ import {
   SERVER_TIMEZONE,
 } from "@/lib/timezone";
 import { parseAttendanceDateTimeMs } from "@/lib/shift-timing";
+import { parseZkbioDateTimeMs } from "@/lib/zkbio-time";
 import { FaFileExcel } from "react-icons/fa";
 import { toastInfo } from "@/lib/app-toast";
 import {
@@ -449,7 +450,7 @@ export default function EmployeeReportPage() {
 
         const raw = z.event_time || z.imported_at;
         if (!raw) continue;
-        const atMs = parseAttendanceDateTimeMs(raw);
+        const atMs = parseZkbioDateTimeMs(raw);
         if (atMs == null) continue;
         const at = new Date(atMs);
         const eventDate = getDateStringInTimeZone(at, SERVER_TIMEZONE);

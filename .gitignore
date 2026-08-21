@@ -50,3 +50,5 @@ Thumbs.db
 /desktop-presence-agent/**/bin/
 /desktop-presence-agent/**/obj/
 /desktop-presence-agent/**/*.user
+
+.zkbio-event-time-utc-migrated

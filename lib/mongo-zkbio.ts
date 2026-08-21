@@ -1,7 +1,11 @@
 import type { Document } from "mongodb";
 import { getMongoDb } from "./mongo";
-import { calendarDay, flexibleDayRangeFilter, unwrapMongoDate } from "./mongo-helpers";
+import { flexibleDayRangeFilter, unwrapMongoDate } from "./mongo-helpers";
 import { getTimeInMinutesInTimeZone, SERVER_TIMEZONE } from "./timezone";
+import {
+  parseZkbioDateTimeMs,
+  zkbioCalendarDay,
+} from "./zkbio-time";
 
 const COLUMNS = [
   "id",
@@ -24,7 +28,7 @@ function punchAt(doc: Document): unknown {
 }
 
 function punchDay(doc: Document): string {
-  return calendarDay(doc.event_time) || calendarDay(doc.imported_at);
+  return zkbioCalendarDay(doc.event_time) || zkbioCalendarDay(doc.imported_at);
 }
 
 function displayName(doc: Document): string {
@@ -36,7 +40,9 @@ function dedupeKey(doc: Document): string {
   if (logId) return `log:${logId}`;
   const pin = String(doc.pin || "").trim();
   const day = punchDay(doc);
-  const mins = getTimeInMinutesInTimeZone(punchAt(doc) as string | Date, SERVER_TIMEZONE);
+  const ms = parseZkbioDateTimeMs(punchAt(doc));
+  const mins =
+    ms != null ? getTimeInMinutesInTimeZone(ms, SERVER_TIMEZONE) : null;
   return `pin:${pin}|${day}|${mins ?? ""}`;
 }
 
@@ -44,6 +50,11 @@ function serializePunch(doc: Document): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   for (const col of COLUMNS) {
     const v = unwrapMongoDate(doc[col]);
+    if (col === "event_time" || col === "imported_at") {
+      const ms = parseZkbioDateTimeMs(v);
+      row[col] = ms != null ? new Date(ms).toISOString() : null;
+      continue;
+    }
     row[col] = v instanceof Date ? v.toISOString() : v ?? null;
   }
   return row;
@@ -100,7 +111,9 @@ export async function mongoListZkbioPunches(opts: {
       const blob = `${displayName(doc)} ${doc.first_name || ""} ${doc.last_name || ""}`.toLowerCase();
       if (!blob.includes(nameCore)) return false;
     }
-    const mins = getTimeInMinutesInTimeZone(punchAt(doc) as string | Date, SERVER_TIMEZONE);
+    const punchMs = parseZkbioDateTimeMs(punchAt(doc));
+    const mins =
+      punchMs != null ? getTimeInMinutesInTimeZone(punchMs, SERVER_TIMEZONE) : null;
     if (timeFromM != null && (mins == null || mins < timeFromM)) return false;
     if (timeToM != null && (mins == null || mins > timeToM)) return false;
     return true;

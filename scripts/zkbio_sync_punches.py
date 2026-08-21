@@ -93,6 +93,10 @@ def _load_root_env_local() -> None:
         "MONGODB_URI",
         "MONGO_DB",
         "DB_NAME",
+        "DB_HOST",
+        "DB_PORT",
+        "DB_USER",
+        "DB_PASSWORD",
     }
     try:
         raw = path.read_text(encoding="utf-8-sig")
@@ -150,13 +154,20 @@ def default_sync_since_march_floor() -> datetime:
 
 
 def parse_dt(v: Any) -> Optional[datetime]:
+    """Parse ZKBio event time as naive Asia/Karachi wall clock (no tzinfo)."""
     if v is None or v == "":
         return None
     if isinstance(v, datetime):
-        return v.replace(tzinfo=None) if v.tzinfo else v
+        if v.tzinfo is not None:
+            # Normalize to Karachi wall digits for MySQL DATETIME storage.
+            karachi = timezone(timedelta(hours=5))
+            return v.astimezone(karachi).replace(tzinfo=None)
+        return v
     if isinstance(v, (int, float)):
         try:
-            return datetime.fromtimestamp(float(v))
+            return datetime.fromtimestamp(float(v), tz=timezone(timedelta(hours=5))).replace(
+                tzinfo=None
+            )
         except (OSError, OverflowError, ValueError):
             pass
     s = str(v).strip()
@@ -167,7 +178,8 @@ def parse_dt(v: Any) -> Optional[datetime]:
         try:
             d = datetime.fromisoformat(s2)
             if d.tzinfo is not None:
-                d = d.astimezone(timezone.utc).replace(tzinfo=None)
+                karachi = timezone(timedelta(hours=5))
+                return d.astimezone(karachi).replace(tzinfo=None)
             return d
         except ValueError:
             pass
@@ -183,6 +195,21 @@ def parse_dt(v: Any) -> Optional[datetime]:
             return datetime.strptime(s, fmt)
         except ValueError:
             pass
+    return None
+
+
+def karachi_wall_to_utc_naive(dt: datetime) -> datetime:
+    """Naive Karachi wall → UTC-naive instant for MongoDB BSON Date."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone(timedelta(hours=5)))
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def utc_naive_to_karachi_wall(dt: datetime) -> datetime:
+    """Mongo UTC-naive instant → Karachi wall digits (ZKBio API window strings)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone(timedelta(hours=5))).replace(tzinfo=None)
     return None
 
 
@@ -606,17 +633,39 @@ class MongoPunchStore:
             print(f"WARNING: Mongo punch indexes: {exc}", file=sys.stderr)
 
     def max_event_time(self, sync_since: datetime) -> Optional[datetime]:
+        """Latest punch as UTC-naive (Mongo stores true UTC after Karachi conversion)."""
+        since_utc = karachi_wall_to_utc_naive(sync_since)
         best: Optional[datetime] = None
+
+        def as_utc_naive(raw: Any) -> Optional[datetime]:
+            if raw is None or raw == "":
+                return None
+            if isinstance(raw, datetime):
+                if raw.tzinfo is not None:
+                    return raw.astimezone(timezone.utc).replace(tzinfo=None)
+                return raw
+            s = str(raw).strip()
+            if "T" in s or s.endswith("Z") or "+" in s[10:]:
+                try:
+                    d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                    if d.tzinfo is not None:
+                        return d.astimezone(timezone.utc).replace(tzinfo=None)
+                    return karachi_wall_to_utc_naive(d)
+                except ValueError:
+                    return None
+            wall = parse_dt(s)
+            return karachi_wall_to_utc_naive(wall) if wall else None
+
         doc = self.col.find_one(
             {"event_time": {"$exists": True, "$ne": None}}, sort=[("event_time", -1)]
         )
         if doc:
-            best = parse_dt(doc.get("event_time"))
+            best = as_utc_naive(doc.get("event_time"))
         for extra in self.col.find({}, {"event_time": 1}).sort([("_id", -1)]).limit(500):
-            t = parse_dt(extra.get("event_time"))
+            t = as_utc_naive(extra.get("event_time"))
             if t and (best is None or t > best):
                 best = t
-        if best is not None and best < sync_since:
+        if best is not None and best < since_utc:
             return None
         return best
 
@@ -658,7 +707,7 @@ class MongoPunchStore:
             "reader_name": reader_name,
             "dept_name": dept_name,
             "raw_json": raw_json,
-            "imported_at": datetime.now(),
+            "imported_at": datetime.now(timezone.utc).replace(tzinfo=None),
         }
         try:
             self.col.insert_one(doc)
@@ -751,6 +800,9 @@ def main() -> int:
     if db_is_mongo():
         mongo_store = MongoPunchStore()
         last_event = mongo_store.max_event_time(sync_since)
+        if last_event is not None:
+            # ZKBio API window uses Karachi wall strings
+            last_event = utc_naive_to_karachi_wall(last_event)
     else:
         if mysql_connector is None:
             print("Install: pip install mysql-connector-python", file=sys.stderr)
@@ -958,7 +1010,7 @@ def main() -> int:
             if mongo_store is not None:
                 if mongo_store.insert(
                     log_id,
-                    event_time,
+                    karachi_wall_to_utc_naive(event_time),
                     pin,
                     first_name,
                     last_name,

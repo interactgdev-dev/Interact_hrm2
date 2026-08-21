@@ -1,4 +1,5 @@
 import { parseAttendanceDateTimeMs } from "./shift-timing";
+import { parseZkbioDateTimeMs } from "./zkbio-time";
 import {
   getDateStringInTimeZone,
   getTimeStringInTimeZone,
@@ -51,9 +52,10 @@ export function addDaysToDateKey(dateKey: string, days: number) {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** HRM + ZKBio timestamps — UTC wall in DB (same as attendance / auto clock-out). */
+/** HRM: UTC wall in DB. Tungsten/ZKBio: Asia/Karachi wall (see parseZkbioDateTimeMs). */
 function rowFromIso(source: "H" | "T", iso: string, detail: string): InternalRow | null {
-  const ms = parseAttendanceDateTimeMs(iso);
+  const ms =
+    source === "T" ? parseZkbioDateTimeMs(iso) : parseAttendanceDateTimeMs(iso);
   if (ms == null) return null;
   const at = new Date(ms);
   return {
@@ -152,7 +154,7 @@ function appendTungstenRows(
     const rawVal = z.event_time ?? z.imported_at;
     if (rawVal == null || rawVal === "") continue;
     const raw = String(rawVal);
-    const punchMs = parseAttendanceDateTimeMs(raw);
+    const punchMs = parseZkbioDateTimeMs(raw);
     if (punchMs == null) continue;
     const eventDate = getDateStringInTimeZone(punchMs, SERVER_TIMEZONE);
     if (eventDate < zkDateFrom || eventDate > zkDateTo) continue;

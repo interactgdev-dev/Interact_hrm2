@@ -1,4 +1,4 @@
-import { parseAttendanceDateTimeMs } from "./shift-timing";
+import { parseZkbioDateTimeMs } from "./zkbio-time";
 
 export type ZkIdentity = {
   employeeName: string;
@@ -27,8 +27,8 @@ function nameFromParts(first: string, last: string) {
 /** Latest named punch per PIN from a batch (newest event first). */
 export function buildPinProfilesFromRows(rows: Record<string, unknown>[]): Map<string, PinProfile> {
   const sorted = [...rows].sort((a, b) => {
-    const ta = parseAttendanceDateTimeMs(a.event_time || a.imported_at) ?? 0;
-    const tb = parseAttendanceDateTimeMs(b.event_time || b.imported_at) ?? 0;
+    const ta = parseZkbioDateTimeMs(a.event_time || a.imported_at) ?? 0;
+    const tb = parseZkbioDateTimeMs(b.event_time || b.imported_at) ?? 0;
     return tb - ta;
   });
 
