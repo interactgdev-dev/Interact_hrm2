@@ -594,6 +594,10 @@ function getByPath(row: Document, expr: string): any {
   if (df) {
     return formatDateTimeSql(getByPath(row, df[1]));
   }
+  const dateOnly = clean.match(/^DATE\s*\(\s*(.+)\s*\)$/i);
+  if (dateOnly) {
+    return toDateKey(getByPath(row, dateOnly[1]));
+  }
   if (clean.includes(".")) {
     const [alias, field] = clean.split(".");
     if (row[alias] && typeof row[alias] === "object") return (row[alias] as any)[field];
@@ -1042,6 +1046,11 @@ export async function mongoExecute(
           if (av == null && bv == null) continue;
           if (av == null) return 1;
           if (bv == null) return -1;
+          const am = parseUtcWallDateTime(av)?.getTime();
+          const bm = parseUtcWallDateTime(bv)?.getTime();
+          if (am != null && bm != null && am !== bm) {
+            return (am < bm ? -1 : 1) * (dir as number);
+          }
           if (av < bv) return -1 * (dir as number);
           if (av > bv) return 1 * (dir as number);
         }
@@ -1115,15 +1124,33 @@ function matchFilter(row: Document, filter: Filter<Document>): boolean {
   }
   for (const [k, v] of Object.entries(filter)) {
     if (k.startsWith("$")) continue;
-    const rv = row[k];
+    const hasKey = Object.prototype.hasOwnProperty.call(row, k);
+    const rv = hasKey ? row[k] : undefined;
     if (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
       const obj = v as any;
+      if ("$exists" in obj) {
+        if (Boolean(obj.$exists) !== hasKey) return false;
+      }
       if ("$in" in obj) {
         if (!obj.$in.map(String).includes(String(rv))) return false;
         continue;
       }
-      if ("$ne" in obj && String(rv) === String(obj.$ne) && obj.$exists !== true) return false;
+      if ("$ne" in obj) {
+        const ne = obj.$ne;
+        const leftNull = rv === null || rv === undefined;
+        const rightNull = ne === null || ne === undefined;
+        if (leftNull && rightNull) return false;
+        if (!leftNull && !rightNull && String(rv) === String(ne)) return false;
+      }
       const cmp = (op: string, bound: any) => {
+        const am = parseUtcWallDateTime(rv)?.getTime();
+        const bm = parseUtcWallDateTime(bound)?.getTime();
+        if (am != null && bm != null) {
+          if (op === "gt") return am > bm;
+          if (op === "gte") return am >= bm;
+          if (op === "lt") return am < bm;
+          if (op === "lte") return am <= bm;
+        }
         const rk = toDateKey(rv);
         const bk = toDateKey(bound);
         if (rk && bk) {
@@ -1146,6 +1173,10 @@ function matchFilter(row: Document, filter: Filter<Document>): boolean {
         const re = new RegExp(obj.$regex, obj.$options || "");
         if (!re.test(String(rv ?? ""))) return false;
       }
+      continue;
+    }
+    if (v === null || v === undefined) {
+      if (!(rv === null || rv === undefined)) return false;
       continue;
     }
     if (toDateKey(rv) && toDateKey(v)) {

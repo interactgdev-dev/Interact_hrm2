@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { ATTENDANCE_TABLE } from "@/lib/attendance-table";
+import { fetchShiftForEmployee } from "@/lib/attendance-presence";
 import { computeClockInLateStatus } from "@/lib/monthly-attendance-status";
+import { clockInDateKey } from "@/lib/shift-timing";
 import {
   isValidTardyNoteCode,
   TARDY_NOTE_OPTIONS,
@@ -16,51 +18,72 @@ import {
 } from "@/lib/tardy-notes-table";
 import { getDateStringInTimeZone, SERVER_TIMEZONE } from "@/lib/timezone";
 
-type AttendanceLateRow = {
+type OpenAttendanceRow = {
   attendance_id: number | null;
   clock_in: string | null;
-  gender: string | null;
-  shift_start_time: string | null;
   attendance_date: string | Date | null;
+  late_minutes?: number | null;
 };
 
 function dateKeyFromRow(value: string | Date | null | undefined): string {
   if (!value) return "";
   if (value instanceof Date) return getDateStringInTimeZone(value, SERVER_TIMEZONE);
-  return String(value).slice(0, 10);
+  const s = String(value).trim();
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  if (m) return m[1];
+  return getDateStringInTimeZone(new Date(s), SERVER_TIMEZONE);
 }
 
 /** Active open session only — widget shows after late clock-in and hides after clock-out. */
 async function getActiveTardyContext(employeeId: string) {
+  // Simple open-session query (no JOIN) — Mongo adapter JOIN+IS NULL was matching
+  // closed rows and returning yesterday's attendance_id (blocking the late popup).
   const [rows] = await pool.execute(
-    `SELECT ea.id AS attendance_id, ea.clock_in, ea.clock_out, DATE(ea.date) AS attendance_date, e.gender, sa.start_time AS shift_start_time
-     FROM ${ATTENDANCE_TABLE} ea
-     LEFT JOIN hrm_employees e ON ea.employee_id = e.id
-     LEFT JOIN shift_assignments sa
-       ON sa.employee_id = ea.employee_id
-      AND sa.assigned_date = (
-        SELECT MAX(sa2.assigned_date)
-        FROM shift_assignments sa2
-        WHERE sa2.employee_id = ea.employee_id
-          AND sa2.assigned_date <= ea.date
-      )
-     WHERE ea.employee_id = ? AND ea.clock_in IS NOT NULL AND ea.clock_out IS NULL
-     ORDER BY ea.clock_in DESC
+    `SELECT id AS attendance_id, clock_in, date AS attendance_date, late_minutes
+     FROM ${ATTENDANCE_TABLE}
+     WHERE employee_id = ? AND clock_in IS NOT NULL AND clock_out IS NULL
+     ORDER BY clock_in DESC
      LIMIT 1`,
     [employeeId]
   );
-  const row = (rows as AttendanceLateRow[])[0];
+  const row = (rows as OpenAttendanceRow[])[0];
   if (!row?.clock_in) {
     return { isLate: false, isClockedIn: false, attendanceDate: "", attendanceId: 0 };
   }
 
-  const lateStatus = computeClockInLateStatus(row.clock_in, row.shift_start_time, row.gender);
+  const attendanceId = Number(row.attendance_id) || 0;
+  const attendanceDate =
+    dateKeyFromRow(row.attendance_date) || clockInDateKey(row.clock_in) || "";
+
+  const storedLate = Number(row.late_minutes);
+  if (Number.isFinite(storedLate) && storedLate > 0) {
+    return {
+      isLate: true,
+      isClockedIn: true,
+      attendanceDate,
+      attendanceId,
+    };
+  }
+
+  const [empRows] = await pool.execute(
+    `SELECT gender FROM hrm_employees WHERE id = ? LIMIT 1`,
+    [employeeId]
+  );
+  const gender = (empRows as { gender?: string | null }[])[0]?.gender ?? null;
+  const shift = attendanceDate
+    ? await fetchShiftForEmployee(pool, employeeId, attendanceDate)
+    : null;
+  const lateStatus = computeClockInLateStatus(
+    row.clock_in,
+    shift?.start_time ?? null,
+    gender
+  );
 
   return {
     isLate: lateStatus.isLate,
     isClockedIn: true,
-    attendanceDate: dateKeyFromRow(row.attendance_date),
-    attendanceId: Number(row.attendance_id) || 0,
+    attendanceDate,
+    attendanceId,
   };
 }
 
