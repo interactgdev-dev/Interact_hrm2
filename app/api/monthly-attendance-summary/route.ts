@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '../../../lib/db';
+import { calendarDay } from '../../../lib/mongo-helpers';
+import { addDaysToDateKey } from '../../../lib/tungsten-punch-pairing';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -67,7 +69,7 @@ export async function GET(req: NextRequest) {
       // Group by date
       const byDate: Record<string, any[]> = {};
       records.forEach((rec: any) => {
-        const dateKey = rec.date ? rec.date.toISOString().slice(0, 10) : null;
+        const dateKey = calendarDay(rec.date);
         if (!dateKey) return;
         if (!byDate[dateKey]) byDate[dateKey] = [];
         byDate[dateKey].push(rec);
@@ -75,19 +77,19 @@ export async function GET(req: NextRequest) {
 
       // Calculate T.W Days like monthly attendance page
       let tw_days = 0;
-      const fromDateObj = new Date(fromDate);
-      const toDateObj = new Date(toDate);
-      for (let d = new Date(fromDateObj); d <= toDateObj; d.setDate(d.getDate() + 1)) {
-        const dateKey = d.toISOString().slice(0, 10);
-        const weekday = d.getDay();
-        // Exclude weekends (0=Sun, 6=Sat)
+      for (let dateKey = fromDate; dateKey <= toDate; dateKey = addDaysToDateKey(dateKey, 1)) {
+        const weekday = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
         if (weekday === 0 || weekday === 6) continue;
-        // Exclude off days (if status is 'off' for all records)
         const dayRecords = byDate[dateKey] || [];
-        const allOff = dayRecords.length > 0 && dayRecords.every(rec => rec.status && rec.status.toLowerCase() === 'off');
+        const allOff =
+          dayRecords.length > 0 &&
+          dayRecords.every((rec) => rec.status && rec.status.toLowerCase() === "off");
         if (allOff) continue;
-        // Exclude approved leaves (if leave_type is 'approved' for all records)
-        const allLeave = dayRecords.length > 0 && dayRecords.every(rec => rec.leave_type && rec.leave_type.toLowerCase() === 'approved');
+        const allLeave =
+          dayRecords.length > 0 &&
+          dayRecords.every(
+            (rec) => rec.leave_type && rec.leave_type.toLowerCase() === "approved",
+          );
         if (allLeave) continue;
         tw_days++;
       }

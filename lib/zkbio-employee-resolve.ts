@@ -1,3 +1,5 @@
+import { parseAttendanceDateTimeMs } from "./shift-timing";
+
 export type ZkIdentity = {
   employeeName: string;
   department: string;
@@ -25,8 +27,8 @@ function nameFromParts(first: string, last: string) {
 /** Latest named punch per PIN from a batch (newest event first). */
 export function buildPinProfilesFromRows(rows: Record<string, unknown>[]): Map<string, PinProfile> {
   const sorted = [...rows].sort((a, b) => {
-    const ta = new Date(String(a.event_time || a.imported_at || "")).getTime();
-    const tb = new Date(String(b.event_time || b.imported_at || "")).getTime();
+    const ta = parseAttendanceDateTimeMs(a.event_time || a.imported_at) ?? 0;
+    const tb = parseAttendanceDateTimeMs(b.event_time || b.imported_at) ?? 0;
     return tb - ta;
   });
 

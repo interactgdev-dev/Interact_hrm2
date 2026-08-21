@@ -43,10 +43,7 @@ export function formatSqlDateTime(isoOrDate: string | Date): string {
 }
 
 export function ymd(v: unknown): string {
-  const u = unwrapMongoDate(v);
-  if (u == null || u === "") return "";
-  if (u instanceof Date && !Number.isNaN(u.getTime())) return u.toISOString().slice(0, 10);
-  return String(u).slice(0, 10);
+  return calendarDay(v);
 }
 
 /** Calendar day in Asia/Karachi — imported MySQL DATE often lands as BSON Date. */
@@ -57,9 +54,14 @@ export function calendarDay(v: unknown): string {
     return getDateStringInTimeZone(u, SERVER_TIMEZONE) || u.toISOString().slice(0, 10);
   }
   if (typeof u === "string") {
-    const m = u.match(/(\d{4}-\d{2}-\d{2})/);
-    if (m) return m[1];
-    return getDateStringInTimeZone(u, SERVER_TIMEZONE) || "";
+    const s = u.trim();
+    // Date-only calendar key — keep as-is (already a business day).
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    // Datetime / ISO → Karachi calendar day (UTC wall or offset).
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      return getDateStringInTimeZone(s, SERVER_TIMEZONE) || s.slice(0, 10);
+    }
+    return getDateStringInTimeZone(s, SERVER_TIMEZONE) || "";
   }
   if (typeof u === "number" && Number.isFinite(u)) {
     return calendarDay(new Date(u));

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '../../../lib/db';
+import { calendarDay } from '../../../lib/mongo-helpers';
+import { addDaysToDateKey } from '../../../lib/tungsten-punch-pairing';
 
 export async function GET(req: NextRequest) {
 	const { searchParams } = new URL(req.url);
@@ -30,12 +32,9 @@ export async function GET(req: NextRequest) {
 			byEmployee[rec.employee_id].push(rec);
 		});
 
-		// Get all dates in range
-		const fromDateObj = new Date(fromDate);
-		const toDateObj = new Date(toDate);
+		// Get all dates in range (Karachi calendar keys, not UTC toISOString)
 		const allDates: string[] = [];
-		for (let d = new Date(fromDateObj); d <= toDateObj; d.setDate(d.getDate() + 1)) {
-			const dateKey = d.toISOString().slice(0, 10);
+		for (let dateKey = fromDate; dateKey <= toDate; dateKey = addDaysToDateKey(dateKey, 1)) {
 			allDates.push(dateKey);
 		}
 
@@ -44,7 +43,7 @@ export async function GET(req: NextRequest) {
 			// Group by date
 			const byDate: Record<string, any[]> = {};
 			records.forEach((rec: any) => {
-				const dateKey = rec.date ? rec.date.toISOString().slice(0, 10) : null;
+				const dateKey = calendarDay(rec.date);
 				if (!dateKey) return;
 				if (!byDate[dateKey]) byDate[dateKey] = [];
 				byDate[dateKey].push(rec);
@@ -54,7 +53,7 @@ export async function GET(req: NextRequest) {
 			let hasHalfDay = false;
 			allDates.forEach(dateKey => {
 				// Weekend skip (0=Sun, 6=Sat)
-				const weekday = new Date(dateKey).getDay();
+				const weekday = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
 				if (weekday === 0 || weekday === 6) return;
 				const dayRecords = byDate[dateKey] || [];
 				let dayDeduction = 0;

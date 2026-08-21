@@ -7,6 +7,7 @@
  * DDL (CREATE/ALTER/SHOW) is mostly no-op on Mongo.
  */
 import type { Db, Document, Filter } from "mongodb";
+import { getDateStringInTimeZone, SERVER_TIMEZONE } from "./timezone";
 
 type SqlParams = any[] | undefined;
 
@@ -59,11 +60,14 @@ function indexOfTopLevelKeyword(sql: string, keyword: string): number {
 function toDateKey(v: any): string | null {
   if (v == null) return null;
   if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    return v.toISOString().slice(0, 10);
+    return getDateStringInTimeZone(v, SERVER_TIMEZONE) || v.toISOString().slice(0, 10);
   }
-  const s = String(v);
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : null;
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return getDateStringInTimeZone(s, SERVER_TIMEZONE) || s.slice(0, 10);
+  }
+  return getDateStringInTimeZone(s, SERVER_TIMEZONE) || null;
 }
 
 function dateKeysCompatible(a: any, b: any): boolean {
@@ -443,7 +447,7 @@ function buildFilterFromWhere(
     );
     if (m) {
       const ref = fieldRef(m[1]);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
       const op = m[2];
       if (op === "<") return { [ref.field]: { $lt: today } };
       if (op === "<=") return { [ref.field]: { $lte: today } };

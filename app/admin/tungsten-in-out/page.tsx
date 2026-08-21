@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import LayoutDashboard from "../../layout-dashboard";
 import styles from "../../break-summary/break-summary.module.css";
-import { getDateStringInTimeZone, SERVER_TIMEZONE } from "@/lib/timezone";
+import { getDateStringInTimeZone, parseToInstant, SERVER_TIMEZONE } from "@/lib/timezone";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 
@@ -32,7 +32,7 @@ function parseDbDate(v: unknown): Date | null {
   const s = String(v).trim();
   if (!s) return null;
   const normalized = s.includes("T") ? s : s.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, "$1T$2");
-  const d = new Date(normalized);
+  const d = parseToInstant(normalized);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

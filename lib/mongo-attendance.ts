@@ -1,6 +1,7 @@
 import type { Document } from "mongodb";
 import { getMongoDb } from "./mongo";
 import { computeClockInLateStatus } from "./monthly-attendance-status";
+import { getDateStringInTimeZone, SERVER_TIMEZONE } from "./timezone";
 import {
   calendarDay,
   employeeDisplayName,
@@ -241,7 +242,7 @@ export async function mongoDeleteAttendance(id: string | number) {
 
 export async function mongoAutoCloseOldOpen(employeeId: string | number) {
   const db = await getMongoDb();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
   const open = await db
     .collection("employee_attendance")
     .find({
@@ -250,7 +251,7 @@ export async function mongoAutoCloseOldOpen(employeeId: string | number) {
     })
     .toArray();
   for (const row of open) {
-    const day = ymd(row.date) || ymd(row.clock_in);
+    const day = calendarDay(row.date) || calendarDay(row.clock_in);
     if (!day || day >= today) continue;
     const cin = toMs(row.clock_in);
     if (cin == null || !row._id) continue;

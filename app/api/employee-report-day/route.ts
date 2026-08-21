@@ -5,6 +5,7 @@ import {
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "@/lib/timezone";
+import { parseAttendanceDateTimeMs } from "@/lib/shift-timing";
 import { getDbDriver, pool } from "@/lib/db";
 import { mongoZkbioDepartments, mongoZkbioPunchesForDate } from "@/lib/mongo-zkbio";
 
@@ -146,9 +147,9 @@ export async function GET(req: NextRequest) {
       const department = String(row.dept_name || "");
       const raw = row.punch_at;
       if (!raw) return;
-      const s = String(raw);
-      const at = new Date(s.includes("T") ? s : s.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, "$1T$2"));
-      if (Number.isNaN(at.getTime())) return;
+      const atMs = parseAttendanceDateTimeMs(raw);
+      if (atMs == null) return;
+      const at = new Date(atMs);
       const reader = String(row.reader_name || "").trim() || "-";
       const event = String(row.event_name || "").trim() || "Punch";
       merged.push({

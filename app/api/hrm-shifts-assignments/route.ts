@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "../../../lib/db";
+import { getDateStringInTimeZone, SERVER_TIMEZONE } from "@/lib/timezone";
 
 function parseAllowOvertime(value: unknown, defaultValue = false): boolean {
   if (value === undefined || value === null || value === "") return defaultValue;
@@ -63,8 +64,12 @@ export async function GET(req: NextRequest) {
 
     const dateKey = (v: unknown) => {
       if (v == null) return "";
-      if (v instanceof Date) return v.toISOString().slice(0, 10);
-      return String(v).slice(0, 10);
+      if (v instanceof Date) {
+        return getDateStringInTimeZone(v, SERVER_TIMEZONE) || v.toISOString().slice(0, 10);
+      }
+      const s = String(v).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      return getDateStringInTimeZone(s, SERVER_TIMEZONE) || s.slice(0, 10);
     };
     const hasRealShift = (a: any) =>
       a?.shift_name != null &&

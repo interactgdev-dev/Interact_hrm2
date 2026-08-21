@@ -18,11 +18,13 @@ export function normalizeDateKey(value: unknown): string | null {
     return getDateStringInTimeZone(value, SERVER_TIMEZONE);
   }
   const s = String(value).trim();
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
-  if (m) return m[1];
-  const parsed = new Date(s.includes("T") ? s : s.replace(" ", "T"));
-  if (Number.isNaN(parsed.getTime())) return null;
-  return getDateStringInTimeZone(parsed, SERVER_TIMEZONE);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const key = getDateStringInTimeZone(s, SERVER_TIMEZONE);
+    return key || s.slice(0, 10);
+  }
+  const key = getDateStringInTimeZone(s, SERVER_TIMEZONE);
+  return key || null;
 }
 
 function parseShiftTimeHms(value: string | null | undefined) {
@@ -144,6 +146,11 @@ export function parseAttendanceDateTimeMs(value: string | Date | unknown): numbe
 
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null;
+    // Mongo BSON Date is a true UTC instant; mysql2 Date encodes UTC-wall via local comps.
+    const driver = String(process.env.DB_DRIVER || process.env.DATABASE_DRIVER || "").toLowerCase();
+    if (driver === "mongo" || driver === "mongodb") {
+      return value.getTime();
+    }
     return Date.UTC(
       value.getFullYear(),
       value.getMonth(),

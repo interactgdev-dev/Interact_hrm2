@@ -99,7 +99,7 @@ export async function mongoListBreaks(opts: ListOpts) {
   const to = opts.date || opts.toDate;
   if (from && to) {
     rows = rows.filter((row) => {
-      const key = calendarDay(row.break_start) || calendarDay(row.date);
+      const key = calendarDay(row.date) || calendarDay(row.break_start);
       return key >= from && key <= to;
     });
   }
@@ -126,7 +126,7 @@ export async function mongoListPrayerBreaks(opts: ListOpts) {
   const to = opts.date || opts.toDate;
   if (from && to) {
     rows = rows.filter((row) => {
-      const key = calendarDay(row.prayer_break_start) || calendarDay(row.date);
+      const key = calendarDay(row.date) || calendarDay(row.prayer_break_start);
       return key >= from && key <= to;
     });
   }
