@@ -76,7 +76,31 @@ export async function performAutoClockOut(
   clockOutAtMs?: number,
   employeeId?: string | null,
 ) {
-  const outDate = new Date(clockOutAtMs ?? Date.now());
+  let outMs = clockOutAtMs ?? Date.now();
+  if (!Number.isFinite(outMs) || outMs <= 0) outMs = Date.now();
+
+  // Guard: never close with a timestamp before clock_in (bad DATE_FORMAT / TZ).
+  try {
+    const [rows] = (await conn.execute(
+      `SELECT clock_in FROM ${ATTENDANCE_TABLE} WHERE id = ? AND clock_out IS NULL LIMIT 1`,
+      [attendanceId],
+    )) as [{ clock_in: string | Date }[], unknown];
+    const cin = rows?.[0]?.clock_in;
+    if (cin != null && cin !== "") {
+      const cinStr = String(cin).trim();
+      const cinMs = /[zZ]$|[+-]\d{2}:\d{2}$/.test(cinStr)
+        ? new Date(cinStr).getTime()
+        : Date.parse(`${(cinStr.includes("T") ? cinStr : cinStr.replace(" ", "T")).replace(/\.\d+$/, "")}Z`);
+      if (Number.isFinite(cinMs) && outMs <= cinMs) {
+        outMs = Date.now();
+        if (outMs <= cinMs) outMs = cinMs + 60_000;
+      }
+    }
+  } catch {
+    // proceed with outMs
+  }
+
+  const outDate = new Date(outMs);
   const formattedClockOut = outDate.toISOString().slice(0, 19).replace("T", " ");
 
   if (employeeId) {

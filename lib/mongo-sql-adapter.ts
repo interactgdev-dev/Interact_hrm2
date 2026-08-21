@@ -545,17 +545,46 @@ function parseSelectList(selectSql: string): { star: boolean; cols: { expr: stri
   return { star: false, cols };
 }
 
+/**
+ * Attendance / MySQL datetimes are stored as UTC wall ("YYYY-MM-DD HH:mm:ss").
+ * Never parse those with `new Date("...T...")` under Asia/Karachi — that treats
+ * the wall as local and shifts −5h (broke auto clock-out + open-session checks).
+ */
+function parseUtcWallDateTime(v: any): Date | null {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) {
+    return Number.isNaN(v.getTime()) ? null : v;
+  }
+  const s = String(v).trim();
+  if (!s || s === "null") return null;
+  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(s)) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(`${s}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const iso = (s.includes("T") ? s : s.replace(" ", "T")).replace(/\.\d+$/, "");
+    const d = new Date(`${iso}Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function hoursBetween(clockIn: any, clockOut: any): number {
-  const a = clockIn instanceof Date ? clockIn.getTime() : new Date(String(clockIn).replace(" ", "T")).getTime();
-  const b = clockOut instanceof Date ? clockOut.getTime() : new Date(String(clockOut).replace(" ", "T")).getTime();
-  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0;
+  const a = parseUtcWallDateTime(clockIn)?.getTime();
+  const b = parseUtcWallDateTime(clockOut)?.getTime();
+  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0;
   return Math.min(999.99, Math.round(((b - a) / 3600000) * 100) / 100);
 }
 
 function formatDateTimeSql(v: any): string | null {
   if (v == null || v === "") return null;
-  const d = v instanceof Date ? v : new Date(String(v).replace(" ", "T"));
-  if (Number.isNaN(d.getTime())) return String(v);
+  const d = parseUtcWallDateTime(v);
+  if (!d) return String(v);
   return d.toISOString().slice(0, 19);
 }
 
@@ -588,22 +617,20 @@ function sqlNow(): string {
 }
 
 function addInterval(base: any, amount: number, unit: string): string {
-  const d =
-    base instanceof Date
-      ? new Date(base.getTime())
-      : new Date(String(base).includes("T") ? String(base) : String(base).replace(" ", "T"));
-  if (Number.isNaN(d.getTime())) {
+  const parsed = parseUtcWallDateTime(base);
+  const d = parsed ? new Date(parsed.getTime()) : null;
+  if (!d) {
     const today = new Date();
     const u = unit.toUpperCase();
-    if (u.startsWith("DAY")) today.setDate(today.getDate() + amount);
-    else if (u.startsWith("HOUR")) today.setHours(today.getHours() + amount);
-    else if (u.startsWith("MINUTE")) today.setMinutes(today.getMinutes() + amount);
+    if (u.startsWith("DAY")) today.setUTCDate(today.getUTCDate() + amount);
+    else if (u.startsWith("HOUR")) today.setUTCHours(today.getUTCHours() + amount);
+    else if (u.startsWith("MINUTE")) today.setUTCMinutes(today.getUTCMinutes() + amount);
     return sqlNow();
   }
   const u = unit.toUpperCase();
-  if (u.startsWith("DAY")) d.setDate(d.getDate() + amount);
-  else if (u.startsWith("HOUR")) d.setHours(d.getHours() + amount);
-  else if (u.startsWith("MINUTE")) d.setMinutes(d.getMinutes() + amount);
+  if (u.startsWith("DAY")) d.setUTCDate(d.getUTCDate() + amount);
+  else if (u.startsWith("HOUR")) d.setUTCHours(d.getUTCHours() + amount);
+  else if (u.startsWith("MINUTE")) d.setUTCMinutes(d.getUTCMinutes() + amount);
   return d.toISOString().slice(0, 19).replace("T", " ");
 }
 

@@ -71,6 +71,10 @@ async function processOpenSession(
   }
 
   const scheduledClockOutMs = evalResult.promptAtMs + AUTO_PRESENCE_POPUP_MS;
+  // Never write clock_out before clock_in (Mongo DATE_FORMAT TZ bugs used to).
+  if (scheduledClockOutMs <= evalResult.clockInMs) {
+    return null;
+  }
   await performAutoClockOut(
     conn,
     open.id,
