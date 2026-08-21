@@ -1093,7 +1093,13 @@ export default function ShiftManagementPage() {
                   </tr>
                 ) : (
                   filteredEmployees.map((emp, idx) => (
-                    <tr key={`row-emp-${emp.id}-${idx}`}>
+                    <tr
+                      key={`row-emp-${emp.id}-${idx}`}
+                      data-employee-id={emp.id}
+                      data-employee-name={`${emp.first_name || ""} ${emp.last_name || ""}`.trim()}
+                      data-employee-pseudonym={emp.pseudonym || ""}
+                      data-department-name={emp.department_name || ""}
+                    >
                       <td className={tableStyles.cellMuted}>
                         {emp.id}
                       </td>
@@ -1246,6 +1252,9 @@ export default function ShiftManagementPage() {
                             className={styles.rowAssignSelect}
                             value=""
                             disabled={assigningId === emp.id || masterShifts.length === 0}
+                            data-employee-id={emp.id}
+                            data-employee-name={`${emp.first_name || ""} ${emp.last_name || ""}`.trim()}
+                            data-action="assign-shift"
                             onChange={(e) => {
                               const shiftId = Number(e.target.value);
                               if (shiftId) handleAssignMasterShiftToEmployee(emp.id, shiftId);

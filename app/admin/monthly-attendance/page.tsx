@@ -1668,6 +1668,10 @@ export default function MonthlyAttendancePage() {
                 return (
                 <div
                   key={employee.employeeId}
+                  data-employee-id={employee.employeeId}
+                  data-employee-name={employee.employeeName}
+                  data-employee-pseudonym={employee.pseudonym || ""}
+                  data-department-name={employee.departmentName || ""}
                   style={{
                     background: "#fff",
                     borderRadius: 16,
@@ -1705,6 +1709,9 @@ export default function MonthlyAttendancePage() {
                         title={isExpanded ? "Hide month table" : "Show month table"}
                         className={styles.breakSummaryXLSButton}
                         style={{ padding: "6px 12px", fontSize: 12, background: isExpanded ? "#64748b" : undefined }}
+                        data-employee-id={employee.employeeId}
+                        data-employee-name={employee.employeeName}
+                        data-action={isExpanded ? "hide-details" : "view-details"}
                         onClick={() => toggleEmployeeExpanded(employee.employeeId)}
                       >
                         {isExpanded ? "Hide details" : "View details"}
@@ -1713,6 +1720,9 @@ export default function MonthlyAttendancePage() {
                         title="Export this employee's month record as XLS"
                         className={styles.breakSummaryXLSButton}
                         style={{ padding: "6px 12px", fontSize: 12 }}
+                        data-employee-id={employee.employeeId}
+                        data-employee-name={employee.employeeName}
+                        data-action="export-xls"
                         onClick={() => downloadEmployeeExcel(employee)}
                       >
                         <FaFileExcel /> Export XLS

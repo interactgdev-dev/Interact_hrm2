@@ -16,17 +16,31 @@ export function EmployeeTableNameCell({ name, employeeId, photo, onOpen }: Props
   const initials = employeeInitials(name || String(employeeId));
 
   return (
-    <div className={styles.cell}>
+    <div
+      className={styles.cell}
+      data-employee-id={employeeId}
+      data-employee-name={name || ""}
+    >
       <button
         type="button"
         className={styles.avatarBtn}
         onClick={onOpen}
         aria-label={`View ${name} profile`}
         title="View profile"
+        data-employee-id={employeeId}
+        data-employee-name={name || ""}
+        data-action="open-employee-profile"
       >
         <EmployeeAvatar name={name} initials={initials} photo={photo} size="sm" ring="purple" />
       </button>
-      <button type="button" className={styles.nameBtn} onClick={onOpen}>
+      <button
+        type="button"
+        className={styles.nameBtn}
+        onClick={onOpen}
+        data-employee-id={employeeId}
+        data-employee-name={name || ""}
+        data-action="open-employee-profile"
+      >
         <span className={styles.name}>{name || "—"}</span>
       </button>
     </div>
