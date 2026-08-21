@@ -526,7 +526,9 @@ async function firstIdForEmployee(conn: any, table: string, employeeId: number):
 }
 
 async function upsertContact(conn: any, employeeId: number, rowData: Record<string, any>) {
+  // Blank Excel cells must not clear manually filled DB values — only non-empty sheet cells update.
   const street1 = nz(rowData.street1);
+  const street2 = nz(rowData.street2);
   const city = nz(rowData.city);
   const state = nz(rowData.state);
   const zip = nz(rowData.zip);
@@ -536,18 +538,24 @@ async function upsertContact(conn: any, employeeId: number, rowData: Record<stri
   const permanent_state = nz(rowData.permanent_state);
   const permanent_zip = nz(rowData.permanent_zip);
   const permanent_country = nz(rowData.permanent_country);
+  const phone_home = nz(rowData.phone_home);
   const phone_mobile = nz(rowData.phone_mobile);
   const phone_work = nz(rowData.phone_work);
   const email_work = nz(rowData.email_work);
   const email_other = nz(rowData.email_other);
   const anyContact =
     street1 ||
+    street2 ||
     city ||
     state ||
     zip ||
     country ||
     permanent_street ||
     permanent_city ||
+    permanent_state ||
+    permanent_zip ||
+    permanent_country ||
+    phone_home ||
     phone_mobile ||
     phone_work ||
     email_work ||
@@ -555,39 +563,70 @@ async function upsertContact(conn: any, employeeId: number, rowData: Record<stri
   if (!anyContact) return;
 
   const existingId = await firstIdForEmployee(conn, "employee_contacts", employeeId);
-  const values = [
-    street1,
-    null,
-    city,
-    state,
-    zip,
-    country,
-    permanent_street,
-    permanent_city,
-    permanent_state,
-    permanent_zip,
-    permanent_country,
-    null,
-    phone_mobile,
-    phone_work,
-    email_work,
-    email_other,
-  ];
   if (existingId) {
     await conn.execute(
       `UPDATE employee_contacts
-       SET street1 = ?, street2 = ?, city = ?, state = ?, zip = ?, country = ?,
-           permanent_street = ?, permanent_city = ?, permanent_state = ?, permanent_zip = ?, permanent_country = ?,
-           phone_home = ?, phone_mobile = ?, phone_work = ?, email_work = ?, email_other = ?
+       SET street1 = COALESCE(?, street1),
+           street2 = COALESCE(?, street2),
+           city = COALESCE(?, city),
+           state = COALESCE(?, state),
+           zip = COALESCE(?, zip),
+           country = COALESCE(?, country),
+           permanent_street = COALESCE(?, permanent_street),
+           permanent_city = COALESCE(?, permanent_city),
+           permanent_state = COALESCE(?, permanent_state),
+           permanent_zip = COALESCE(?, permanent_zip),
+           permanent_country = COALESCE(?, permanent_country),
+           phone_home = COALESCE(?, phone_home),
+           phone_mobile = COALESCE(?, phone_mobile),
+           phone_work = COALESCE(?, phone_work),
+           email_work = COALESCE(?, email_work),
+           email_other = COALESCE(?, email_other)
        WHERE id = ?`,
-      [...values, existingId]
+      [
+        street1,
+        street2,
+        city,
+        state,
+        zip,
+        country,
+        permanent_street,
+        permanent_city,
+        permanent_state,
+        permanent_zip,
+        permanent_country,
+        phone_home,
+        phone_mobile,
+        phone_work,
+        email_work,
+        email_other,
+        existingId,
+      ]
     );
     return;
   }
   await conn.execute(
     `INSERT INTO employee_contacts (employee_id, street1, street2, city, state, zip, country, permanent_street, permanent_city, permanent_state, permanent_zip, permanent_country, phone_home, phone_mobile, phone_work, email_work, email_other)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [employeeId, ...values]
+    [
+      employeeId,
+      street1,
+      street2,
+      city,
+      state,
+      zip,
+      country,
+      permanent_street,
+      permanent_city,
+      permanent_state,
+      permanent_zip,
+      permanent_country,
+      phone_home,
+      phone_mobile,
+      phone_work,
+      email_work,
+      email_other,
+    ]
   );
 }
 
@@ -611,10 +650,15 @@ async function upsertEmergencies(conn: any, employeeId: number, rowData: Record<
   const ids = (existing || []).map((r: any) => Number(r.id));
   for (let i = 0; i < incoming.length; i++) {
     const e = incoming[i];
+    // Entire emergency slot blank in Excel → leave existing row untouched
     if (!(e.name || e.rel || e.phone)) continue;
     if (ids[i]) {
       await conn.execute(
-        `UPDATE employee_emergency_contacts SET contact_name = ?, relationship = ?, phone = ? WHERE id = ?`,
+        `UPDATE employee_emergency_contacts
+         SET contact_name = COALESCE(?, contact_name),
+             relationship = COALESCE(?, relationship),
+             phone = COALESCE(?, phone)
+         WHERE id = ?`,
         [e.name, e.rel, e.phone, ids[i]]
       );
     } else {
@@ -681,20 +725,42 @@ async function upsertSalary(conn: any, employeeId: number, rowData: Record<strin
   const ctd = nz(rowData.company_transport_deduction);
   const account_number = nz(rowData.account_number);
   const routing_number = nz(rowData.routing_number);
-  if (!(salaryAmount || fuel || ctd || account_number || routing_number)) return;
+  const payFrequency = nz(rowData.salary_frequency);
+  const currency = nz(rowData.salary_currency);
+  const comments = nz(rowData.salary_comments);
+  if (!(salaryAmount || fuel || ctd || account_number || routing_number || payFrequency || currency || comments)) {
+    return;
+  }
 
   const existingId = await firstIdForEmployee(conn, "employee_salaries", employeeId);
-  const payFrequency = nz(rowData.salary_frequency);
-  const currency = nz(rowData.salary_currency) || "PKR";
-  const comments = nz(rowData.salary_comments);
-  const directDeposit = account_number || routing_number ? 1 : 0;
   if (existingId) {
+    // Blank Excel cells keep existing salary / bank fields
+    const directDeposit =
+      account_number || routing_number ? 1 : null;
     await conn.execute(
       `UPDATE employee_salaries
-       SET pay_frequency = ?, currency = ?, amount = ?, comments = ?, direct_deposit = ?,
-           account_number = ?, routing_number = ?, fuel_allowance = ?, company_transport_deduction = ?
+       SET pay_frequency = COALESCE(?, pay_frequency),
+           currency = COALESCE(?, currency),
+           amount = COALESCE(?, amount),
+           comments = COALESCE(?, comments),
+           direct_deposit = COALESCE(?, direct_deposit),
+           account_number = COALESCE(?, account_number),
+           routing_number = COALESCE(?, routing_number),
+           fuel_allowance = COALESCE(?, fuel_allowance),
+           company_transport_deduction = COALESCE(?, company_transport_deduction)
        WHERE id = ?`,
-      [payFrequency, currency, salaryAmount, comments, directDeposit, account_number, routing_number, fuel, ctd, existingId]
+      [
+        payFrequency,
+        currency,
+        salaryAmount,
+        comments,
+        directDeposit,
+        account_number,
+        routing_number,
+        fuel,
+        ctd,
+        existingId,
+      ]
     );
     return;
   }
@@ -706,10 +772,10 @@ async function upsertSalary(conn: any, employeeId: number, rowData: Record<strin
       "Basic",
       null,
       payFrequency,
-      currency,
+      currency || "PKR",
       salaryAmount,
       comments,
-      directDeposit,
+      account_number || routing_number ? 1 : 0,
       account_number,
       null,
       routing_number,
@@ -937,6 +1003,30 @@ export async function GET(req: NextRequest) {
 
     const buf = await wb.xlsx.writeBuffer();
     const filename = isExport ? "employee-list-export.xlsx" : "employee-import-template.xlsx";
+    try {
+      const { appendAdminActivity, backupAdminActivityFile, ADMIN_ACTOR_COOKIE } =
+        await import("@/lib/admin-activity-log");
+      const actor =
+        req.cookies.get(ADMIN_ACTOR_COOKIE)?.value ||
+        req.headers.get("x-login-id") ||
+        "unknown";
+      const buffer = Buffer.from(buf);
+      if (isExport) {
+        await backupAdminActivityFile(filename, buffer, {
+          type: "employee_export",
+          loginId: actor,
+          page: "/admin/employee-list",
+        });
+      }
+      await appendAdminActivity({
+        type: isExport ? "employee_export" : "employee_template_download",
+        loginId: actor,
+        filename,
+        bytes: buffer.length,
+      });
+    } catch {
+      // ignore
+    }
     return new NextResponse(Buffer.from(buf), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -991,6 +1081,33 @@ export async function POST(req: NextRequest) {
       archiveId = Number(ins?.insertId) || null;
     } catch (archiveErr) {
       console.error("Employee import archive failed:", archiveErr);
+    }
+
+    try {
+      const { appendAdminActivity, backupAdminActivityFile, ADMIN_ACTOR_COOKIE } =
+        await import("@/lib/admin-activity-log");
+      const actor =
+        uploadedBy ||
+        req.cookies.get(ADMIN_ACTOR_COOKIE)?.value ||
+        req.headers.get("x-login-id") ||
+        "unknown";
+      await backupAdminActivityFile(originalFilename, fileBuffer, {
+        type: "employee_import",
+        loginId: actor,
+        source,
+        archive_id: archiveId,
+        page: "/admin/employee-list",
+      });
+      await appendAdminActivity({
+        type: "employee_import",
+        loginId: actor,
+        source,
+        archive_id: archiveId,
+        original_filename: originalFilename,
+        bytes: fileBuffer.length,
+      });
+    } catch {
+      // ignore activity logging failures
     }
 
     const wb = new ExcelJS.Workbook();

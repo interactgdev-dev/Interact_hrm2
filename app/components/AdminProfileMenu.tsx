@@ -35,7 +35,25 @@ export function AdminProfileMenu({ onAvatarUpdated }: Props) {
 
   function handleLogout() {
     setMenuOpen(false);
+    const loginId =
+      typeof window !== "undefined"
+        ? String(localStorage.getItem("loginId") || "").trim()
+        : "";
     if (typeof window !== "undefined") localStorage.removeItem("loginId");
+    try {
+      void fetch("/api/internal/admin-activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          events: [{ type: "admin_logout", loginId, page: window.location.pathname }],
+        }),
+        credentials: "same-origin",
+        keepalive: true,
+      });
+      // clear httpOnly actor cookie via activity logout event
+    } catch {
+      // ignore
+    }
     router.push("/auth");
   }
 

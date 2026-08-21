@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminLoginId, verifyAdminPassword } from "@/lib/admin-settings";
+import {
+  ADMIN_ACTOR_COOKIE,
+  appendAdminActivity,
+} from "@/lib/admin-activity-log";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +17,23 @@ export async function POST(req: NextRequest) {
     if (!ok) {
       return NextResponse.json({ success: false, error: "Invalid credentials." }, { status: 401 });
     }
-    return NextResponse.json({ success: true });
+    const res = NextResponse.json({ success: true });
+    res.cookies.set(ADMIN_ACTOR_COOKIE, loginId, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 14,
+    });
+    void appendAdminActivity({
+      type: "admin_login",
+      loginId,
+      ip:
+        req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        req.headers.get("x-real-ip") ||
+        null,
+      ua: req.headers.get("user-agent") || null,
+    });
+    return res;
   } catch (err) {
     return NextResponse.json(
       { success: false, error: err instanceof Error ? err.message : "Login failed" },
