@@ -4,6 +4,7 @@ import {
   calendarDay,
   employeeDisplayName,
   employeeIdValues,
+  flexibleDayRangeFilter,
   formatSqlDateTime,
   idFilter,
   idKey,
@@ -90,18 +91,23 @@ async function enrichBreakRows(
   });
 }
 
+function inCalendarRange(from: string, to: string, dateVal: unknown, startVal: unknown) {
+  const key = calendarDay(dateVal) || calendarDay(startVal);
+  return Boolean(key) && key >= from && key <= to;
+}
+
 export async function mongoListBreaks(opts: ListOpts) {
   const db = await getMongoDb();
   const filter: Document = {};
   if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
-  let rows = await db.collection("breaks").find(filter).sort({ break_start: -1 }).limit(8000).toArray();
   const from = opts.date || opts.fromDate;
   const to = opts.date || opts.toDate;
+  // Date range must be in the query: imported rows are BSON Date, new rows are
+  // SQL strings. Sorting mixed types + limit(8000) dropped today's breaks from admin lists.
+  if (from && to) Object.assign(filter, flexibleDayRangeFilter(from, to, ["date", "break_start"]));
+  let rows = await db.collection("breaks").find(filter).sort({ id: -1 }).limit(8000).toArray();
   if (from && to) {
-    rows = rows.filter((row) => {
-      const key = calendarDay(row.date) || calendarDay(row.break_start);
-      return key >= from && key <= to;
-    });
+    rows = rows.filter((row) => inCalendarRange(from, to, row.date, row.break_start));
   }
   const enriched = await enrichBreakRows(rows, "break_start");
   return enriched.map((row) => ({
@@ -116,19 +122,14 @@ export async function mongoListPrayerBreaks(opts: ListOpts) {
   const db = await getMongoDb();
   const filter: Document = {};
   if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
-  let rows = await db
-    .collection("prayer_breaks")
-    .find(filter)
-    .sort({ prayer_break_start: -1 })
-    .limit(8000)
-    .toArray();
   const from = opts.date || opts.fromDate;
   const to = opts.date || opts.toDate;
   if (from && to) {
-    rows = rows.filter((row) => {
-      const key = calendarDay(row.date) || calendarDay(row.prayer_break_start);
-      return key >= from && key <= to;
-    });
+    Object.assign(filter, flexibleDayRangeFilter(from, to, ["date", "prayer_break_start"]));
+  }
+  let rows = await db.collection("prayer_breaks").find(filter).sort({ id: -1 }).limit(8000).toArray();
+  if (from && to) {
+    rows = rows.filter((row) => inCalendarRange(from, to, row.date, row.prayer_break_start));
   }
   const enriched = await enrichBreakRows(rows, "prayer_break_start");
   return enriched.map((row) => ({
