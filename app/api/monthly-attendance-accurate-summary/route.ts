@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '../../../lib/db';
 import { calendarDay } from '../../../lib/mongo-helpers';
 import { addDaysToDateKey } from '../../../lib/tungsten-punch-pairing';
+import { getDateStringInTimeZone, SERVER_TIMEZONE } from '../../../lib/timezone';
 
 export async function GET(req: NextRequest) {
 	const { searchParams } = new URL(req.url);
@@ -12,6 +13,7 @@ export async function GET(req: NextRequest) {
 	}
 
 	try {
+		const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
 		// Fetch all attendance records for the date range
 		const [rows]: any = await pool.query(`
 			SELECT ea.*, 
@@ -55,6 +57,8 @@ export async function GET(req: NextRequest) {
 				// Weekend skip (0=Sun, 6=Sat)
 				const weekday = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
 				if (weekday === 0 || weekday === 6) return;
+				// Coming days: no Absent/100% until the day arrives
+				if (dateKey > todayKey) return;
 				const dayRecords = byDate[dateKey] || [];
 				let dayDeduction = 0;
 				if (dayRecords.length === 0) {

@@ -14,6 +14,7 @@ import {
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
+import { resolveBillableOvertimeSeconds, isOvertimeAllowed } from "../../../lib/attendance-overtime";
 
 // ...existing code...
 
@@ -121,13 +122,22 @@ export default function MonthlyAttendancePage() {
     return 9;
   }
 
-  // Calculate overtime in seconds (actual - shift duration) — match Monthly Attendance
-  function calculateOvertime(totalSeconds: number, assignedShiftSeconds: number | null): number | null {
-    if (!assignedShiftSeconds || assignedShiftSeconds <= 0) return null;
-    const overtime = totalSeconds - assignedShiftSeconds;
-    // Only count/show overtime if >= 1 hour beyond assigned shift
-    if (overtime >= OVERTIME_MIN_SECONDS) return overtime;
-    return null;
+  // Calculate overtime — only allow_overtime + manual clock-out (not auto) + ≥1h past shift
+  function calculateOvertime(
+    totalSeconds: number,
+    assignedShiftSeconds: number | null,
+    opts?: {
+      allowOvertime?: boolean | number | string | null;
+      autoClockOut?: boolean | number | string | null;
+    },
+  ): number | null {
+    return resolveBillableOvertimeSeconds({
+      totalSeconds,
+      assignedShiftSeconds,
+      allowOvertime: opts?.allowOvertime,
+      autoClockOut: opts?.autoClockOut,
+      minSeconds: OVERTIME_MIN_SECONDS,
+    });
   }
 
   /** Sum OT the same way Monthly Attendance Extra Hours does: floor each day to h/m then add minutes */
@@ -371,8 +381,17 @@ export default function MonthlyAttendancePage() {
             if ((!assignedShiftSeconds || assignedShiftSeconds <= 0) && empShiftMap[record.employee_id]) {
               assignedShiftSeconds = empShiftMap[record.employee_id].seconds;
             }
-            // Calculate overtime using assigned shift seconds
-            const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds);
+            // OT: require allow_overtime + manual clock-out (ignore auto clock-out hours)
+            const allowFromRecord = record.allow_overtime;
+            const allowFromMap = allowOvertimeMap[String(record.employee_id)];
+            const allowOT =
+              allowFromRecord != null && allowFromRecord !== ""
+                ? isOvertimeAllowed(allowFromRecord)
+                : allowFromMap === true;
+            const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds, {
+              allowOvertime: allowOT ? 1 : 0,
+              autoClockOut: record.auto_clock_out,
+            });
             return {
               ...record,
               total_hours: formatDuration(totalSeconds),
@@ -1064,7 +1083,7 @@ export default function MonthlyAttendancePage() {
       const att = attMap[empId];
       // Always show salary from salaryMap (amount, any component)
       const basicSalary = salaryMap[empId];
-      const allowOT = allowOvertimeMap[empId] !== false;
+      const allowOT = allowOvertimeMap[empId] === true;
       const paidHoursPerDay = paidHoursPerDayMap[empId] ?? 9;
       return {
         employeeId: empId,

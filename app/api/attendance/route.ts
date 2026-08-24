@@ -86,7 +86,8 @@ export async function GET(req: NextRequest) {
         e.pseudonym AS pseudonym,
         e.gender AS gender,
         d.name AS department_name,
-        sa.start_time AS shift_start_time
+        sa.start_time AS shift_start_time,
+        sa.allow_overtime AS allow_overtime
       FROM ${ATTENDANCE_TABLE} ea
       LEFT JOIN hrm_employees e ON ea.employee_id = e.id
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
@@ -116,7 +117,8 @@ export async function GET(req: NextRequest) {
         sa.shift_name AS shift_name,
         sa.start_time AS shift_start_time,
         sa.end_time AS shift_end_time,
-        sa.assigned_date AS shift_assigned_date
+        sa.assigned_date AS shift_assigned_date,
+        sa.allow_overtime AS allow_overtime
       FROM ${ATTENDANCE_TABLE} ea
       LEFT JOIN hrm_employees e ON ea.employee_id = e.id
       LEFT JOIN employee_jobs j ON e.id = j.employee_id

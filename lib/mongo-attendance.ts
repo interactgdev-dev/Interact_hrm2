@@ -194,6 +194,7 @@ export async function mongoListAttendance(opts: {
       shift_start_time: sa?.start_time || null,
       shift_end_time: opts.summaryOnly ? undefined : sa?.end_time || null,
       shift_assigned_date: opts.summaryOnly ? undefined : sa?.assigned_date || null,
+      allow_overtime: sa?.allow_overtime ?? null,
       clock_in: sqlDateToIso(row.clock_in),
       clock_out: sqlDateToIso(row.clock_out),
       is_late,
