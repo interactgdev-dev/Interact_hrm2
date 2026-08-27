@@ -25,6 +25,8 @@ export async function ensureAttendanceTable(conn: {
     ["auto_clock_out", "TINYINT(1) NOT NULL DEFAULT 0"],
     ["last_presence_ack_at", "DATETIME NULL"],
     ["late_minutes", "INT NULL DEFAULT NULL"],
+    ["clock_in_ip", "VARCHAR(64) NULL DEFAULT NULL"],
+    ["clock_out_ip", "VARCHAR(64) NULL DEFAULT NULL"],
   ];
   for (const [name, def] of columns) {
     try {

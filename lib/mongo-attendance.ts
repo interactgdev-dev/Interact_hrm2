@@ -70,6 +70,7 @@ export async function mongoClockOut(opts: {
   clockOut: string;
   employeeName?: string | null;
   autoClockOut?: boolean;
+  clockOutIp?: string | null;
 }): Promise<boolean> {
   const open = await mongoFindOpenAttendance(opts.employeeId);
   if (!open?._id) return false;
@@ -83,6 +84,7 @@ export async function mongoClockOut(opts: {
         auto_clock_out: opts.autoClockOut ? 1 : 0,
         last_presence_ack_at: null,
         total_hours: hoursBetween(open.clock_in, formatted),
+        clock_out_ip: opts.clockOutIp ?? null,
         ...(opts.employeeName ? { employee_name: opts.employeeName } : {}),
       },
     },
@@ -95,6 +97,7 @@ export async function mongoClockIn(opts: {
   employeeName?: string | null;
   date: string;
   clockIn: string;
+  clockInIp?: string | null;
 }): Promise<{ ok: true } | { ok: false; error: string; openAttendanceId?: unknown }> {
   const open = await mongoFindOpenAttendance(opts.employeeId);
   if (open) {
@@ -122,6 +125,8 @@ export async function mongoClockIn(opts: {
     clock_out: null,
     total_hours: null,
     late_minutes: lateMinutes,
+    clock_in_ip: opts.clockInIp ?? null,
+    clock_out_ip: null,
     auto_clock_out: 0,
     last_presence_ack_at: null,
   });

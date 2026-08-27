@@ -22,6 +22,7 @@ import {
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
 import { computeClockInLateStatus } from "../../../lib/monthly-attendance-status";
+import { getRequestClientIp } from "../../../lib/client-ip";
 
 // GET: Fetch all attendance records or by employeeId, now with department name
 export async function GET(req: NextRequest) {
@@ -318,11 +319,13 @@ export async function POST(req: NextRequest) {
           employee_name
         );
         if (bioBlock) return bioBlock;
+        const clockInIp = getRequestClientIp(req);
         const result = await mongoClockIn({
           employeeId: employee_id,
           employeeName: employee_name,
           date: formattedDate,
           clockIn: String(clock_in),
+          clockInIp,
         });
         if (!result.ok) {
           return NextResponse.json(
@@ -330,6 +333,11 @@ export async function POST(req: NextRequest) {
             { status: 400 },
           );
         }
+        console.log("Clock-in record inserted successfully", {
+          employee_id,
+          clock_in_ip: clockInIp,
+          driver: "mongo",
+        });
         return NextResponse.json({ success: true, message: "inserted" });
       }
       if (clock_out !== undefined && clock_out !== null) {
@@ -360,15 +368,22 @@ export async function POST(req: NextRequest) {
           );
           if (bioBlock) return bioBlock;
         }
+        const clockOutIp = getRequestClientIp(req);
         const closed = await mongoClockOut({
           employeeId: employee_id,
           clockOut: String(clock_out),
           employeeName: employee_name || null,
           autoClockOut: isAutoClockOut || (openDate !== "" && openDate < todayKey),
+          clockOutIp,
         });
         if (!closed) {
           return NextResponse.json({ success: true, message: "already_closed" });
         }
+        console.log("Clock-out record updated successfully", {
+          employee_id,
+          clock_out_ip: clockOutIp,
+          driver: "mongo",
+        });
         return NextResponse.json({ success: true, message: "updated" });
       }
       return NextResponse.json({ success: false, error: "Missing clock_in or clock_out" }, { status: 400 });
@@ -444,23 +459,26 @@ export async function POST(req: NextRequest) {
         console.warn("Could not compute late_minutes on clock-in:", err);
       }
 
+      const clockInIp = getRequestClientIp(req);
       console.log("Inserting new clock-in record:", {
         employee_id,
         employee_name,
         formattedDate,
         clock_in,
         late_minutes: lateMinutesToStore,
+        clock_in_ip: clockInIp,
       });
       await conn.execute(
         `INSERT INTO ${ATTENDANCE_TABLE}
-           (employee_id, employee_name, date, clock_in, clock_out, total_hours, late_minutes, auto_clock_out, last_presence_ack_at)
-         VALUES (?, ?, ?, ?, NULL, NULL, ?, 0, NULL)`,
+           (employee_id, employee_name, date, clock_in, clock_out, total_hours, late_minutes, clock_in_ip, auto_clock_out, last_presence_ack_at)
+         VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, 0, NULL)`,
         [
           employee_id,
           employee_name || "",
           formattedDate,
           clockInDb,
           lateMinutesToStore,
+          clockInIp,
         ],
       );
       console.log("Clock-in record inserted successfully");
@@ -510,6 +528,7 @@ export async function POST(req: NextRequest) {
       const pending = (pendingRows as any[])[0];
       if (pending) {
         const formattedClockOut = new Date(clock_out).toISOString().slice(0, 19).replace('T', ' ');
+        const clockOutIp = getRequestClientIp(req);
         if (isAutoClockOut) {
           await closeActiveBreaksForEmployee(
             conn,
@@ -524,11 +543,23 @@ export async function POST(req: NextRequest) {
                auto_clock_out = ?,
                last_presence_ack_at = NULL,
                total_hours = LEAST(999.99, ROUND(TIMESTAMPDIFF(MINUTE, clock_in, ?)/60, 2)),
-               employee_name = ?
+               employee_name = ?,
+               clock_out_ip = ?
            WHERE id = ?`,
-          [formattedClockOut, isAutoClockOut ? 1 : 0, formattedClockOut, employee_name || null, pending.id]
+          [
+            formattedClockOut,
+            isAutoClockOut ? 1 : 0,
+            formattedClockOut,
+            employee_name || null,
+            clockOutIp,
+            pending.id,
+          ]
         );
-        console.log("Clock-out record updated successfully");
+        console.log("Clock-out record updated successfully", {
+          employee_id,
+          clock_out_ip: clockOutIp,
+          auto_clock_out: isAutoClockOut,
+        });
       } else {
         console.warn("No pending clock-in found for clock-out");
       }
