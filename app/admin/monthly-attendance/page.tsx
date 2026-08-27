@@ -29,6 +29,7 @@ import {
 import {
   aggregateDayPunches,
   classifyDayAttendance,
+  excessLateMinutesFromRaw,
   lateCountsForStatus,
   STATUS_FIRST_HALF_DAY,
   STATUS_SECOND_HALF_DAY,
@@ -53,7 +54,6 @@ import {
 } from "../../../lib/tungsten-punch-pairing";
 import { AutoClockOutBadge } from "../../components/AutoClockOutBadge";
 import { isAutoClockOutRecord } from "../../../lib/attendance-auto-clock-out";
-import { resolveBillableOvertimeSeconds } from "../../../lib/attendance-overtime";
 import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
 
 type MonthlyAttendanceEmployeeRow = {
@@ -123,22 +123,14 @@ function addDaysToDateKey(dateKey: string, daysToAdd: number) {
   return `${utc.getUTCFullYear()}-${String(utc.getUTCMonth() + 1).padStart(2, "0")}-${String(utc.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** Coming days (after today Asia/Karachi) — no Absent/100% until the day arrives. */
-function isFutureAttendanceDay(dateKey: string) {
-  if (!dateKey) return false;
-  const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-  return dateKey > todayKey;
-}
-
-/** Empty working-day cell: Leave / future --- / past Absent. */
+/** Empty working-day cell: Leave / Absent (match production 10.40). */
 function emptyWorkingDayStatus(
-  dateKey: string,
+  _dateKey: string,
   workingDay: boolean,
   onLeave: boolean,
 ): { statusLabel: string; deduction: string } {
   if (!workingDay) return { statusLabel: "Off", deduction: "" };
   if (onLeave) return { statusLabel: "Leave", deduction: "0%" };
-  if (isFutureAttendanceDay(dateKey)) return { statusLabel: "---", deduction: "0%" };
   return { statusLabel: "Absent", deduction: "100%" };
 }
 
@@ -189,22 +181,15 @@ export default function MonthlyAttendancePage() {
     return shiftSeconds;
   }
 
-  /** OT only if allow_overtime + manual clock-out (not auto) + ≥1h past shift. */
+  /** Extra hours ≥1h past assigned shift (match production 10.40; no auto/allow gate). */
   function calculateOvertime(
     totalSeconds: number,
     assignedShiftSeconds: number | null,
-    record?: {
-      allow_overtime?: boolean | number | string | null;
-      auto_clock_out?: boolean | number | string | null;
-    },
   ): number | null {
-    return resolveBillableOvertimeSeconds({
-      totalSeconds,
-      assignedShiftSeconds,
-      allowOvertime: record?.allow_overtime,
-      autoClockOut: record?.auto_clock_out,
-      minSeconds: OVERTIME_MIN_SECONDS,
-    });
+    if (!assignedShiftSeconds || assignedShiftSeconds <= 0) return null;
+    const overtime = totalSeconds - assignedShiftSeconds;
+    if (overtime >= OVERTIME_MIN_SECONDS) return overtime;
+    return null;
   }
 
   function formatDurationHM(seconds: number | null) {
@@ -390,7 +375,7 @@ export default function MonthlyAttendancePage() {
         ) {
           assignedShiftSeconds = empShiftMap[record.employee_id].seconds;
         }
-        const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds, record);
+        const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds);
         return {
           ...record,
           total_hours: formatDuration(totalSeconds),
@@ -723,18 +708,20 @@ export default function MonthlyAttendancePage() {
     return typeof minutes === "number" && minutes > EXCESS_LATE_SHOW_AFTER_MINUTES;
   }
 
-  /** Resolve display late for a day: same raw minutes as Attendance Summary / DB. */
-  function displayLateForDay(
+  /** Billable late: never on Absent/Half Day; 1h already stripped (match production 10.40). */
+  function billableLateForDay(
     statusLabel: string,
     dayStatusLateMinutes: number,
     recordLateMinutes: number | null | undefined,
   ): number {
     if (!lateCountsForStatus(statusLabel)) return 0;
-    // Prefer stored raw late_minutes (matches attendance summary)
+    // classifyDayAttendance already returns excess; prefer it
+    if (dayStatusLateMinutes > 0) return dayStatusLateMinutes;
+    // DB stores raw minutes from shift start — convert to excess
     if (recordLateMinutes != null && Number(recordLateMinutes) > 0) {
-      return Math.floor(Number(recordLateMinutes));
+      return excessLateMinutesFromRaw(Number(recordLateMinutes));
     }
-    return dayStatusLateMinutes > 0 ? Math.floor(dayStatusLateMinutes) : 0;
+    return 0;
   }
 
   function statusCellText(statusLabel: string, lateMinutes?: number | null) {
@@ -1457,8 +1444,8 @@ export default function MonthlyAttendancePage() {
           statusLabel,
           statusColor,
           deduction,
-          // Absent / Half Day → 0; Tardy → raw late minutes (same as Attendance Summary)
-          lateMinutes: displayLateForDay(
+          // Absent / Half Day → 0; Tardy → minutes after 1h relaxation only
+          lateMinutes: billableLateForDay(
             statusLabel,
             dayStatus.lateMinutes || 0,
             record?.late_minutes != null ? Number(record.late_minutes) : null,

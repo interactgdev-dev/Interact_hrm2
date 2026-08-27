@@ -558,7 +558,7 @@ export function classifyDayAttendance(params: {
     return {
       statusLabel: late.isLate ? "Tardy" : "On Time",
       isLate: late.isLate,
-      lateMinutes: late.isLate ? late.lateMinutes : 0,
+      lateMinutes: late.isLate ? late.excessLateMinutes : 0,
     };
   }
 
@@ -593,7 +593,7 @@ export function classifyDayAttendance(params: {
       return {
         statusLabel: "Tardy",
         isLate: true,
-        lateMinutes: late.lateMinutes,
+        lateMinutes: late.excessLateMinutes,
       };
     }
     return { statusLabel: "On Time", isLate: false, lateMinutes: 0 };
@@ -619,12 +619,12 @@ export function classifyDayAttendance(params: {
     return { statusLabel: STATUS_FIRST_HALF_DAY, isLate: false, lateMinutes: 0 };
   }
 
-  // Full-ish day: then late → Tardy (display = raw minutes past shift start)
+  // Full-ish day: then late → Tardy (billable = raw − 1h relaxation)
   if (late.isLate) {
     return {
       statusLabel: "Tardy",
       isLate: true,
-      lateMinutes: late.lateMinutes,
+      lateMinutes: late.excessLateMinutes,
     };
   }
 
