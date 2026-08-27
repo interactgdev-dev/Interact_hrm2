@@ -1375,7 +1375,7 @@ export default function MonthlyAttendancePage() {
 
     attendance.forEach((record: any) => {
       if (!record.employee_id) return;
-      const empId = record.employee_id;
+      const empId = String(record.employee_id);
       if (!map[empId]) {
         map[empId] = {
           employeeId: empId,
@@ -1485,10 +1485,11 @@ export default function MonthlyAttendancePage() {
     });
     // Only pair Tungsten for expanded cards — pairing everyone on load freezes the UI
     attendanceByEmployeeAll.forEach((emp) => {
-      if (!expandedEmployeeIds[emp.employeeId]) return;
-      const allRecords = recordsByEmployeeId.get(emp.employeeId) || [];
+      const empId = String(emp.employeeId);
+      if (!expandedEmployeeIds[empId]) return;
+      const allRecords = recordsByEmployeeId.get(empId) || [];
       out.set(
-        emp.employeeId,
+        empId,
         buildEmployeeReportSessions(
           emp.employeeName,
           allRecords,

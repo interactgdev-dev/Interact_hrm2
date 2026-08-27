@@ -187,6 +187,8 @@ export async function mongoListAttendance(opts: {
     const { _id, ...rest } = row;
     return {
       ...rest,
+      id: rest.id != null ? rest.id : undefined,
+      employee_id: row.employee_id != null ? String(row.employee_id) : row.employee_id,
       date: day || rest.date,
       employee_name: employeeDisplayName(emp, row.employee_name),
       pseudonym: emp?.pseudonym || null,
