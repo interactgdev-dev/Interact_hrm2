@@ -250,9 +250,15 @@ export function normalizeShiftTimeString(value: unknown): string | null {
 
 export function formatDbClockInForLateCheck(clockIn: unknown): string | null {
   if (!clockIn) return null;
+  if (clockIn instanceof Date && !Number.isNaN(clockIn.getTime())) {
+    return clockIn.toISOString();
+  }
   const raw = String(clockIn).trim();
+  if (!raw || raw === "null" || raw === "undefined") return null;
   if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw;
-  const d = new Date(raw + (raw.includes("Z") ? "" : "Z"));
+  // Avoid locale Date.toString() paths — only accept SQL/ISO-like walls
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return null;
+  const d = new Date(raw.includes("Z") || /[+-]\d{2}:\d{2}$/.test(raw) ? raw : `${raw.replace(" ", "T")}Z`);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }

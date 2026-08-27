@@ -67,14 +67,22 @@
   background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
 }
 
-.btnBreak,
-.btnBreakEnd {
+.btnBreak {
   background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
 }
 
-.btnPrayer,
-.btnPrayerEnd {
+.btnBreakEnd {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
+}
+
+.btnPrayer {
   background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+}
+
+.btnPrayerEnd {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
 }
 
 .statusBox,
@@ -106,6 +114,15 @@
   font-weight: 700;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
+}
+
+/* While break/prayer is running — timer under the red button stays white */
+.summaryValueActive {
+  color: #fff !important;
+}
+
+.summaryLabelActive {
+  color: rgba(255, 255, 255, 0.85) !important;
 }
 
 .summaryExceed {

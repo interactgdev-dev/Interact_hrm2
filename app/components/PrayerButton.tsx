@@ -239,7 +239,13 @@ export function PrayerButton({
           transition: "background 0.2s"
         }}
       >
-        {bioStatusLoading ? "Preparing…" : isPrayerOn ? "End Prayer" : "Start Prayer"}
+        {bioStatusLoading
+          ? "Preparing…"
+          : isPrayerOn
+            ? variant === "todayStatus"
+              ? `End Prayer · ${formatTime(prayerTimer)}`
+              : "End Prayer"
+            : "Start Prayer"}
       </button>
       {isPrayerOn && !isSlack ? (
         <div style={{ marginTop: 12, background: "#fff", borderRadius: 12, boxShadow: "0 2px 8px rgba(142,68,173,0.10)", padding: "8px 12px", minWidth: 120 }}>
@@ -402,10 +408,17 @@ function PrayerTotals({
     return (
       <div className={slackStyles.summaryBox}>
         <div className={slackStyles.summaryBoxInner}>
-          <div className={slackStyles.summaryLabel}>Total Prayer</div>
+          <div className={slackStyles.summaryLabel + (isPrayerOn && variant === "todayStatus" ? ` ${slackStyles.summaryLabelActive}` : "")}>Total Prayer</div>
           <div
-            className={slackStyles.summaryValue}
-            style={displayTotalSeconds > 1800 ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" } : undefined}
+            className={
+              slackStyles.summaryValue +
+              (isPrayerOn && variant === "todayStatus" ? ` ${slackStyles.summaryValueActive}` : "")
+            }
+            style={
+              displayTotalSeconds > 1800 && !(isPrayerOn && variant === "todayStatus")
+                ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" }
+                : undefined
+            }
           >
             {formatDuration(displayTotalSeconds)}
           </div>

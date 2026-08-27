@@ -874,7 +874,13 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
               transition: "background 0.2s"
             }}
           >
-            {verifyPreparing ? "Preparing…" : isOnBreak ? "End Break" : "Start Break"}
+            {verifyPreparing
+              ? "Preparing…"
+              : isOnBreak
+                ? variant === "todayStatus"
+                  ? `End Break · ${formatTime(breakTimer)}`
+                  : "End Break"
+                : "Start Break"}
           </button>
           {isOnBreak && !isSlack ? (
             <div style={{ marginTop: 12, background: "#fff", borderRadius: 12, boxShadow: "0 2px 8px rgba(230,126,34,0.10)", padding: "8px 12px", minWidth: 120 }}>
@@ -1116,10 +1122,17 @@ function BreakSummary({
     return (
       <div className={slackStyles.summaryBox}>
         <div className={slackStyles.summaryBoxInner}>
-          <div className={slackStyles.summaryLabel}>Total Break</div>
+          <div className={slackStyles.summaryLabel + (isOnBreak && variant === "todayStatus" ? ` ${slackStyles.summaryLabelActive}` : "")}>Total Break</div>
           <div
-            className={slackStyles.summaryValue}
-            style={displayTotalSeconds > 3600 ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" } : undefined}
+            className={
+              slackStyles.summaryValue +
+              (isOnBreak && variant === "todayStatus" ? ` ${slackStyles.summaryValueActive}` : "")
+            }
+            style={
+              displayTotalSeconds > 3600 && !(isOnBreak && variant === "todayStatus")
+                ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" }
+                : undefined
+            }
           >
             {formatDuration(displayTotalSeconds)}
           </div>

@@ -55,10 +55,14 @@ async function getActiveTardyContext(employeeId: string) {
   const attendanceDate =
     dateKeyFromRow(row.attendance_date) || clockInDateKey(row.clock_in) || "";
 
-  const storedLate = Number(row.late_minutes);
-  if (Number.isFinite(storedLate) && storedLate > 0) {
+  // Trust stored late_minutes when present (including 0 = on time). Recomputing from
+  // Mongo BSON Date clock_in can falsely flip on-time → late after re-login.
+  const rawLate = row.late_minutes as number | string | null | undefined;
+  const storedLate =
+    rawLate != null && String(rawLate).trim() !== "" ? Number(rawLate) : null;
+  if (storedLate != null && Number.isFinite(storedLate)) {
     return {
-      isLate: true,
+      isLate: storedLate > 0,
       isClockedIn: true,
       attendanceDate,
       attendanceId,
