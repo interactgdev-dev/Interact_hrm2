@@ -5,6 +5,7 @@ import { FaEye, FaEyeSlash } from "react-icons/fa";
 import LayoutDashboard from "../../layout-dashboard";
 import adminStyles from "../admin-page.module.css";
 import styles from "./presence-idle.module.css";
+import PresenceAgentsPanel from "./PresenceAgentsPanel";
 import { toastError, toastSuccess } from "@/lib/app-toast";
 
 type PresenceSettings = {
@@ -206,11 +207,11 @@ export default function PresenceIdleSettingsPage() {
       const agentData = await agentRes.json();
       if (agentData.success && agentData.release) {
         const v = String(agentData.release.version || "").trim();
-        setAgentVersion(v && v !== "0.0.0" ? v : "0.4.0");
+        setAgentVersion(v && v !== "0.0.0" ? v : "0.5.0");
         setAgentHasBinary(!!agentData.release.hasBinary);
         setAgentUpdatedAt(agentData.release.updatedAt || null);
       } else {
-        setAgentVersion("0.4.0");
+        setAgentVersion("0.5.0");
       }
       await loadEmployeesAndDepts();
     } catch {
@@ -756,6 +757,8 @@ export default function PresenceIdleSettingsPage() {
                   </div>
                 </div>
               </div>
+
+              <PresenceAgentsPanel employees={employees} />
 
               <p className={styles.tip}>
                 Tip: for quick testing use the <strong>5 sec</strong> / <strong>30 sec</strong> chips,

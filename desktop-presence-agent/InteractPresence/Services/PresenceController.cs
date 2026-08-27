@@ -65,7 +65,7 @@ public sealed class PresenceController : IDisposable
         _ = Task.Run(async () =>
         {
             await ForceSyncSettingsAsync().ConfigureAwait(false);
-            await AgentUpdater.CheckAndUpdateAsync(_settings).ConfigureAwait(false);
+            await AgentUpdater.CheckAndUpdateAsync(_settings, force: true).ConfigureAwait(false);
         });
     }
 
@@ -168,6 +168,7 @@ public sealed class PresenceController : IDisposable
         {
             _lastSettingsFetch = DateTime.UtcNow;
             var applied = await _api.TryApplyPresenceSettingsAsync(_settings, ct).ConfigureAwait(false);
+            await _api.TrySendHeartbeatAsync(_settings, ct).ConfigureAwait(false);
             if (ct.IsCancellationRequested) return false;
             await WpfApp.Current.Dispatcher.InvokeAsync(() =>
             {
@@ -213,6 +214,7 @@ public sealed class PresenceController : IDisposable
             try
             {
                 var applied = await _api.TryApplyPresenceSettingsAsync(_settings).ConfigureAwait(false);
+                await _api.TrySendHeartbeatAsync(_settings).ConfigureAwait(false);
                 if (applied)
                 {
                     await WpfApp.Current.Dispatcher.InvokeAsync(() =>

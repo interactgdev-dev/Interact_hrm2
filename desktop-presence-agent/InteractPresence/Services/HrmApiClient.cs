@@ -80,6 +80,65 @@ public sealed class HrmApiClient
         SaveQueue(remaining);
     }
 
+    /// <summary>
+    /// Register / heartbeat so admin can see this PC. Applies admin-assigned Employee ID when set.
+    /// </summary>
+    public async Task<bool> TrySendHeartbeatAsync(AppSettings target, CancellationToken ct = default)
+    {
+        try
+        {
+            var url =
+                $"{_settings.HrmBaseUrl.TrimEnd('/')}/api/presence-agent/heartbeat?_={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            var payload = new
+            {
+                machine_id = MachineIdentity.GetOrCreate(),
+                hostname = MachineIdentity.Hostname,
+                windows_user = MachineIdentity.WindowsUser,
+                hrm_base_url = (_settings.HrmBaseUrl ?? "").Trim(),
+                local_employee_id = (target.EmployeeId ?? "").Trim(),
+                agent_version = AgentUpdater.CurrentVersion,
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.TryAddWithoutValidation("Cache-Control", "no-cache, no-store");
+            req.Content = JsonContent.Create(payload);
+            using var res = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            if (!res.IsSuccessStatusCode) return false;
+            var json = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("success", out var ok) || !ok.GetBoolean()) return false;
+
+            string? assignedId = null;
+            if (root.TryGetProperty("assigned_employee_id", out var idEl))
+            {
+                if (idEl.ValueKind == JsonValueKind.String)
+                    assignedId = (idEl.GetString() ?? "").Trim();
+                else if (idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var n))
+                    assignedId = n.ToString();
+            }
+
+            if (string.IsNullOrWhiteSpace(assignedId)) return true;
+
+            var current = (target.EmployeeId ?? "").Trim();
+            if (string.Equals(current, assignedId, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            target.EmployeeId = assignedId;
+            if (root.TryGetProperty("assigned_employee_name", out var nameEl) &&
+                nameEl.ValueKind == JsonValueKind.String)
+            {
+                var name = (nameEl.GetString() ?? "").Trim();
+                if (name.Length > 0) target.EmployeeName = name;
+            }
+            try { target.Save(); } catch { /* ignore */ }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public async Task<bool> TryApplyPresenceSettingsAsync(AppSettings target, CancellationToken ct = default)
     {
         try
