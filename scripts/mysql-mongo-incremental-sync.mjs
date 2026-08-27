@@ -141,22 +141,21 @@ function mysqlConfig() {
 const MONGO_URI = env.MONGO_URI || "mongodb://127.0.0.1:27017";
 const MONGO_DB = env.MONGO_DB || env.DB_NAME || "interact_hrm";
 
-/** MySQL DATE = calendar day string (YYYY-MM-DD). DATETIME/TIMESTAMP from 10.40
- *  already match the UTC components that Asia/Karachi UI expects (same as
- *  storing with a trailing Z). Do NOT attach +05:00 on datetimes — that shifts
- *  display -5h vs production 10.40.
+/** MySQL DATE = calendar day string (YYYY-MM-DD).
+ *  Most DATETIME/TIMESTAMP on 10.40 already store UTC wall digits (clock_in, etc.)
+ *  → treat as `…Z`.
+ *  Exception: zkbio_punch_log.event_time is Asia/Karachi wall in MySQL DATETIME
+ *  (same digits as raw_json.eventTime) → must use +05:00 or T.Punch out breaks.
  *  DATE-only must stay a string — BSON Date at Karachi midnight becomes prior
  *  UTC day and leaves stale string-date duplicates side-by-side. */
-function mysqlWallClockToDate(value) {
+function mysqlUtcWallToDate(value) {
   if (value == null) return null;
   if (value instanceof Date) return value;
   const s = String(value).trim();
   if (!s) return null;
-  // DATE only → keep calendar key as string (matches MySQL DATE semantics)
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     return s;
   }
-  // DATETIME / TIMESTAMP string → treat components as UTC (matches 10.40 UI)
   const m = s.match(
     /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?$/,
   );
@@ -168,7 +167,27 @@ function mysqlWallClockToDate(value) {
   return Number.isNaN(fallback.getTime()) ? s : fallback;
 }
 
-function convertValue(value) {
+/** ZKBio device time: Karachi wall string → true UTC instant. */
+function mysqlKarachiWallToDate(value) {
+  if (value == null) return null;
+  if (value instanceof Date) return value;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return s;
+  }
+  const m = s.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?$/,
+  );
+  if (m) {
+    const d = new Date(`${m[1]}T${m[2]}+05:00`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const fallback = new Date(s);
+  return Number.isNaN(fallback.getTime()) ? s : fallback;
+}
+
+function convertValue(value, table, field) {
   if (value == null) return null;
   if (typeof value === "bigint") {
     if (value <= Number.MAX_SAFE_INTEGER && value >= Number.MIN_SAFE_INTEGER) {
@@ -184,7 +203,10 @@ function convertValue(value) {
       /^\d{4}-\d{2}-\d{2}/.test(value) &&
       (value.length === 10 || value.includes(":") || value.includes("T"))
     ) {
-      return mysqlWallClockToDate(value);
+      if (table === "zkbio_punch_log" && field === "event_time") {
+        return mysqlKarachiWallToDate(value);
+      }
+      return mysqlUtcWallToDate(value);
     }
   }
   if (typeof value === "object" && value.constructor?.name === "Decimal") {
@@ -197,10 +219,10 @@ function convertValue(value) {
   return value;
 }
 
-function convertRow(row) {
+function convertRow(row, table) {
   const out = {};
   for (const [key, value] of Object.entries(row)) {
-    out[key] = coerceKeyValue(key, convertValue(value));
+    out[key] = coerceKeyValue(key, convertValue(value, table, key));
   }
   return out;
 }
@@ -343,7 +365,7 @@ async function syncTable(mysqlConn, mongoDb, table) {
       [...whereParams, BATCH, offset],
     );
     if (!rows.length) break;
-    const docs = rows.map(convertRow);
+    const docs = rows.map((row) => convertRow(row, table));
 
     if (idOk || UPSERT_KEYS[table]) {
       const ops = docs.map((doc) => ({
