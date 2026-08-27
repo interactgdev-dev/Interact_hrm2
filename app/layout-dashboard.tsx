@@ -4,7 +4,7 @@ import { useRouter, usePathname } from "next/navigation";
 import styles from "./layout-dashboard.module.css";
 import "./globals.css";
 import "./dashboard/nexatech-theme.module.css";
-import { FaTachometerAlt, FaUserShield, FaCalendarAlt, FaClock, FaUserPlus, FaIdBadge, FaListAlt, FaPray, FaClipboardList, FaBuilding, FaCog, FaUser, FaChartBar, FaKey, FaCalendarCheck, FaEdit, FaCoffee, FaFileAlt, FaDollarSign, FaExchangeAlt, FaTicketAlt, FaFolderOpen, FaDesktop, FaImages } from "react-icons/fa";
+import { FaTachometerAlt, FaUserShield, FaCalendarAlt, FaClock, FaUserPlus, FaIdBadge, FaListAlt, FaClipboardList, FaBuilding, FaCog, FaUser, FaChartBar, FaKey, FaCalendarCheck, FaEdit, FaCoffee, FaFileAlt, FaDollarSign, FaExchangeAlt, FaTicketAlt, FaFolderOpen, FaDesktop, FaImages } from "react-icons/fa";
 import { FiChevronDown, FiChevronRight } from "react-icons/fi";
 import { EmployeeAvatar } from "./components/EmployeeAvatar";
 import { AdminProfileMenu } from "./components/AdminProfileMenu";
@@ -47,9 +47,7 @@ const sidebarLinks = [
 				name: "Attendance",
 				icon: <FaClipboardList />,
 				dropdown: [
-					{ name: "Attendance Summary", path: "/attendance-summary", icon: <FaClipboardList /> },
-					{ name: "Break Summary", path: "/break-summary", icon: <FaCoffee /> },
-					{ name: "Prayer Break Summary", path: "/prayer-summary", icon: <FaPray /> },
+					{ name: "Summaries", path: "/summaries", icon: <FaClipboardList /> },
 					{ name: "Manage Attendance", path: "/admin/manage-attendance", icon: <FaClipboardList /> },
 					{ name: "Manage Breaks", path: "/admin/manage-breaks", icon: <FaCoffee /> },
 					{ name: "Monthly Attendance", path: "/admin/monthly-attendance", icon: <FaFileAlt /> },
