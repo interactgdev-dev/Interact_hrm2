@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   listPresenceAgents,
+  queueAgentCommand,
   setAgentAssignedEmployee,
+  type AgentCommand,
 } from "@/lib/presence-agents";
 
 export const runtime = "nodejs";
@@ -63,6 +65,46 @@ export async function PATCH(req: NextRequest) {
       {
         success: false,
         error: err instanceof Error ? err.message : "Update failed",
+      },
+      { status: 400 }
+    );
+  }
+}
+
+/** Queue restart/exit for one agent or all registered agents. */
+export async function POST(req: NextRequest) {
+  try {
+    const body = (await req.json()) as {
+      machine_id?: string;
+      all?: boolean;
+      command?: AgentCommand;
+    };
+    const command = body.command;
+    if (command !== "restart" && command !== "exit") {
+      return NextResponse.json(
+        { success: false, error: "command must be restart or exit" },
+        { status: 400 }
+      );
+    }
+    const count = await queueAgentCommand({
+      machineId: body.machine_id,
+      all: !!body.all,
+      command,
+    });
+    return NextResponse.json({
+      success: true,
+      queued: count,
+      command,
+      message:
+        command === "exit"
+          ? `Exit queued for ${count} agent(s). Takes effect within ~15s.`
+          : `Restart queued for ${count} agent(s). Takes effect within ~15s.`,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: err instanceof Error ? err.message : "Command failed",
       },
       { status: 400 }
     );

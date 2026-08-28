@@ -15,6 +15,12 @@ internal static class AgentUpdater
     private static DateTime _lastCheckUtc = DateTime.MinValue;
     private static bool _updateInFlight;
 
+    private static string UpdateStatePath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "InteractPresence",
+            "update-state.json");
+
     private static HttpClient CreateHttp()
     {
         var handler = new HttpClientHandler
@@ -42,10 +48,11 @@ internal static class AgentUpdater
     {
         if (_updateInFlight) return;
         if (!force && (DateTime.UtcNow - _lastCheckUtc).TotalMinutes < 10) return;
-        _lastCheckUtc = DateTime.UtcNow;
 
         var baseUrl = (settings.HrmBaseUrl ?? "").TrimEnd('/');
         if (string.IsNullOrWhiteSpace(baseUrl)) return;
+
+        _lastCheckUtc = DateTime.UtcNow;
 
         try
         {
@@ -62,12 +69,16 @@ internal static class AgentUpdater
                 : "";
             if (!IsNewer(remoteVer, CurrentVersion)) return;
 
+            var state = LoadUpdateState();
+            if (ShouldSkipDueToCooldown(state, remoteVer)) return;
+
             var downloadPath = root.TryGetProperty("downloadPath", out var dp)
                 ? (dp.GetString() ?? "/api/presence-agent/download")
                 : "/api/presence-agent/download";
             if (!downloadPath.StartsWith('/')) downloadPath = "/" + downloadPath;
 
             _updateInFlight = true;
+            RecordAttempt(state, remoteVer);
             DesktopNotify.Success($"Updating agent to {remoteVer}…");
             await DownloadAndApplyAsync($"{baseUrl}{downloadPath}", remoteVer, ct)
                 .ConfigureAwait(false);
@@ -76,6 +87,28 @@ internal static class AgentUpdater
         {
             _updateInFlight = false;
         }
+    }
+
+    private static bool ShouldSkipDueToCooldown(UpdateState state, string remoteVer)
+    {
+        if (!string.Equals(state.LastRemoteVersion, remoteVer, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (state.AttemptCount < 3) return false;
+        if (!state.LastAttemptUtc.HasValue) return false;
+        return (DateTime.UtcNow - state.LastAttemptUtc.Value).TotalHours < 6;
+    }
+
+    private static void RecordAttempt(UpdateState state, string remoteVer)
+    {
+        if (string.Equals(state.LastRemoteVersion, remoteVer, StringComparison.OrdinalIgnoreCase))
+            state.AttemptCount++;
+        else
+        {
+            state.LastRemoteVersion = remoteVer;
+            state.AttemptCount = 1;
+        }
+        state.LastAttemptUtc = DateTime.UtcNow;
+        SaveUpdateState(state);
     }
 
     private static bool IsNewer(string remote, string local)
@@ -92,6 +125,21 @@ internal static class AgentUpdater
         for (var i = 0; i < parts.Length; i++)
             if (string.IsNullOrWhiteSpace(parts[i])) parts[i] = "0";
         return string.Join(".", parts.Take(4));
+    }
+
+    private static string? ReadExeFileVersion(string path)
+    {
+        try
+        {
+            var vi = FileVersionInfo.GetVersionInfo(path);
+            var raw = (vi.FileVersion ?? vi.ProductVersion ?? "").Trim();
+            if (raw.Length == 0) return null;
+            return Normalize(raw);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static async Task DownloadAndApplyAsync(string url, string version, CancellationToken ct)
@@ -129,7 +177,21 @@ internal static class AgentUpdater
             return;
         }
 
-        // cmd waits, replaces locked exe after we exit, then restarts
+        var downloadedVer = ReadExeFileVersion(newPath);
+        if (downloadedVer == null || !IsNewer(downloadedVer, CurrentVersion))
+        {
+            try { File.Delete(newPath); } catch { /* ignore */ }
+            _updateInFlight = false;
+            DesktopNotify.Failed(
+                "Update skipped — downloaded file is not newer than this install. Ask admin to republish the correct exe.");
+            return;
+        }
+
+        var state = LoadUpdateState();
+        state.LastAppliedVersion = version;
+        state.LastAttemptUtc = DateTime.UtcNow;
+        SaveUpdateState(state);
+
         var bat = $"""
 @echo off
 timeout /t 2 /nobreak >nul
@@ -154,5 +216,42 @@ del /f /q "%~f0"
         {
             System.Windows.Application.Current.Shutdown();
         });
+    }
+
+    private static UpdateState LoadUpdateState()
+    {
+        try
+        {
+            if (!File.Exists(UpdateStatePath)) return new UpdateState();
+            var json = File.ReadAllText(UpdateStatePath);
+            return JsonSerializer.Deserialize<UpdateState>(json) ?? new UpdateState();
+        }
+        catch
+        {
+            return new UpdateState();
+        }
+    }
+
+    private static void SaveUpdateState(UpdateState state)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(UpdateStatePath)!;
+            Directory.CreateDirectory(dir);
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(UpdateStatePath, json);
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
+    private sealed class UpdateState
+    {
+        public string? LastRemoteVersion { get; set; }
+        public string? LastAppliedVersion { get; set; }
+        public DateTime? LastAttemptUtc { get; set; }
+        public int AttemptCount { get; set; }
     }
 }

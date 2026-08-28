@@ -109,6 +109,29 @@ export default function PresenceAgentsPanel({ employees }: Props) {
     return () => clearInterval(t);
   }, [load]);
 
+  async function queueCommand(command: "restart" | "exit", opts?: { machineId?: string; all?: boolean }) {
+    try {
+      const res = await fetch("/api/admin/presence-agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command,
+          all: opts?.all ?? false,
+          machine_id: opts?.machineId,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        toastError(data.error || "Command failed");
+        return;
+      }
+      toastSuccess(data.message || "Command queued");
+      await load();
+    } catch {
+      toastError("Network error sending command");
+    }
+  }
+
   async function saveAssignment(machineId: string) {
     setSavingId(machineId);
     try {
@@ -145,9 +168,27 @@ export default function PresenceAgentsPanel({ employees }: Props) {
             here — no need to visit each PC. Agents self-update when you publish a newer exe.
           </p>
         </div>
-        <button type="button" className={styles.chip} onClick={() => void load()}>
-          Refresh
-        </button>
+        <div className={styles.agentsHeaderActions}>
+          <button type="button" className={styles.chip} onClick={() => void load()}>
+            Refresh
+          </button>
+          <button
+            type="button"
+            className={styles.chip}
+            disabled={!summary?.total}
+            onClick={() => void queueCommand("restart", { all: true })}
+          >
+            Restart all
+          </button>
+          <button
+            type="button"
+            className={`${styles.chip} ${styles.chipDanger}`}
+            disabled={!summary?.total}
+            onClick={() => void queueCommand("exit", { all: true })}
+          >
+            Exit all
+          </button>
+        </div>
       </div>
 
       {summary ? (
@@ -239,14 +280,30 @@ export default function PresenceAgentsPanel({ employees }: Props) {
                   <td>{formatWhen(a.lastSeenAt)}</td>
                   <td>{a.lastIp || "—"}</td>
                   <td>
-                    <button
-                      type="button"
-                      className={styles.chip}
-                      disabled={savingId === a.machineId}
-                      onClick={() => void saveAssignment(a.machineId)}
-                    >
-                      {savingId === a.machineId ? "Saving…" : "Save"}
-                    </button>
+                    <div className={styles.rowActions}>
+                      <button
+                        type="button"
+                        className={styles.chip}
+                        disabled={savingId === a.machineId}
+                        onClick={() => void saveAssignment(a.machineId)}
+                      >
+                        {savingId === a.machineId ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.chip}
+                        onClick={() => void queueCommand("restart", { machineId: a.machineId })}
+                      >
+                        Restart
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.chip} ${styles.chipDanger}`}
+                        onClick={() => void queueCommand("exit", { machineId: a.machineId })}
+                      >
+                        Exit
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

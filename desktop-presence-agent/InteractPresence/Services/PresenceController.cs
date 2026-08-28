@@ -65,7 +65,8 @@ public sealed class PresenceController : IDisposable
         _ = Task.Run(async () =>
         {
             await ForceSyncSettingsAsync().ConfigureAwait(false);
-            await AgentUpdater.CheckAndUpdateAsync(_settings, force: true).ConfigureAwait(false);
+            // Do not force-update on every start — that caused restart loops after a bad publish.
+            await AgentUpdater.CheckAndUpdateAsync(_settings).ConfigureAwait(false);
         });
     }
 
@@ -168,7 +169,8 @@ public sealed class PresenceController : IDisposable
         {
             _lastSettingsFetch = DateTime.UtcNow;
             var applied = await _api.TryApplyPresenceSettingsAsync(_settings, ct).ConfigureAwait(false);
-            await _api.TrySendHeartbeatAsync(_settings, ct).ConfigureAwait(false);
+            var hb = await _api.TrySendHeartbeatAsync(_settings, ct).ConfigureAwait(false);
+            await HandleRemoteCommandAsync(hb?.Command).ConfigureAwait(false);
             if (ct.IsCancellationRequested) return false;
             await WpfApp.Current.Dispatcher.InvokeAsync(() =>
             {
@@ -196,6 +198,26 @@ public sealed class PresenceController : IDisposable
         }
     }
 
+    private async Task HandleRemoteCommandAsync(string? command)
+    {
+        if (string.IsNullOrWhiteSpace(command)) return;
+        var c = command.Trim().ToLowerInvariant();
+        await WpfApp.Current.Dispatcher.InvokeAsync(() =>
+        {
+            if (c == "restart")
+            {
+                StatusChanged?.Invoke("Admin requested restart…");
+                AgentCommands.Restart();
+            }
+            else if (c == "exit")
+            {
+                StatusChanged?.Invoke("Admin requested exit…");
+                Stop();
+                AgentCommands.Exit();
+            }
+        });
+    }
+
     private bool IsEmployeeAllowed()
     {
         var list = _settings.EnabledEmployeeIds;
@@ -214,7 +236,8 @@ public sealed class PresenceController : IDisposable
             try
             {
                 var applied = await _api.TryApplyPresenceSettingsAsync(_settings).ConfigureAwait(false);
-                await _api.TrySendHeartbeatAsync(_settings).ConfigureAwait(false);
+                var hb = await _api.TrySendHeartbeatAsync(_settings).ConfigureAwait(false);
+                await HandleRemoteCommandAsync(hb?.Command).ConfigureAwait(false);
                 if (applied)
                 {
                     await WpfApp.Current.Dispatcher.InvokeAsync(() =>

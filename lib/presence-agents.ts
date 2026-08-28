@@ -52,6 +52,8 @@ export async function ensurePresenceAgentsTable(): Promise<void> {
       last_ip varchar(45) DEFAULT NULL,
       first_seen_at datetime DEFAULT NULL,
       last_seen_at datetime DEFAULT NULL,
+      pending_command varchar(32) DEFAULT NULL,
+      command_issued_at datetime DEFAULT NULL,
       created_at timestamp NOT NULL DEFAULT current_timestamp(),
       updated_at timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
       PRIMARY KEY (id),
@@ -60,6 +62,20 @@ export async function ensurePresenceAgentsTable(): Promise<void> {
       KEY idx_presence_agents_assigned (assigned_employee_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  try {
+    await pool.execute(
+      `ALTER TABLE ${TABLE} ADD COLUMN pending_command varchar(32) DEFAULT NULL`
+    );
+  } catch {
+    /* already exists */
+  }
+  try {
+    await pool.execute(
+      `ALTER TABLE ${TABLE} ADD COLUMN command_issued_at datetime DEFAULT NULL`
+    );
+  } catch {
+    /* already exists */
+  }
 }
 
 export function agentHealthFromLastSeen(lastSeen: Date | string | null): AgentHealth {
@@ -110,9 +126,12 @@ export type HeartbeatInput = {
   clientIp?: string | null;
 };
 
+export type AgentCommand = "restart" | "exit";
+
 export type HeartbeatResult = {
   assignedEmployeeId: string | null;
   assignedEmployeeName: string | null;
+  command: AgentCommand | null;
 };
 
 export async function upsertAgentHeartbeat(
@@ -159,6 +178,7 @@ export async function upsertAgentHeartbeat(
 
   const [rows] = await pool.execute(
     `SELECT pa.assigned_employee_id,
+            pa.pending_command,
             e.first_name AS assigned_first_name,
             e.last_name AS assigned_last_name
      FROM ${TABLE} pa
@@ -169,6 +189,7 @@ export async function upsertAgentHeartbeat(
   );
   const list = rows as {
     assigned_employee_id: string | null;
+    pending_command: string | null;
     assigned_first_name: string | null;
     assigned_last_name: string | null;
   }[];
@@ -177,7 +198,18 @@ export async function upsertAgentHeartbeat(
   const assignedEmployeeName =
     [row?.assigned_first_name, row?.assigned_last_name].filter(Boolean).join(" ").trim() ||
     null;
-  return { assignedEmployeeId, assignedEmployeeName };
+
+  let command: AgentCommand | null = null;
+  const rawCmd = (row?.pending_command ?? "").trim().toLowerCase();
+  if (rawCmd === "restart" || rawCmd === "exit") {
+    command = rawCmd;
+    await pool.execute(
+      `UPDATE ${TABLE} SET pending_command = NULL, command_issued_at = NULL WHERE machine_id = ?`,
+      [machineId]
+    );
+  }
+
+  return { assignedEmployeeId, assignedEmployeeName, command };
 }
 
 export async function listPresenceAgents(): Promise<PresenceAgentRow[]> {
@@ -236,4 +268,33 @@ function trimOrNull(v: string | null | undefined, max: number): string | null {
   const s = String(v ?? "").trim();
   if (!s) return null;
   return s.length > max ? s.slice(0, max) : s;
+}
+
+export async function queueAgentCommand(input: {
+  machineId?: string | null;
+  all?: boolean;
+  command: AgentCommand;
+}): Promise<number> {
+  await ensurePresenceAgentsTable();
+  const cmd = input.command;
+  if (cmd !== "restart" && cmd !== "exit") {
+    throw new Error("command must be restart or exit");
+  }
+  const now = new Date();
+  if (input.all) {
+    const [res] = await pool.execute(
+      `UPDATE ${TABLE} SET pending_command = ?, command_issued_at = ?`,
+      [cmd, now]
+    );
+    return (res as { affectedRows?: number }).affectedRows ?? 0;
+  }
+  const mid = String(input.machineId ?? "").trim();
+  if (!mid) throw new Error("machine_id required unless all=true");
+  const [res] = await pool.execute(
+    `UPDATE ${TABLE} SET pending_command = ?, command_issued_at = ? WHERE machine_id = ?`,
+    [cmd, now, mid]
+  );
+  const n = (res as { affectedRows?: number }).affectedRows ?? 0;
+  if (n === 0) throw new Error("Agent not found");
+  return n;
 }
