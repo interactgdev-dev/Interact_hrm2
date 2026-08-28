@@ -28,6 +28,10 @@ const ACTION_LABELS: Record<BiometricAction, string> = {
   break_end: "End Break",
   prayer_start: "Start Prayer",
   prayer_end: "End Prayer",
+  refreshment_start: "Start Refreshment",
+  refreshment_end: "End Refreshment",
+  meeting_start: "Start Meeting",
+  meeting_end: "End Meeting",
 };
 
 export type VerifyModalCloseReason = "cancel" | "success";

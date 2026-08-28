@@ -23,6 +23,7 @@ import {
 } from "../../../lib/timezone";
 import { computeClockInLateStatus } from "../../../lib/monthly-attendance-status";
 import { getRequestClientIp } from "../../../lib/client-ip";
+import { breakTypeLabel } from "@/lib/session-break-config";
 
 // GET: Fetch all attendance records or by employeeId, now with department name
 export async function GET(req: NextRequest) {
@@ -271,6 +272,38 @@ async function checkActiveBreaks(conn: any, employee_id: string) {
       console.error('Error checking prayer_breaks table:', error);
     }
 
+    try {
+      const [refreshmentRows] = await conn.execute(
+        `SELECT refreshment_break_start, refreshment_break_end
+         FROM refreshment_breaks
+         WHERE employee_id = ? AND refreshment_break_end IS NULL
+         ORDER BY refreshment_break_start DESC LIMIT 1`,
+        [Number(employee_id)]
+      );
+      const refreshmentRecord = (refreshmentRows as any[])[0];
+      if (refreshmentRecord?.refreshment_break_start && !refreshmentRecord.refreshment_break_end) {
+        return { hasActiveBreak: true, breakType: 'refreshment_break' };
+      }
+    } catch (error) {
+      console.error('Error checking refreshment_breaks table:', error);
+    }
+
+    try {
+      const [meetingRows] = await conn.execute(
+        `SELECT meeting_break_start, meeting_break_end
+         FROM meeting_breaks
+         WHERE employee_id = ? AND meeting_break_end IS NULL
+         ORDER BY meeting_break_start DESC LIMIT 1`,
+        [Number(employee_id)]
+      );
+      const meetingRecord = (meetingRows as any[])[0];
+      if (meetingRecord?.meeting_break_start && !meetingRecord.meeting_break_end) {
+        return { hasActiveBreak: true, breakType: 'meeting_break' };
+      }
+    } catch (error) {
+      console.error('Error checking meeting_breaks table:', error);
+    }
+
     return { hasActiveBreak: false, breakType: null };
   } catch (error) {
     console.error('Error checking breaks:', error);
@@ -344,7 +377,7 @@ export async function POST(req: NextRequest) {
         let isAutoClockOut = Boolean(auto_clock_out);
         const breakStatus = await mongoHasActiveBreak(employee_id);
         if (!isAutoClockOut && breakStatus.hasActiveBreak) {
-          const breakName = breakStatus.breakType === "prayer_break" ? "Prayer Break" : "Break";
+          const breakName = breakTypeLabel(breakStatus.breakType);
           return NextResponse.json(
             {
               success: false,
@@ -507,7 +540,7 @@ export async function POST(req: NextRequest) {
       const { hasActiveBreak, breakType } = await checkActiveBreaks(conn, employee_id);
       
       if (hasActiveBreak) {
-        const breakName = breakType === 'prayer_break' ? 'Prayer Break' : 'Break';
+        const breakName = breakTypeLabel(breakType);
         console.warn(`Clock-out prevented: ${breakName} is active for employee ${employee_id}`);
         return NextResponse.json(
           { 

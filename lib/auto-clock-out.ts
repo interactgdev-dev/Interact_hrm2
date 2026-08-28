@@ -66,6 +66,45 @@ export async function closeActiveBreaksForEmployee(
       [endTimeFormatted, duration, openPrayer.id],
     );
   }
+
+  const closeOpenSessionBreak = async (
+    table: "refreshment_breaks" | "meeting_breaks",
+    startCol: string,
+    endCol: string,
+    durationCol: string,
+  ) => {
+    const [rows] = (await conn.execute(
+      `SELECT id, ${startCol} FROM ${table} WHERE employee_id = ? AND ${endCol} IS NULL ORDER BY ${startCol} DESC LIMIT 1`,
+      [Number(eid)],
+    )) as [{ id: number; [key: string]: string | number }[], unknown];
+    const openRow = rows[0];
+    const startValue = openRow?.[startCol];
+    if (startValue) {
+      const startMs = new Date(`${startValue}Z`).getTime();
+      const duration =
+        Number.isFinite(startMs) && Number.isFinite(endMs)
+          ? Math.max(0, (endMs - startMs) / 1000)
+          : 0;
+      await conn.execute(`UPDATE ${table} SET ${endCol} = ?, ${durationCol} = ? WHERE id = ?`, [
+        endTimeFormatted,
+        duration,
+        openRow.id,
+      ]);
+    }
+  };
+
+  await closeOpenSessionBreak(
+    "refreshment_breaks",
+    "refreshment_break_start",
+    "refreshment_break_end",
+    "refreshment_break_duration",
+  );
+  await closeOpenSessionBreak(
+    "meeting_breaks",
+    "meeting_break_start",
+    "meeting_break_end",
+    "meeting_break_duration",
+  );
 }
 
 export async function performAutoClockOut(

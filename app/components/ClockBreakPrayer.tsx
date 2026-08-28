@@ -7,6 +7,13 @@ import slackStylesDefault from './clock-widgets-slack.module.css';
 import todayStyles from './clock-widgets-today.module.css';
 import modalStyles from './clock-break-prayer-modals.module.css';
 import { PrayerButton } from "./PrayerButton";
+import { SessionBreakButton } from "./SessionBreakButton";
+import {
+  REFRESHMENT_BREAK_CONFIG,
+  MEETING_BREAK_CONFIG,
+  breakTypeLabel,
+} from "@/lib/session-break-config";
+import { useSessionBreakWidget } from "@/lib/useSessionBreakWidget";
 import {
   clearClockSyncInterval,
   forceSyncClockState,
@@ -20,6 +27,7 @@ import {
   forceSyncPrayerBreakState,
   clearPrayerBreakSyncInterval,
 } from "../../lib/ui-sync/forceSyncPrayerBreakState";
+import { clearSessionBreakSyncInterval } from "../../lib/ui-sync/forceSyncSessionBreakState";
 import { getDateStringInTimeZone } from "../../lib/timezone";
 import { AutoPresencePrompt } from "./AutoPresencePrompt";
 import {
@@ -28,6 +36,8 @@ import {
   notifyAttendanceDataChanged,
   notifyBreakDataChanged,
   notifyPrayerDataChanged,
+  notifyRefreshmentDataChanged,
+  notifyMeetingDataChanged,
 } from "../../lib/ui-sync/breakPrayerDataRefresh";
 import { useBiometricGate, type VerifyModalCloseReason } from "../../lib/useBiometricGate";
 import type { BiometricAction } from "@/lib/face-types";
@@ -107,6 +117,9 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
   const [prayerBreakIntervalId, setPrayerBreakIntervalId] = React.useState<NodeJS.Timeout | null>(null);
   const [prayerBreakTimer, setPrayerBreakTimer] = React.useState(0);
   const [loadingPrayerBreak, setLoadingPrayerBreak] = React.useState(true);
+
+  const refreshmentWidget = useSessionBreakWidget(employeeId, REFRESHMENT_BREAK_CONFIG);
+  const meetingWidget = useSessionBreakWidget(employeeId, MEETING_BREAK_CONFIG);
   
   // Error and confirmation states
   const [fadeIn, setFadeIn] = React.useState(false);
@@ -316,9 +329,12 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
       if (action === "prayer_end") {
         if (!prayerEndAtRef.current) prayerEndAtRef.current = new Date();
         pausePrayerTimerForVerify();
+        return;
       }
+      refreshmentWidget.handleVerifyOpen(action);
+      meetingWidget.handleVerifyOpen(action);
     },
-    [pauseBreakTimerForVerify, pausePrayerTimerForVerify]
+    [pauseBreakTimerForVerify, pausePrayerTimerForVerify, refreshmentWidget, meetingWidget]
   );
 
   const handleVerifyClose = React.useCallback(
@@ -341,8 +357,10 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
         // Stay paused until prayer end API succeeds or user cancels.
         return;
       }
+      refreshmentWidget.handleVerifyClose(action, reason === "cancel" ? "cancel" : "success");
+      meetingWidget.handleVerifyClose(action, reason === "cancel" ? "cancel" : "success");
     },
-    [resumeBreakTimerAfterVerify, resumePrayerTimerAfterVerify]
+    [resumeBreakTimerAfterVerify, resumePrayerTimerAfterVerify, refreshmentWidget, meetingWidget]
   );
 
   const biometricGateOptions = React.useMemo(
@@ -426,6 +444,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
       setPrayerBreakIntervalId,
       setPrayerStart
     );
+    refreshmentWidget.forceSync();
+    meetingWidget.forceSync();
     
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -443,6 +463,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
             setPrayerStart
           );
         }
+        if (!refreshmentWidget.breakTimerPaused) refreshmentWidget.forceSync();
+        if (!meetingWidget.breakTimerPaused) meetingWidget.forceSync();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -454,6 +476,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
       if (prayerBreakIntervalId) clearInterval(prayerBreakIntervalId);
       clearBreakSyncInterval(employeeId);
       clearPrayerBreakSyncInterval(employeeId);
+      clearSessionBreakSyncInterval(employeeId, REFRESHMENT_BREAK_CONFIG);
+      clearSessionBreakSyncInterval(employeeId, MEETING_BREAK_CONFIG);
       if (breakPauseTickRef.current) clearInterval(breakPauseTickRef.current);
       if (prayerPauseTickRef.current) clearInterval(prayerPauseTickRef.current);
     };
@@ -506,6 +530,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           setPrayerBreakIntervalId,
           setPrayerStart
         );
+        refreshmentWidget.forceSync();
+        meetingWidget.forceSync();
         notifyAttendanceDataChanged();
         toastSuccess("You are now clocked in.", "Clock in successful");
       } else if (res.status === 403 && isBiometricGateError(data.error)) {
@@ -537,7 +563,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
       const data = await res.json();
 
       if (data?.hasActiveBreak) {
-        const activeBreakType = data.breakType === 'prayer_break' ? 'Prayer Break' : 'Break';
+        const activeBreakType = breakTypeLabel(data.breakType);
         setActiveBreakTitle(`Active ${activeBreakType}`);
         setActiveBreakErrorMsg(`There Is An Active ${activeBreakType}. Please End Your ${activeBreakType} First.`);
         setShowActiveBreakModal(true);
@@ -584,6 +610,10 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
         setIsPrayerOn(false);
         setPrayerBreakTimer(0);
         setPrayerStart(null);
+        refreshmentWidget.clearServerInterval();
+        refreshmentWidget.setIsOn(false);
+        meetingWidget.clearServerInterval();
+        meetingWidget.setIsOn(false);
         forceSyncClockState(employeeId, setIsClockedIn, setTimer, setLoadingAttendance, setIntervalId);
         forceSyncBreakState(employeeId, setIsOnBreak, setBreakTimer, setLoadingBreak, setBreakIntervalId);
         forceSyncPrayerBreakState(
@@ -594,6 +624,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           setPrayerBreakIntervalId,
           setPrayerStart
         );
+        refreshmentWidget.forceSync();
+        meetingWidget.forceSync();
         notifyAttendanceDataChanged();
         toastSuccess("You have been clocked out.", "Clock out successful");
       } else if (res.status === 403 && isBiometricGateError(data.error)) {
@@ -742,6 +774,10 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
         setIsPrayerOn(false);
         setPrayerBreakTimer(0);
         setPrayerStart(null);
+        refreshmentWidget.clearServerInterval();
+        refreshmentWidget.setIsOn(false);
+        meetingWidget.clearServerInterval();
+        meetingWidget.setIsOn(false);
         resetPrayerPauseState();
         forceSyncClockState(employeeId, setIsClockedIn, setTimer, setLoadingAttendance, setIntervalId);
         forceSyncBreakState(employeeId, setIsOnBreak, setBreakTimer, setLoadingBreak, setBreakIntervalId);
@@ -753,9 +789,13 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           setPrayerBreakIntervalId,
           setPrayerStart
         );
+        refreshmentWidget.forceSync();
+        meetingWidget.forceSync();
         notifyAttendanceDataChanged();
         notifyBreakDataChanged();
         notifyPrayerDataChanged();
+        notifyRefreshmentDataChanged();
+        notifyMeetingDataChanged();
       }}
     />
     <div
@@ -858,7 +898,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
                 ? () => runWithVerify("break_end", (token) => handleBreakEnd(token))
                 : () => runWithVerify("break_start", (token) => handleBreakStart(token))
             }
-            disabled={isPrayerOn || breakActionPending || verifyPreparing}
+            disabled={isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing}
             className={isSlack ? `${slackStyles.btn} ${isOnBreak ? slackStyles.btnBreakEnd : slackStyles.btnBreak}` : undefined}
             style={isSlack ? undefined : {
               background: isOnBreak ? "#e74c3c" : "#e67e22",
@@ -868,8 +908,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
               padding: "8px 18px",
               fontSize: "1rem",
               fontWeight: 600,
-              cursor: isPrayerOn || breakActionPending || verifyPreparing ? "not-allowed" : "pointer",
-              opacity: isPrayerOn || breakActionPending || verifyPreparing ? 0.6 : 1,
+              cursor: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing ? "not-allowed" : "pointer",
+              opacity: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing ? 0.6 : 1,
               boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
               transition: "background 0.2s"
             }}
@@ -914,10 +954,58 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           resumePrayerTimerAfterVerify={resumePrayerTimerAfterVerify}
           resetPrayerPauseState={resetPrayerPauseState}
           onPrayerStateChanged={syncPrayerBreakFromServer}
-          disabled={isOnBreak}
+          disabled={isOnBreak || refreshmentWidget.isOn || meetingWidget.isOn}
           runWithVerify={runWithVerify}
           bioStatusLoading={verifyPreparing}
           onClearServerPrayerInterval={() => clearPrayerBreakSyncInterval(employeeId)}
+          variant={variant}
+        />
+      )}
+
+      {isClockedIn && (
+        <SessionBreakButton
+          config={REFRESHMENT_BREAK_CONFIG}
+          employeeId={employeeId}
+          employeeName={employeeName}
+          isOn={refreshmentWidget.isOn}
+          setIsOn={refreshmentWidget.setIsOn}
+          setBreakStart={refreshmentWidget.setBreakStart}
+          breakTimer={refreshmentWidget.breakTimer}
+          breakTimerPaused={refreshmentWidget.breakTimerPaused}
+          breakEndAtRef={refreshmentWidget.breakEndAtRef}
+          pauseBreakTimerForVerify={refreshmentWidget.pauseBreakTimerForVerify}
+          resumeBreakTimerAfterVerify={refreshmentWidget.resumeBreakTimerAfterVerify}
+          resetBreakPauseState={refreshmentWidget.resetBreakPauseState}
+          onBreakStateChanged={refreshmentWidget.syncFromServer}
+          notifyDataChanged={notifyRefreshmentDataChanged}
+          disabled={isOnBreak || isPrayerOn || meetingWidget.isOn}
+          runWithVerify={runWithVerify}
+          bioStatusLoading={verifyPreparing}
+          onClearServerBreakInterval={refreshmentWidget.clearServerInterval}
+          variant={variant}
+        />
+      )}
+
+      {isClockedIn && (
+        <SessionBreakButton
+          config={MEETING_BREAK_CONFIG}
+          employeeId={employeeId}
+          employeeName={employeeName}
+          isOn={meetingWidget.isOn}
+          setIsOn={meetingWidget.setIsOn}
+          setBreakStart={meetingWidget.setBreakStart}
+          breakTimer={meetingWidget.breakTimer}
+          breakTimerPaused={meetingWidget.breakTimerPaused}
+          breakEndAtRef={meetingWidget.breakEndAtRef}
+          pauseBreakTimerForVerify={meetingWidget.pauseBreakTimerForVerify}
+          resumeBreakTimerAfterVerify={meetingWidget.resumeBreakTimerAfterVerify}
+          resetBreakPauseState={meetingWidget.resetBreakPauseState}
+          onBreakStateChanged={meetingWidget.syncFromServer}
+          notifyDataChanged={notifyMeetingDataChanged}
+          disabled={isOnBreak || isPrayerOn || refreshmentWidget.isOn}
+          runWithVerify={runWithVerify}
+          bioStatusLoading={verifyPreparing}
+          onClearServerBreakInterval={meetingWidget.clearServerInterval}
           variant={variant}
         />
       )}

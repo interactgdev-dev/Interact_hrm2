@@ -2,7 +2,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 14px;
   width: 100%;
 }
@@ -133,9 +133,21 @@
   background: linear-gradient(115deg, #47cdaa 0%, #00ae7b 45%, #017a59 100%);
 }
 
+/* Refreshment: amber → orange */
+.cardRefreshment {
+  background: linear-gradient(115deg, #fbbf24 0%, #f59e0b 45%, #d97706 100%);
+}
+
+/* Meeting: sky → blue */
+.cardMeeting {
+  background: linear-gradient(115deg, #60a5fa 0%, #3b82f6 45%, #2563eb 100%);
+}
+
 .titleClock,
 .titleBreak,
-.titlePrayer {
+.titlePrayer,
+.titleRefreshment,
+.titleMeeting {
   color: #fff;
 }
 
@@ -164,6 +176,14 @@
 
 .cardPrayer .badgeLive {
   color: #017a59;
+}
+
+.cardRefreshment .badgeLive {
+  color: #d97706;
+}
+
+.cardMeeting .badgeLive {
+  color: #2563eb;
 }
 
 /* Left-aligned pill buttons */
@@ -214,6 +234,26 @@
 }
 
 .btnPrayerEnd {
+  background: #d80001;
+  color: #fff;
+}
+
+.btnRefreshment {
+  background: #fff;
+  color: #d97706;
+}
+
+.btnRefreshmentEnd {
+  background: #d80001;
+  color: #fff;
+}
+
+.btnMeeting {
+  background: #fff;
+  color: #2563eb;
+}
+
+.btnMeetingEnd {
   background: #d80001;
   color: #fff;
 }

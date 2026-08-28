@@ -110,6 +110,10 @@ export function biometricRequiredError(action: BiometricAction): string {
     break_end: "end break",
     prayer_start: "start prayer break",
     prayer_end: "end prayer break",
+    refreshment_start: "start refreshment",
+    refreshment_end: "end refreshment",
+    meeting_start: "start meeting",
+    meeting_end: "end meeting",
   };
   return `Face verification is required before you can ${labels[action]}.`;
 }

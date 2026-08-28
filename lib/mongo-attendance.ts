@@ -27,7 +27,7 @@ function hoursBetween(clockIn: unknown, clockOut: unknown): number {
 
 export async function mongoHasActiveBreak(employeeId: string | number): Promise<{
   hasActiveBreak: boolean;
-  breakType: "break" | "prayer_break" | null;
+  breakType: "break" | "prayer_break" | "refreshment_break" | "meeting_break" | null;
 }> {
   const db = await getMongoDb();
   const ids = employeeIdValues(employeeId);
@@ -46,6 +46,27 @@ export async function mongoHasActiveBreak(employeeId: string | number): Promise<
     ],
   });
   if (pr) return { hasActiveBreak: true, breakType: "prayer_break" };
+
+  const rf = await db.collection("refreshment_breaks").findOne({
+    employee_id: { $in: ids },
+    $or: [
+      { refreshment_break_end: null },
+      { refreshment_break_end: { $exists: false } },
+      { refreshment_break_end: "" },
+    ],
+  });
+  if (rf) return { hasActiveBreak: true, breakType: "refreshment_break" };
+
+  const mt = await db.collection("meeting_breaks").findOne({
+    employee_id: { $in: ids },
+    $or: [
+      { meeting_break_end: null },
+      { meeting_break_end: { $exists: false } },
+      { meeting_break_end: "" },
+    ],
+  });
+  if (mt) return { hasActiveBreak: true, breakType: "meeting_break" };
+
   return { hasActiveBreak: false, breakType: null };
 }
 
