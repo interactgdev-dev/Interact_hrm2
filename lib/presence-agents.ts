@@ -162,7 +162,7 @@ export async function upsertAgentHeartbeat(
             e.first_name AS assigned_first_name,
             e.last_name AS assigned_last_name
      FROM ${TABLE} pa
-     LEFT JOIN employees e ON e.id = pa.assigned_employee_id
+     LEFT JOIN hrm_employees e ON e.id = pa.assigned_employee_id
      WHERE pa.machine_id = ?
      LIMIT 1`,
     [machineId]
@@ -188,7 +188,7 @@ export async function listPresenceAgents(): Promise<PresenceAgentRow[]> {
             e.last_name AS assigned_last_name,
             e.employee_code AS assigned_employee_code
      FROM ${TABLE} pa
-     LEFT JOIN employees e ON e.id = pa.assigned_employee_id
+     LEFT JOIN hrm_employees e ON e.id = pa.assigned_employee_id
      ORDER BY pa.last_seen_at IS NULL, pa.last_seen_at DESC, pa.id DESC`
   );
   return (rows as DbRow[]).map(mapRow);
@@ -205,7 +205,7 @@ export async function setAgentAssignedEmployee(
   let assigned: string | null = assignedEmployeeId?.trim() || null;
   if (assigned) {
     const [empRows] = await pool.execute(
-      "SELECT id FROM employees WHERE id = ? LIMIT 1",
+      "SELECT id FROM hrm_employees WHERE id = ? LIMIT 1",
       [assigned]
     );
     const emp = empRows as { id: number }[];
@@ -223,7 +223,7 @@ export async function setAgentAssignedEmployee(
             e.last_name AS assigned_last_name,
             e.employee_code AS assigned_employee_code
      FROM ${TABLE} pa
-     LEFT JOIN employees e ON e.id = pa.assigned_employee_id
+     LEFT JOIN hrm_employees e ON e.id = pa.assigned_employee_id
      WHERE pa.machine_id = ?
      LIMIT 1`,
     [mid]
