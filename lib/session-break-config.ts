@@ -14,7 +14,6 @@ export type SessionBreakConfig = {
   lockPrefix: string;
   label: string;
   shortLabel: string;
-  exceedSeconds: number;
   cardClass: string;
   titleClass: string;
   btnClass: string;
@@ -38,7 +37,6 @@ export const REFRESHMENT_BREAK_CONFIG: SessionBreakConfig = {
   lockPrefix: "refreshment_break_start_emp_",
   label: "Refreshment",
   shortLabel: "Refreshment",
-  exceedSeconds: 1800,
   cardClass: "cardRefreshment",
   titleClass: "titleRefreshment",
   btnClass: "btnRefreshment",
@@ -62,7 +60,6 @@ export const MEETING_BREAK_CONFIG: SessionBreakConfig = {
   lockPrefix: "meeting_break_start_emp_",
   label: "Meeting",
   shortLabel: "Meeting",
-  exceedSeconds: 3600,
   cardClass: "cardMeeting",
   titleClass: "titleMeeting",
   btnClass: "btnMeeting",

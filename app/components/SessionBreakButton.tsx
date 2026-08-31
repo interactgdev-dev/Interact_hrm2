@@ -293,8 +293,6 @@ function SessionBreakTotals({
   const endField = config.endField;
 
   const displayTotalSeconds = completedSeconds + (isOn ? Math.max(0, liveSeconds) : 0);
-  const displayExceedSeconds =
-    displayTotalSeconds > config.exceedSeconds ? displayTotalSeconds - config.exceedSeconds : 0;
 
   const refreshTotals = React.useCallback(async () => {
     try {
@@ -388,20 +386,8 @@ function SessionBreakTotals({
       <div className={slackStyles.summaryBox}>
         <div className={slackStyles.summaryBoxInner}>
           <div className={slackStyles.summaryLabel}>Total {config.shortLabel}</div>
-          <div
-            className={slackStyles.summaryValue}
-            style={
-              displayTotalSeconds > config.exceedSeconds
-                ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" }
-                : undefined
-            }
-          >
-            {formatDuration(displayTotalSeconds)}
-          </div>
+          <div className={slackStyles.summaryValue}>{formatDuration(displayTotalSeconds)}</div>
         </div>
-        {displayExceedSeconds > 0 && (
-          <div className={slackStyles.summaryExceed}>Exceed: {formatDuration(displayExceedSeconds)}</div>
-        )}
       </div>
     );
   }
@@ -424,16 +410,11 @@ function SessionBreakTotals({
         style={{
           fontSize: "1rem",
           fontWeight: 500,
-          color: displayTotalSeconds > config.exceedSeconds ? "#e74c3c" : "#2d3436",
+          color: "#2d3436",
         }}
       >
         {formatDuration(displayTotalSeconds)}
       </div>
-      {displayExceedSeconds > 0 && (
-        <div style={{ fontSize: "0.9rem", color: "#e74c3c", marginTop: 4 }}>
-          Exceed: {formatDuration(displayExceedSeconds)}
-        </div>
-      )}
     </div>
   );
 }

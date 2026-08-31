@@ -129,7 +129,6 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
         const sessionSeconds = p[startField] ? Math.floor((end - start) / 1000) : 0;
         const key = getSessionGroupingKey(p, startField);
         const dailySeconds = liveTotals.get(key) || sessionSeconds;
-        const exceedToday = dailySeconds > config.exceedSeconds ? dailySeconds - config.exceedSeconds : 0;
         return {
           ...p,
           date_display: p.session_clock_in
@@ -143,7 +142,6 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
           end_display: p[endField] ? getTimeStringInTimeZone(p[endField], SERVER_TIMEZONE) : isRunning ? "Running..." : "",
           total_time: formatDuration(sessionSeconds),
           total_time_today: formatDuration(dailySeconds),
-          exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
         };
       })
       .sort((a, b) => {
@@ -152,7 +150,7 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
         if (aRunning !== bRunning) return aRunning ? -1 : 1;
         return new Date(b[startField] || 0).getTime() - new Date(a[startField] || 0).getTime();
       });
-  }, [filteredRows, staticTotals, now, startField, endField, config.exceedSeconds]);
+  }, [filteredRows, staticTotals, now, startField, endField]);
 
   const downloadCSV = () => {
     const headers = [
@@ -165,7 +163,6 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
       `${config.label} End`,
       `Total ${config.label} Time`,
       `Total ${config.label}`,
-      "Exceed",
     ];
     let csv = headers.join(",") + "\n";
     tableRows.forEach((row) => {
@@ -180,7 +177,6 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
           row.end_display,
           row.total_time,
           row.total_time_today,
-          row.exceed_today,
         ]
           .map((v) => `"${v}"`)
           .join(",") + "\n";
@@ -264,13 +260,12 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
                   <th>{config.label} End</th>
                   <th>Total {config.label} Time</th>
                   <th>Total {config.label}</th>
-                  <th>Exceed</th>
                 </tr>
               </thead>
               <tbody>
                 {tableRows.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className={styles.breakSummaryNoRecords}>
+                    <td colSpan={9} className={styles.breakSummaryNoRecords}>
                       No records found.
                     </td>
                   </tr>
@@ -300,7 +295,6 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
                       </td>
                       <td>{p.total_time}</td>
                       <td>{p.total_time_today}</td>
-                      <td className={p.exceed_today ? styles.cellExceed : undefined}>{p.exceed_today}</td>
                     </tr>
                   ))
                 )}
