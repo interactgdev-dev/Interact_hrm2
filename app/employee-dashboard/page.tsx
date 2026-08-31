@@ -143,6 +143,11 @@ function recordDateKey(record: AttendanceRow) {
   return "";
 }
 
+function isTardyAttendance(row?: AttendanceRow | null): boolean {
+  if (!row) return false;
+  return Boolean(row.is_late) || (row.late_minutes ?? 0) > 0;
+}
+
 function workHours(record: AttendanceRow): number {
   if (!record.clock_in) return 0;
   const inParts = getParts(record.clock_in, SERVER_TIMEZONE);
@@ -755,28 +760,6 @@ export default function EmployeeDashboardPage() {
     .slice(0, 2)
     .toUpperCase();
 
-  const calendarYear = todayParts.year;
-  const calendarMonthIndex = todayParts.month - 1;
-  const monthName = new Intl.DateTimeFormat(undefined, {
-    month: "long",
-    timeZone: SERVER_TIMEZONE,
-  }).format(new Date(Date.UTC(calendarYear, calendarMonthIndex, 1, 12, 0, 0)));
-  const calendarSlots = React.useMemo(() => {
-    const monthStartUtc = new Date(Date.UTC(calendarYear, calendarMonthIndex, 1));
-    const daysInMonth = new Date(
-      Date.UTC(calendarYear, calendarMonthIndex + 1, 0)
-    ).getUTCDate();
-    const leadingBlanks = monthStartUtc.getUTCDay();
-    return Array.from({ length: leadingBlanks + daysInMonth }, (_, idx) => {
-      if (idx < leadingBlanks) return null;
-      const day = idx - leadingBlanks + 1;
-      const key = `${calendarYear}-${String(todayParts.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const isToday = day === todayParts.day;
-      const isTardy = attendanceByDate.get(key)?.is_late === true;
-      return { day, isToday, isTardy };
-    });
-  }, [calendarYear, calendarMonthIndex, todayParts.month, todayParts.day, attendanceByDate]);
-
   const newReplyCount = React.useMemo(
     () =>
       tickets.filter(
@@ -878,10 +861,12 @@ export default function EmployeeDashboardPage() {
     const slots = Array.from({ length: leading + daysInMonth }, (_, idx) => {
       if (idx < leading) return null;
       const day = idx - leading + 1;
-      return { day, tags: byDay.get(day) || [] };
+      const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const isTardy = isTardyAttendance(attendanceByDate.get(dateKey));
+      return { day, tags: byDay.get(day) || [], isTardy };
     });
     return { year, month, monthLabel, slots };
-  }, [todayParts.year, todayParts.month, eventsMonthOffset, allCalendarEvents]);
+  }, [todayParts.year, todayParts.month, eventsMonthOffset, allCalendarEvents, attendanceByDate]);
 
   /** Sidebar: next upcoming US / company events with distinct palette colors. */
   const sidebarEvents = React.useMemo(() => {

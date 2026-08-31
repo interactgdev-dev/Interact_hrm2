@@ -419,6 +419,13 @@
   border-radius: 999px;
 }
 
+.calDotTardy {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #ef4444;
+}
+
 /* Quick actions */
 .actionsCard {
   grid-area: actions;

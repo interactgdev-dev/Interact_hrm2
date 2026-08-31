@@ -133,7 +133,11 @@ export type DashboardHomeViewProps = {
   };
   eventsCal: {
     monthLabel: string;
-    slots: Array<{ day: number; tags: { id: string | number; title: string; color: string }[] } | null>;
+    slots: Array<{
+      day: number;
+      tags: { id: string | number; title: string; color: string }[];
+      isTardy?: boolean;
+    } | null>;
   };
   eventsMonthOffset: number;
   todayDay: number;
@@ -334,6 +338,9 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
                   >
                     {slot.day}
                     <div className={styles.calDots}>
+                      {slot.isTardy ? (
+                        <span className={styles.calDotTardy} title="Tardy" />
+                      ) : null}
                       {slot.tags.slice(0, 3).map((t) => (
                         <span
                           key={String(t.id)}
