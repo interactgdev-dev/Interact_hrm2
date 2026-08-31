@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enforceBiometricOrRespond } from "@/lib/require-biometric";
-import { pool } from "@/lib/db";
+import { getDbDriver, pool } from "@/lib/db";
 import { getDateStringInTimeZone, SERVER_TIMEZONE } from "@/lib/timezone";
 import { getActiveShiftAssignment } from "@/lib/get-active-shift";
 import { ensureLegacyEmployeeRow } from "@/lib/ensure-legacy-employee-row";
 import type { SessionBreakConfig } from "@/lib/session-break-config";
+import {
+  mongoDeleteSessionBreak,
+  mongoEndSessionBreak,
+  mongoListSessionBreaks,
+  mongoStartSessionBreak,
+  mongoUpdateSessionBreak,
+} from "@/lib/mongo-breaks";
 
 const ATTENDANCE_TABLE = "employee_attendance";
 
@@ -39,6 +46,17 @@ export function createSessionBreakRouteHandlers(config: SessionBreakConfig) {
       const date = searchParams.get("date");
       const fromDate = searchParams.get("fromDate");
       const toDate = searchParams.get("toDate");
+
+      if (getDbDriver() === "mongo") {
+        const rows = await mongoListSessionBreaks(config, {
+          employeeId,
+          date,
+          fromDate,
+          toDate,
+        });
+        return NextResponse.json({ success: true, [config.responseKey]: rows });
+      }
+
       conn = await pool.getConnection();
       if (!conn) throw new Error("Failed to get database connection from pool");
       await ensureAttendanceTable(conn);
@@ -130,6 +148,46 @@ export function createSessionBreakRouteHandlers(config: SessionBreakConfig) {
       if (!formattedDate) {
         return NextResponse.json({ success: false, error: "Missing required fields" }, { status: 400 });
       }
+
+      if (getDbDriver() === "mongo") {
+        if (breakStart) {
+          const bioBlock = await enforceBiometricOrRespond(
+            biometric_token,
+            String(employee_id),
+            config.startAction,
+            employee_name,
+          );
+          if (bioBlock) return bioBlock;
+          const result = await mongoStartSessionBreak(config, {
+            employeeId: employee_id,
+            employeeName: employee_name,
+            date: formattedDate,
+            breakStart: breakStart,
+          });
+          if (!result.ok) {
+            return NextResponse.json({ success: false, error: result.error }, { status: 400 });
+          }
+        } else if (breakEnd) {
+          const bioBlock = await enforceBiometricOrRespond(
+            biometric_token,
+            String(employee_id),
+            config.endAction,
+            employee_name,
+          );
+          if (bioBlock) return bioBlock;
+          const result = await mongoEndSessionBreak(config, {
+            employeeId: employee_id,
+            breakEnd: breakEnd,
+          });
+          if (!result.ok) {
+            return NextResponse.json({ success: false, error: result.error }, { status: 400 });
+          }
+        } else {
+          return NextResponse.json({ success: false, error: "Invalid action." }, { status: 400 });
+        }
+        return NextResponse.json({ success: true });
+      }
+
       conn = await pool.getConnection();
       const canonicalEmployeeId = await ensureLegacyEmployeeRow(conn, String(employee_id), employee_name);
 
@@ -232,7 +290,7 @@ export function createSessionBreakRouteHandlers(config: SessionBreakConfig) {
       if (!id || !employee_id) {
         return NextResponse.json({ success: false, error: "Missing required fields: id or employee_id" }, { status: 400 });
       }
-      conn = await pool.getConnection();
+
       const formattedDate = date
         ? /^\d{4}-\d{2}-\d{2}$/.test(String(date))
           ? String(date)
@@ -244,6 +302,20 @@ export function createSessionBreakRouteHandlers(config: SessionBreakConfig) {
       if (formattedStart && formattedEnd) {
         duration = Math.floor((new Date(breakEnd).getTime() - new Date(breakStart).getTime()) / 1000);
       }
+
+      if (getDbDriver() === "mongo") {
+        await mongoUpdateSessionBreak(config, {
+          id,
+          employeeName: employee_name,
+          date: formattedDate,
+          breakStart: formattedStart,
+          breakEnd: formattedEnd,
+          duration,
+        });
+        return NextResponse.json({ success: true, message: `${config.label} updated successfully` });
+      }
+
+      conn = await pool.getConnection();
       await conn.execute(
         `UPDATE ${table}
          SET employee_name = ?, date = ?, ${startCol} = ?, ${endCol} = ?, ${durationCol} = ?
@@ -268,6 +340,12 @@ export function createSessionBreakRouteHandlers(config: SessionBreakConfig) {
       if (!id) {
         return NextResponse.json({ success: false, error: "Missing required field: id" }, { status: 400 });
       }
+
+      if (getDbDriver() === "mongo") {
+        await mongoDeleteSessionBreak(config.kind, id);
+        return NextResponse.json({ success: true, message: `${config.label} deleted successfully` });
+      }
+
       conn = await pool.getConnection();
       await conn.execute(`DELETE FROM ${table} WHERE id = ?`, [id]);
       return NextResponse.json({ success: true, message: `${config.label} deleted successfully` });

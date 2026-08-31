@@ -299,3 +299,162 @@ export async function mongoDeletePrayerBreak(id: string | number) {
   const db = await getMongoDb();
   await db.collection("prayer_breaks").deleteOne(idFilter(id));
 }
+
+function sessionBreakCollection(kind: "refreshment" | "meeting") {
+  return kind === "refreshment" ? "refreshment_breaks" : "meeting_breaks";
+}
+
+export async function mongoListSessionBreaks(
+  config: {
+    kind: "refreshment" | "meeting";
+    startField: string;
+    endField: string;
+    durationField: string;
+  },
+  opts: ListOpts,
+) {
+  const collection = sessionBreakCollection(config.kind);
+  const { startField, endField, durationField } = config;
+  const db = await getMongoDb();
+  const filter: Document = {};
+  if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
+  const from = opts.date || opts.fromDate;
+  const to = opts.date || opts.toDate;
+  if (from && to) {
+    Object.assign(filter, flexibleDayRangeFilter(from, to, ["date", startField]));
+  }
+  let rows = await db.collection(collection).find(filter).sort({ id: -1 }).limit(8000).toArray();
+  if (from && to) {
+    rows = rows.filter((row) => inCalendarRange(from, to, row.date, row[startField]));
+  }
+  const enriched = await enrichBreakRows(rows, startField);
+  return enriched.map((row) => ({
+    ...row,
+    [startField]: sqlDateToIso(row[startField]),
+    [endField]: sqlDateToIso(row[endField]),
+    [durationField]:
+      row[durationField] != null && row[durationField] !== "" ? Number(row[durationField]) : null,
+  }));
+}
+
+export async function mongoStartSessionBreak(
+  config: {
+    kind: "refreshment" | "meeting";
+    startField: string;
+    endField: string;
+    durationField: string;
+    shortLabel: string;
+  },
+  opts: {
+    employeeId: string | number;
+    employeeName?: string | null;
+    date: string;
+    breakStart: string;
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const collection = sessionBreakCollection(config.kind);
+  const { startField, endField, durationField, shortLabel } = config;
+  const db = await getMongoDb();
+  const ids = employeeIdValues(opts.employeeId);
+  const open = await db.collection(collection).findOne({
+    employee_id: { $in: ids },
+    $or: [{ [endField]: null }, { [endField]: { $exists: false } }, { [endField]: "" }],
+  });
+  if (open) {
+    return {
+      ok: false,
+      error: `An ongoing ${shortLabel.toLowerCase()} already exists for this employee.`,
+    };
+  }
+  const shift = (await loadEmployeeLookups(ids)).assignments;
+  const sa = pickLatestShift(shift, opts.employeeId, opts.date);
+  await db.collection(collection).insertOne({
+    id: await mongoNextId(collection),
+    employee_id: /^\d+$/.test(String(opts.employeeId)) ? Number(opts.employeeId) : opts.employeeId,
+    employee_name: opts.employeeName || "",
+    shift_assignment_id: sa?.id ?? null,
+    date: opts.date,
+    [startField]: formatSqlDateTime(opts.breakStart),
+    [endField]: null,
+    [durationField]: null,
+    exceed_minutes: 0,
+  });
+  return { ok: true };
+}
+
+export async function mongoEndSessionBreak(
+  config: {
+    kind: "refreshment" | "meeting";
+    startField: string;
+    endField: string;
+    durationField: string;
+    shortLabel: string;
+  },
+  opts: {
+    employeeId: string | number;
+    breakEnd: string;
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const collection = sessionBreakCollection(config.kind);
+  const { startField, endField, durationField, shortLabel } = config;
+  const db = await getMongoDb();
+  const open = await db.collection(collection).findOne(
+    {
+      employee_id: { $in: employeeIdValues(opts.employeeId) },
+      $or: [{ [endField]: null }, { [endField]: { $exists: false } }, { [endField]: "" }],
+    },
+    { sort: { [startField]: -1 } },
+  );
+  if (!open?._id) {
+    return {
+      ok: false,
+      error: `No ongoing ${shortLabel.toLowerCase()} found for this employee.`,
+    };
+  }
+  const startMs = toMs(open[startField]);
+  const endMs = toMs(opts.breakEnd);
+  const duration = startMs != null && endMs != null ? (endMs - startMs) / 1000 : null;
+  await db.collection(collection).updateOne(
+    { _id: open._id },
+    { $set: { [endField]: formatSqlDateTime(opts.breakEnd), [durationField]: duration } },
+  );
+  return { ok: true };
+}
+
+export async function mongoUpdateSessionBreak(
+  config: {
+    kind: "refreshment" | "meeting";
+    startField: string;
+    endField: string;
+    durationField: string;
+  },
+  opts: {
+    id: string | number;
+    employeeName?: string | null;
+    date?: string | null;
+    breakStart?: string | null;
+    breakEnd?: string | null;
+    duration?: number | null;
+  },
+) {
+  const collection = sessionBreakCollection(config.kind);
+  const { startField, endField, durationField } = config;
+  const db = await getMongoDb();
+  await db.collection(collection).updateOne(idFilter(opts.id), {
+    $set: {
+      employee_name: opts.employeeName || "",
+      date: opts.date,
+      [startField]: opts.breakStart,
+      [endField]: opts.breakEnd,
+      [durationField]: opts.duration,
+    },
+  });
+}
+
+export async function mongoDeleteSessionBreak(
+  kind: "refreshment" | "meeting",
+  id: string | number,
+) {
+  const db = await getMongoDb();
+  await db.collection(sessionBreakCollection(kind)).deleteOne(idFilter(id));
+}
