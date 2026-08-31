@@ -170,7 +170,12 @@ export default function BreakSummaryView() {
           exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
         };
       })
-      .sort((a, b) => new Date(b.break_start || 0).getTime() - new Date(a.break_start || 0).getTime());
+      .sort((a, b) => {
+        const aRunning = !!(a.break_start && !a.break_end);
+        const bRunning = !!(b.break_start && !b.break_end);
+        if (aRunning !== bRunning) return aRunning ? -1 : 1;
+        return new Date(b.break_start || 0).getTime() - new Date(a.break_start || 0).getTime();
+      });
   }, [filteredBreaks, staticTotals, now]);
 
   const downloadBreakCSV = () => {

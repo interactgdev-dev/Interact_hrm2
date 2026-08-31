@@ -144,7 +144,12 @@ export default function PrayerSummaryView() {
           exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
         };
       })
-      .sort((a, b) => new Date(b.prayer_break_start || 0).getTime() - new Date(a.prayer_break_start || 0).getTime());
+      .sort((a, b) => {
+        const aRunning = !!(a.prayer_break_start && !a.prayer_break_end);
+        const bRunning = !!(b.prayer_break_start && !b.prayer_break_end);
+        if (aRunning !== bRunning) return aRunning ? -1 : 1;
+        return new Date(b.prayer_break_start || 0).getTime() - new Date(a.prayer_break_start || 0).getTime();
+      });
   }, [filteredPrayerBreaks, staticTotals, now]);
 
   const downloadPrayerCSV = () => {
