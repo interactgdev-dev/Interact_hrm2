@@ -66,16 +66,23 @@ const MONGO_URI = env.MONGO_URI || "mongodb://127.0.0.1:27017";
 const MONGO_DB = env.MONGO_DB || env.DB_NAME || "interact_hrm";
 
 function mysqlConfig() {
+  const host = env.MYSQL_HOST || env.DB_HOST;
   const cfg = {
-    user: env.DB_USER || "root",
-    password: env.DB_PASSWORD || "",
-    database: env.DB_NAME || "interact_hrm",
+    user: env.MYSQL_USER || env.DB_USER || "root",
+    password: Object.prototype.hasOwnProperty.call(env, "MYSQL_PASSWORD")
+      ? env.MYSQL_PASSWORD
+      : env.DB_PASSWORD || "",
+    database: env.MYSQL_DATABASE || env.DB_NAME || "interact_hrm",
     dateStrings: false,
     supportBigNumbers: true,
     bigNumberStrings: false,
+    connectTimeout: 20000,
   };
-  if (process.platform === "win32") {
-    cfg.host = env.DB_HOST || "localhost";
+  if (host) {
+    cfg.host = host;
+    cfg.port = parseInt(env.MYSQL_PORT || env.DB_PORT || "3306", 10);
+  } else if (process.platform === "win32") {
+    cfg.host = "localhost";
     cfg.port = parseInt(env.DB_PORT || "3306", 10);
   } else {
     cfg.socketPath = "/var/run/mysqld/mysqld.sock";
