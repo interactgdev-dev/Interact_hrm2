@@ -16,6 +16,10 @@ const ACTIONS: BiometricAction[] = [
   "break_end",
   "prayer_start",
   "prayer_end",
+  "refreshment_start",
+  "refreshment_end",
+  "meeting_start",
+  "meeting_end",
 ];
 
 export async function POST(req: NextRequest) {
