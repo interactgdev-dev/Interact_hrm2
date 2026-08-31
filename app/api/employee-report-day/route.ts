@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatDateOnly, monthStartFromDate } from "@/lib/attendance-display";
+import { loadZkbioDepartmentNames } from "@/lib/zkbio-departments";
 import {
   getDateStringInTimeZone,
   getTimeStringInTimeZone,
@@ -194,15 +195,7 @@ export async function GET(req: NextRequest) {
       return a.sortAt.localeCompare(b.sortAt);
     });
 
-    const [deptRows] = await pool.query(
-      `SELECT DISTINCT TRIM(dept_name) AS d FROM zkbio_punch_log
-       WHERE dept_name IS NOT NULL AND TRIM(dept_name) <> ''
-       UNION
-       SELECT DISTINCT TRIM(d.name) AS d FROM departments d
-       WHERE d.name IS NOT NULL AND TRIM(d.name) <> ''
-       ORDER BY d ASC`,
-    );
-    const departments = (deptRows as { d: string }[]).map((r) => r.d).filter(Boolean);
+    const departments = await loadZkbioDepartmentNames();
 
     return NextResponse.json({
       success: true,

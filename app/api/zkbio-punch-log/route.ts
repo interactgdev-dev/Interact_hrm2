@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { loadZkbioDepartmentNames } from "@/lib/zkbio-departments";
 import { pool } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -124,14 +125,7 @@ export async function GET(req: NextRequest) {
       [...params, pageSize, offset],
     );
 
-    const [deptRows] = await pool.query(
-      `SELECT DISTINCT TRIM(dept_name) AS d
-       FROM zkbio_punch_log
-       WHERE dept_name IS NOT NULL AND TRIM(dept_name) <> ''
-       ORDER BY d ASC
-       LIMIT 1000`,
-    );
-    const departments = (deptRows as { d: string }[]).map((r) => r.d).filter(Boolean);
+    const departments = await loadZkbioDepartmentNames();
 
     return NextResponse.json({
       success: true,
