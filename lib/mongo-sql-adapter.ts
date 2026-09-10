@@ -358,6 +358,11 @@ function buildFilterFromWhere(
       return buildFilterFromWhere(inner, params, paramOffset, aliasMap);
     }
 
+    // Tautologies used by many list APIs: WHERE 1=1 AND …
+    if (/^(1\s*=\s*1|0\s*=\s*0|true)$/i.test(s)) {
+      return {};
+    }
+
     // col < DATE_ADD(?, INTERVAL n UNIT) — string split, not a fragile regex
     {
       const daAt = s.search(/DATE_ADD\s*\(/i);
@@ -1146,6 +1151,8 @@ function matchFilter(row: Document, filter: Filter<Document>): boolean {
   }
   for (const [k, v] of Object.entries(filter)) {
     if (k.startsWith("$")) continue;
+    // Ignore unsupported-atom markers so AND(1=1, realFilter) still matches.
+    if (k === "__unsupported_where") continue;
     const hasKey = Object.prototype.hasOwnProperty.call(row, k);
     const rv = hasKey ? row[k] : undefined;
     if (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {

@@ -49,28 +49,30 @@ export async function GET(req: NextRequest) {
     const category = searchParams.get("category");
     const limit = Math.min(parseInt(searchParams.get("limit") || "100", 10), 500);
 
-    let sql = `SELECT * FROM ${EMPLOYEE_TICKETS_TABLE} WHERE 1=1`;
+    let sql = `SELECT * FROM ${EMPLOYEE_TICKETS_TABLE}`;
     const params: (string | number)[] = [];
+    const where: string[] = [];
 
     if (employeeId) {
-      sql += " AND employee_id = ?";
+      where.push("employee_id = ?");
       params.push(employeeId);
     }
     if (ticketId) {
-      sql += " AND id = ?";
+      where.push("id = ?");
       params.push(parseInt(ticketId, 10));
     }
     if (status === "open") {
-      sql += " AND status IN ('pending', 'in_progress')";
+      where.push("status IN ('pending', 'in_progress')");
     } else if (status) {
-      sql += " AND status = ?";
+      where.push("status = ?");
       params.push(status);
     }
     if (category) {
-      sql += " AND category = ?";
+      where.push("category = ?");
       params.push(category);
     }
 
+    if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
     sql += " ORDER BY requested_at DESC LIMIT ?";
     params.push(limit);
 
