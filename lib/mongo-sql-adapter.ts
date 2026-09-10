@@ -88,6 +88,8 @@ function parseSelectSql(raw: string): {
   orderSql: string | null;
   limit?: number;
   offsetN: number;
+  limitFromParam?: boolean;
+  offsetFromParam?: boolean;
 } | null {
   if (!/^SELECT\b/i.test(raw)) return null;
   const fromAt = indexOfTopLevelKeyword(raw, "FROM");
@@ -108,6 +110,8 @@ function parseSelectSql(raw: string): {
   let orderSql: string | null = null;
   let limit: number | undefined;
   let offsetN = 0;
+  let limitFromParam = false;
+  let offsetFromParam = false;
 
   if (whereAt >= 0) {
     const endCandidates = [orderAt, limitAt, offsetAt].filter((i) => i > whereAt);
@@ -126,15 +130,30 @@ function parseSelectSql(raw: string): {
       .trim();
   }
   if (limitAt >= 0) {
-    const limChunk = rest.slice(limitAt).match(/^\s*LIMIT\s+(\d+)/i);
-    if (limChunk) limit = Number(limChunk[1]);
+    const limChunk = rest.slice(limitAt).match(/^\s*LIMIT\s+(\d+|\?)/i);
+    if (limChunk) {
+      if (limChunk[1] === "?") limitFromParam = true;
+      else limit = Number(limChunk[1]);
+    }
   }
   if (offsetAt >= 0) {
-    const offChunk = rest.slice(offsetAt).match(/^\s*OFFSET\s+(\d+)/i);
-    if (offChunk) offsetN = Number(offChunk[1]);
+    const offChunk = rest.slice(offsetAt).match(/^\s*OFFSET\s+(\d+|\?)/i);
+    if (offChunk) {
+      if (offChunk[1] === "?") offsetFromParam = true;
+      else offsetN = Number(offChunk[1]);
+    }
   }
 
-  return { selectSql, fromChunk, whereSql, orderSql, limit, offsetN };
+  return {
+    selectSql,
+    fromChunk,
+    whereSql,
+    orderSql,
+    limit,
+    offsetN,
+    limitFromParam,
+    offsetFromParam,
+  };
 }
 
 /** Pull correlated "latest shift as of date" JOIN out of FROM chunk. */
@@ -914,8 +933,16 @@ export async function mongoExecute(
   // SELECT (paren-aware — subquery WHERE must not win)
   const parsedSelect = parseSelectSql(raw);
   if (parsedSelect) {
-    let { selectSql, fromChunk, whereSql, orderSql, limit, offsetN } =
-      parsedSelect;
+    let {
+      selectSql,
+      fromChunk,
+      whereSql,
+      orderSql,
+      limit,
+      offsetN,
+      limitFromParam,
+      offsetFromParam,
+    } = parsedSelect;
 
     const shiftExtract = extractLatestShiftJoin(fromChunk);
     fromChunk = shiftExtract.fromChunk;
@@ -939,6 +966,15 @@ export async function mongoExecute(
     const filter = buildFilterFromWhere(whereSql, p, offset, {
       [from.alias]: from.table,
     });
+
+    if (limitFromParam) {
+      const v = p[offset.i++];
+      if (v != null && v !== "") limit = Number(v);
+    }
+    if (offsetFromParam) {
+      const v = p[offset.i++];
+      if (v != null && v !== "") offsetN = Number(v);
+    }
 
     let baseFilter: Filter<Document> = filter;
     const whereUsesOtherAlias =
@@ -990,10 +1026,20 @@ export async function mongoExecute(
     }
 
     const needsJoinWork = joins.length > 0 || !!shiftDateField;
+    // Mixed Date|string datetime columns (common after MySQL→Mongo import) sort
+    // incorrectly in Mongo — force in-memory compare before LIMIT.
+    const needsMemoryDateSort = Object.keys(sort).some((f) =>
+      /(_at|date|time)$/i.test(f) ||
+      /^(requested_at|updated_at|created_at|resolved_at|clock_in|clock_out|event_time|imported_at)$/i.test(
+        f,
+      ),
+    );
+    const useMemorySort = needsJoinWork || needsMemoryDateSort;
+
     let cursor = db.collection(from.table).find(baseFilter);
-    if (Object.keys(sort).length && !needsJoinWork) cursor = cursor.sort(sort);
-    if (!needsJoinWork && offsetN) cursor = cursor.skip(offsetN);
-    if (!needsJoinWork && limit != null) cursor = cursor.limit(limit);
+    if (Object.keys(sort).length && !useMemorySort) cursor = cursor.sort(sort);
+    if (!useMemorySort && offsetN) cursor = cursor.skip(offsetN);
+    if (!useMemorySort && limit != null) cursor = cursor.limit(limit);
 
     let rows = (await cursor.toArray()).map(normalizeDocDates);
 
@@ -1064,7 +1110,7 @@ export async function mongoExecute(
       }
     }
 
-    if (needsJoinWork && Object.keys(sort).length) {
+    if (useMemorySort && Object.keys(sort).length) {
       const entries = Object.entries(sort);
       rows.sort((a, b) => {
         for (const [field, dir] of entries) {
@@ -1084,8 +1130,8 @@ export async function mongoExecute(
         return 0;
       });
     }
-    if (needsJoinWork && offsetN) rows = rows.slice(offsetN);
-    if (needsJoinWork && limit != null) rows = rows.slice(0, limit);
+    if (useMemorySort && offsetN) rows = rows.slice(offsetN);
+    if (useMemorySort && limit != null) rows = rows.slice(0, limit);
 
     // Project columns
     if (!select.star) {

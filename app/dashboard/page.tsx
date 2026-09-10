@@ -215,10 +215,16 @@ export default function DashboardPage() {
 
   const pendingLeaveTickets = React.useMemo(
     () =>
-      tickets.filter(
-        (t) =>
-          t.ticket_type === "leave" && (t.status || "").toLowerCase() === "pending"
-      ),
+      [...tickets]
+        .filter(
+          (t) =>
+            t.ticket_type === "leave" && (t.status || "").toLowerCase() === "pending"
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime() ||
+            b.id - a.id
+        ),
     [tickets],
   );
 
@@ -231,10 +237,16 @@ export default function DashboardPage() {
 
   const pendingTickets = React.useMemo(
     () =>
-      tickets.filter(
-        (t) =>
-          t.ticket_type !== "leave" && (t.status || "").toLowerCase() === "pending"
-      ),
+      [...tickets]
+        .filter(
+          (t) =>
+            t.ticket_type !== "leave" && (t.status || "").toLowerCase() === "pending"
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime() ||
+            b.id - a.id
+        ),
     [tickets],
   );
   const snapshotTotal = Math.max(

@@ -76,6 +76,27 @@ export function buildTicketNumber(id: number) {
   return `TKT-${year}-${String(id).padStart(5, "0")}`;
 }
 
+/** Newest first by requested_at (fallback updated_at / id). */
+export function sortTicketsNewestFirst<T extends {
+  id?: number | string;
+  requested_at?: unknown;
+  updated_at?: unknown;
+}>(tickets: T[]): T[] {
+  const ms = (t: T) => {
+    for (const raw of [t.requested_at, t.updated_at]) {
+      if (raw == null || raw === "") continue;
+      const n = new Date(String(raw)).getTime();
+      if (Number.isFinite(n)) return n;
+    }
+    return Number(t.id) || 0;
+  };
+  return [...tickets].sort((a, b) => {
+    const diff = ms(b) - ms(a);
+    if (diff !== 0) return diff;
+    return (Number(b.id) || 0) - (Number(a.id) || 0);
+  });
+}
+
 export function rowToTicket(row: Record<string, unknown>): EmployeeTicketRow {
   const base = {
     ...(row as unknown as EmployeeTicketRow),

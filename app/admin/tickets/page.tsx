@@ -42,7 +42,14 @@ export default function AdminTicketsPage() {
       if (filter === "pending") params.set("status", "open");
       const res = await fetch(`/api/employee-tickets?${params}`, { cache: "no-store" });
       const data = await res.json();
-      if (data.success) setTickets(data.tickets || []);
+      if (data.success) {
+        const list = [...(data.tickets || [])].sort(
+          (a: Ticket, b: Ticket) =>
+            new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime() ||
+            b.id - a.id
+        );
+        setTickets(list);
+      }
     } finally {
       if (!opts?.silent) setLoading(false);
     }

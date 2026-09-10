@@ -7,6 +7,7 @@ import {
   broadcastTicketUpdate,
   ensureEmployeeTicketsTable,
   rowToTicket,
+  sortTicketsNewestFirst,
   type EmployeeTicketRow,
   type TicketStatus,
 } from "@/lib/employee-tickets-table";
@@ -77,8 +78,10 @@ export async function GET(req: NextRequest) {
     params.push(limit);
 
     const [rows]: unknown[] = await query(sql, params);
-    const tickets = (Array.isArray(rows) ? rows : []).map((r) =>
-      rowToTicket(r as Record<string, unknown>)
+    const tickets = sortTicketsNewestFirst(
+      (Array.isArray(rows) ? rows : []).map((r) =>
+        rowToTicket(r as Record<string, unknown>)
+      )
     );
     return NextResponse.json({ success: true, tickets });
   } catch (error) {

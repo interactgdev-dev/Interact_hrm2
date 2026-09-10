@@ -61,6 +61,7 @@ type TicketWidgetRow = {
   category: TicketCategory;
   ticket_type: string;
   messages?: TicketThreadMessage[];
+  requested_at?: string;
   updated_at: string;
 };
 
@@ -792,7 +793,10 @@ export default function EmployeeDashboardPage() {
             ? 1
             : 0;
         if (bUnread !== aUnread) return bUnread - aUnread;
-        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        const aMs = new Date(a.requested_at || a.updated_at || 0).getTime();
+        const bMs = new Date(b.requested_at || b.updated_at || 0).getTime();
+        if (bMs !== aMs) return bMs - aMs;
+        return b.id - a.id;
       })
       .slice(0, 1);
   }, [tickets, ticketSeenMap]);
