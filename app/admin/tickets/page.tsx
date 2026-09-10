@@ -9,6 +9,7 @@ import { formatTicketStatusLabel, isTicketClosed } from "../../../lib/ticket-sta
 import { previewTicketToastOnPage } from "../../../lib/ticket-toast-demo";
 import type { TicketThreadMessage } from "../../../lib/ticket-thread";
 import { toastError, toastInfo } from "@/lib/app-toast";
+import { uploadServeUrl } from "@/lib/upload-serve";
 
 type Ticket = {
   id: number;
@@ -224,7 +225,7 @@ export default function AdminTicketsPage() {
               <ul className={adminStyles.detailDocs}>
                 {docs.map((path, idx) => (
                   <li key={`${String(path)}-${idx}`}>
-                    <a href={String(path)} target="_blank" rel="noreferrer">
+                    <a href={uploadServeUrl(String(path))} target="_blank" rel="noreferrer">
                       Attachment {idx + 1}
                     </a>
                   </li>
@@ -252,17 +253,19 @@ export default function AdminTicketsPage() {
             <div className={adminStyles.detailBlock}>
               <span className={adminStyles.detailLabel}>Screenshots</span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
-                {images.map((src, idx) => (
+                {images.map((src, idx) => {
+                  const url = uploadServeUrl(src);
+                  return (
                   <a
                     key={`${src}-${idx}`}
-                    href={src}
+                    href={url}
                     target="_blank"
                     rel="noreferrer"
                     style={{ display: "block" }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={src}
+                      src={url}
                       alt={`HRM issue attachment ${idx + 1}`}
                       style={{
                         maxWidth: 220,
@@ -273,7 +276,8 @@ export default function AdminTicketsPage() {
                       }}
                     />
                   </a>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}

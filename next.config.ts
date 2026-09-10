@@ -12,6 +12,16 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async rewrites() {
+    // Runtime files under public/uploads are not in the build snapshot — proxy
+    // legacy /uploads/* links (tickets, leave docs, etc.) through the API streamer.
+    return [
+      {
+        source: "/uploads/:path*",
+        destination: "/api/uploads/:path*",
+      },
+    ];
+  },
   async headers() {
     return [
       {
