@@ -424,6 +424,24 @@ function buildFilterFromWhere(
       return { [ref.field]: { $regex: `^${escaped}$`, $options: "i" } };
     }
 
+    // LOWER(TRIM(col)) = ?  /  LOWER(col) = ?  /  TRIM(col) = ?
+    // Needed for employee login (case-insensitive username/email).
+    m = s.match(
+      /^(?:LOWER\s*\(\s*(?:TRIM\s*\(\s*([\w.`]+)\s*\)|([\w.`]+))\s*\)|TRIM\s*\(\s*([\w.`]+)\s*\))\s*=\s*\?\s*$/i,
+    );
+    if (m) {
+      const ref = fieldRef(m[1] || m[2] || m[3]);
+      const val = String(take() ?? "").trim();
+      const escaped = val.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const caseInsensitive = /LOWER\s*\(/i.test(s);
+      return {
+        [ref.field]: {
+          $regex: `^\\s*${escaped}\\s*$`,
+          $options: caseInsensitive ? "i" : "",
+        },
+      };
+    }
+
     // CAST(id AS CHAR) = ?
     m = s.match(/^CAST\s*\(\s*([\w.`]+)\s+AS\s+\w+\s*\)\s*(=|!=|<>|>=|<=|>|<)\s*\?\s*$/i);
     if (m) {

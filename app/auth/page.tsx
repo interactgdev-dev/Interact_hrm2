@@ -97,7 +97,8 @@ export default function LoginPage() {
     async (rawLoginId: string, rawPassword: string) => {
       setError("");
       setLoading(true);
-      const id = rawLoginId.trim().toLowerCase();
+      const trimmedLoginId = rawLoginId.trim();
+      const id = trimmedLoginId.toLowerCase();
       const isAdminId =
         id === "admin@interact.com" || id === "interactadmin" || id === "admin";
 
@@ -105,14 +106,14 @@ export default function LoginPage() {
         const adminRes = await fetch("/api/admin-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loginId: rawLoginId, password: rawPassword }),
+          body: JSON.stringify({ loginId: trimmedLoginId, password: rawPassword }),
         });
         const adminData = await adminRes.json();
         if (adminData.success) {
           if (typeof window !== "undefined") {
-            localStorage.setItem("loginId", rawLoginId);
+            localStorage.setItem("loginId", trimmedLoginId);
           }
-          await persistCredentials(rawLoginId, rawPassword);
+          await persistCredentials(trimmedLoginId, rawPassword);
           router.push("/dashboard");
           setLoading(false);
           return;
@@ -126,15 +127,15 @@ export default function LoginPage() {
         const res = await fetch("/api/employee-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loginId: rawLoginId, password: rawPassword }),
+          body: JSON.stringify({ loginId: trimmedLoginId, password: rawPassword }),
         });
         const data = await res.json();
         if (data.success) {
           if (typeof window !== "undefined") {
-            localStorage.setItem("loginId", rawLoginId);
+            localStorage.setItem("loginId", trimmedLoginId);
             localStorage.setItem("userRole", data.role || data.employee?.role || "Officer");
           }
-          await persistCredentials(rawLoginId, rawPassword);
+          await persistCredentials(trimmedLoginId, rawPassword);
           // Keep role in localStorage for My Team / hierarchy. Dedicated
           // bod|hod|management|leader dashboard routes do not exist → always employee-dashboard.
           router.push("/employee-dashboard");
@@ -250,7 +251,7 @@ export default function LoginPage() {
                   type="text"
                   name="username"
                   autoComplete="username"
-                  placeholder="Email or Username"
+                  placeholder="Email, username, or employee ID"
                   className={styles.input}
                   value={loginId}
                   onChange={(e) => setLoginId(e.target.value)}
