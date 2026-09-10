@@ -650,37 +650,28 @@
   margin-left: 4px;
 }
 
-/* ── Saved logins panel — left of fields (not under email) ─ */
+/* ── Saved logins panel — directly under password field ─ */
+.passwordBlock {
+  position: relative;
+  width: 100%;
+}
+
 .savedPanel {
   position: absolute;
-  top: 72px; /* roughly beside password row */
-  right: calc(100% + 14px);
-  left: auto;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
   z-index: 40;
-  width: min(280px, 42vw);
-  max-width: 300px;
+  width: 100%;
+  max-width: none;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  overflow: visible;
-  animation: fadeLeft 0.22s ease both;
-}
-
-/* Caret pointing toward the form fields */
-.savedPanel::after {
-  content: "";
-  position: absolute;
-  top: 28px;
-  right: -8px;
-  width: 14px;
-  height: 14px;
-  background: rgba(255, 255, 255, 0.96);
-  border-right: 1px solid #e5e7eb;
-  border-top: 1px solid #e5e7eb;
-  transform: rotate(45deg);
+  overflow: hidden;
+  animation: fadeUp 0.22s ease both;
 }
 
 .savedPanelTitle {
@@ -692,14 +683,11 @@
   color: #616061;
   background: #fafafa;
   border-bottom: 1px solid #e8e8e8;
-  border-radius: 12px 12px 0 0;
 }
 
 .savedPanelList {
   max-height: 220px;
   overflow-y: auto;
-  border-radius: 0 0 12px 12px;
-  overflow: hidden;
 }
 
 .savedAccountBtn {
@@ -819,22 +807,12 @@
   }
 
   .savedPanel {
-    /* Narrow screens: no room on the left — sit under password field */
-    top: auto;
-    bottom: auto;
+    /* Same placement on narrow screens: under password */
+    top: calc(100% + 6px);
     left: 0;
     right: 0;
     width: 100%;
     max-width: none;
-    margin-top: 0;
-    transform: none;
-    position: absolute;
-    top: 118px; /* below email + password rows */
-    animation: fadeUp 0.22s ease both;
-  }
-
-  .savedPanel::after {
-    display: none;
   }
 
   .topLogo {

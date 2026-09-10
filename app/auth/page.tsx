@@ -260,28 +260,55 @@ export default function LoginPage() {
                   onBlur={closeSavedPicker}
                   required
                 />
-                <div className={styles.passwordWrapper}>
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    name="password"
-                    autoComplete="current-password"
-                    placeholder="Password"
-                    className={styles.input}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onFocus={openSavedPickerIfNeeded}
-                    onClick={openSavedPickerIfNeeded}
-                    onBlur={closeSavedPicker}
-                    required
-                  />
-                  <button
-                    type="button"
-                    className={styles.togglePasswordBtn}
-                    onClick={() => setShowPassword(!showPassword)}
-                    aria-label="Toggle password visibility"
-                  >
-                    {showPassword ? <FaEyeSlash /> : <FaEye />}
-                  </button>
+                <div className={styles.passwordBlock}>
+                  <div className={styles.passwordWrapper}>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      name="password"
+                      autoComplete="current-password"
+                      placeholder="Password"
+                      className={styles.input}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onFocus={openSavedPickerIfNeeded}
+                      onClick={openSavedPickerIfNeeded}
+                      onBlur={closeSavedPicker}
+                      required
+                    />
+                    <button
+                      type="button"
+                      className={styles.togglePasswordBtn}
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label="Toggle password visibility"
+                    >
+                      {showPassword ? <FaEyeSlash /> : <FaEye />}
+                    </button>
+                  </div>
+                  {hasSavedPanel ? (
+                    <aside
+                      className={styles.savedPanel}
+                      onMouseDown={(e) => e.preventDefault()}
+                      aria-label="Saved logins on this device"
+                    >
+                      <div className={styles.savedPanelTitle}>Saved on this device</div>
+                      <div className={styles.savedPanelList}>
+                        {savedLogins.map((saved) => (
+                          <button
+                            key={saved.loginId}
+                            type="button"
+                            className={styles.savedAccountBtn}
+                            onClick={() => handleUseSaved(saved)}
+                          >
+                            <FaUser className={styles.savedAccountIcon} aria-hidden />
+                            <span className={styles.savedAccountText}>
+                              <strong>{saved.loginId}</strong>
+                              <span>Saved password</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </aside>
+                  ) : null}
                 </div>
                 <div className={styles.rowBetween}>
                   <label className={styles.remember}>
@@ -303,32 +330,6 @@ export default function LoginPage() {
                   {loading ? "Logging in..." : "Login"}
                 </button>
               </form>
-
-              {hasSavedPanel ? (
-                <aside
-                  className={styles.savedPanel}
-                  onMouseDown={(e) => e.preventDefault()}
-                  aria-label="Saved logins on this device"
-                >
-                  <div className={styles.savedPanelTitle}>Saved on this device</div>
-                  <div className={styles.savedPanelList}>
-                    {savedLogins.map((saved) => (
-                      <button
-                        key={saved.loginId}
-                        type="button"
-                        className={styles.savedAccountBtn}
-                        onClick={() => handleUseSaved(saved)}
-                      >
-                        <FaUser className={styles.savedAccountIcon} aria-hidden />
-                        <span className={styles.savedAccountText}>
-                          <strong>{saved.loginId}</strong>
-                          <span>Saved password</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-              ) : null}
             </div>
 
             {error && <div className={styles.error}>{error}</div>}
