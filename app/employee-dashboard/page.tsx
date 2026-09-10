@@ -9,6 +9,7 @@ import {
   saveTicketSeen,
   type TicketThreadMessage,
 } from "../../lib/ticket-thread";
+import { parseTicketInstant } from "@/lib/ticket-time";
 import { ATTENDANCE_DATA_CHANGED } from "../../lib/ui-sync/breakPrayerDataRefresh";
 import type { TicketCategory } from "../../lib/ticket-catalog";
 import { resolveEventColor } from "../../lib/event-colors";
@@ -793,8 +794,14 @@ export default function EmployeeDashboardPage() {
             ? 1
             : 0;
         if (bUnread !== aUnread) return bUnread - aUnread;
-        const aMs = new Date(a.requested_at || a.updated_at || 0).getTime();
-        const bMs = new Date(b.requested_at || b.updated_at || 0).getTime();
+        const aMs =
+          parseTicketInstant(a.requested_at)?.getTime() ||
+          parseTicketInstant(a.updated_at)?.getTime() ||
+          0;
+        const bMs =
+          parseTicketInstant(b.requested_at)?.getTime() ||
+          parseTicketInstant(b.updated_at)?.getTime() ||
+          0;
         if (bMs !== aMs) return bMs - aMs;
         return b.id - a.id;
       })

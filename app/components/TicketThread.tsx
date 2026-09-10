@@ -1,4 +1,5 @@
 import type { TicketThreadMessage } from "@/lib/ticket-thread";
+import { formatTicketDateTime } from "@/lib/ticket-time";
 import styles from "./TicketThread.module.css";
 
 type Props = {
@@ -21,7 +22,7 @@ export default function TicketThread({ messages, compact = false }: Props) {
           >
             <div className={styles.bubbleHead}>
               <span className={styles.author}>{m.author}</span>
-              <span className={styles.time}>{new Date(m.created_at).toLocaleString()}</span>
+              <span className={styles.time}>{formatTicketDateTime(m.created_at)}</span>
             </div>
             <p className={styles.body}>{m.body}</p>
           </div>

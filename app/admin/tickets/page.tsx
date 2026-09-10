@@ -10,6 +10,7 @@ import { previewTicketToastOnPage } from "../../../lib/ticket-toast-demo";
 import type { TicketThreadMessage } from "../../../lib/ticket-thread";
 import { toastError, toastInfo } from "@/lib/app-toast";
 import { uploadServeUrl } from "@/lib/upload-serve";
+import { formatTicketDateTime, parseTicketInstant } from "@/lib/ticket-time";
 
 type Ticket = {
   id: number;
@@ -46,7 +47,8 @@ export default function AdminTicketsPage() {
       if (data.success) {
         const list = [...(data.tickets || [])].sort(
           (a: Ticket, b: Ticket) =>
-            new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime() ||
+            (parseTicketInstant(b.requested_at)?.getTime() || 0) -
+              (parseTicketInstant(a.requested_at)?.getTime() || 0) ||
             b.id - a.id
         );
         setTickets(list);
@@ -386,7 +388,7 @@ export default function AdminTicketsPage() {
                       className={adminStyles.muted}
                       style={{ marginTop: 6, fontSize: 12, color: "#94a3b8" }}
                     >
-                      {new Date(t.requested_at).toLocaleString()}
+                      {formatTicketDateTime(t.requested_at)}
                     </div>
                   </div>
                   <div className={adminStyles.actions}>

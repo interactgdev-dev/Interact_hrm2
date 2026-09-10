@@ -662,11 +662,12 @@ async function nextNumericId(db: Db, collection: string): Promise<number> {
   return typeof max === "number" ? max + 1 : 1;
 }
 
-function sqlNow(): string {
-  return new Date().toISOString().slice(0, 19).replace("T", " ");
+function sqlNow(): Date {
+  // Real UTC instant — Mongo stores BSON Date; UI formats in Asia/Karachi.
+  return new Date();
 }
 
-function addInterval(base: any, amount: number, unit: string): string {
+function addInterval(base: any, amount: number, unit: string): Date | string {
   const parsed = parseUtcWallDateTime(base);
   const d = parsed ? new Date(parsed.getTime()) : null;
   if (!d) {
@@ -675,13 +676,13 @@ function addInterval(base: any, amount: number, unit: string): string {
     if (u.startsWith("DAY")) today.setUTCDate(today.getUTCDate() + amount);
     else if (u.startsWith("HOUR")) today.setUTCHours(today.getUTCHours() + amount);
     else if (u.startsWith("MINUTE")) today.setUTCMinutes(today.getUTCMinutes() + amount);
-    return sqlNow();
+    return today;
   }
   const u = unit.toUpperCase();
   if (u.startsWith("DAY")) d.setUTCDate(d.getUTCDate() + amount);
   else if (u.startsWith("HOUR")) d.setUTCHours(d.getUTCHours() + amount);
   else if (u.startsWith("MINUTE")) d.setUTCMinutes(d.getUTCMinutes() + amount);
-  return d.toISOString().slice(0, 19).replace("T", " ");
+  return d;
 }
 
 const UPSERT_KEYS: Record<string, string[]> = {

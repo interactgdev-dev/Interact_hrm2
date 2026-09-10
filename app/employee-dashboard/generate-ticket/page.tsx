@@ -17,6 +17,7 @@ import {
 } from "../../../lib/ticket-thread";
 import { formatTicketStatusLabel, isTicketClosed } from "../../../lib/ticket-status";
 import TicketThread from "../../components/TicketThread";
+import { formatTicketDateTime } from "@/lib/ticket-time";
 import styles from "./generate-ticket.module.css";
 
 type TicketRow = {
@@ -780,7 +781,7 @@ function GenerateTicketPageInner() {
                   <div className={styles.historySubject}>{t.subject}</div>
                   <div className={styles.historyMeta}>
                     {categoryLabel(t.category)} · {ticketTypeLabel(t.category, t.ticket_type)} ·{" "}
-                    {new Date(t.requested_at).toLocaleString()}
+                    {formatTicketDateTime(t.requested_at)}
                   </div>
                   <div className={styles.historyHint}>
                     {t.ticket_type === "leave"

@@ -85,7 +85,25 @@ export function sortTicketsNewestFirst<T extends {
   const ms = (t: T) => {
     for (const raw of [t.requested_at, t.updated_at]) {
       if (raw == null || raw === "") continue;
-      const n = new Date(String(raw)).getTime();
+      // Prefer ISO/Date; naive SQL UTC wall → append Z (same as formatTicketDateTime)
+      if (raw instanceof Date) {
+        const n = raw.getTime();
+        if (Number.isFinite(n)) return n;
+        continue;
+      }
+      const s = String(raw).trim();
+      if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(s)) {
+        const n = new Date(s).getTime();
+        if (Number.isFinite(n)) return n;
+        continue;
+      }
+      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s)) {
+        const iso = s.includes("T") ? s : s.replace(" ", "T");
+        const n = new Date(`${iso.replace(/\.\d+$/, "")}Z`).getTime();
+        if (Number.isFinite(n)) return n;
+        continue;
+      }
+      const n = new Date(s).getTime();
       if (Number.isFinite(n)) return n;
     }
     return Number(t.id) || 0;
