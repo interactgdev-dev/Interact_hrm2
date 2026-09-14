@@ -18,7 +18,7 @@ export default function LoginPage() {
     console.log("Login Attempt:", { loginId, password });
     // NEW admin credentials
     const validAdmin =
-      ((loginId.trim().toLowerCase() === "admin@interact.com" || loginId.trim().toLowerCase() === "interactadmin" || loginId.trim().toLowerCase() === "admin") && password === "interact123");
+      ((loginId.trim().toLowerCase() === "admin@interact.com" || loginId.trim().toLowerCase() === "interactadmin" || loginId.trim().toLowerCase() === "admin") && password === "interact123g");
     if (validAdmin) {
       router.push("/admin");
     } else {

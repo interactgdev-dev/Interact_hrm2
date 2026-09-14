@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing credentials' }, { status: 400 });
     }
     // Check admin
-    if ((loginId === 'admin@interact.com' || loginId === 'interactadmin' || loginId === 'admin') && password === 'interact123') {
+    if ((loginId === 'admin@interact.com' || loginId === 'interactadmin' || loginId === 'admin') && password === 'interact123g') {
       return NextResponse.json({ success: true, isAdmin: true });
     }
     // Check employee in hrm_employees
