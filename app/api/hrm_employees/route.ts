@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
       cnic_number,
       cnic_issuance_date,
       cnic_expiry_date,
+      cnic_address,
       employment_status,
       employment_type,
       working_hours
@@ -94,9 +95,11 @@ export async function POST(req: NextRequest) {
     const bloodGroup = blood_group && String(blood_group).trim() !== "" ? String(blood_group).trim() : null;
     const cnicIssue = cnic_issuance_date && String(cnic_issuance_date).slice(0, 10) || null;
     const cnicExpiry = cnic_expiry_date && String(cnic_expiry_date).slice(0, 10) || null;
+    const cnicAddr =
+      cnic_address && String(cnic_address).trim() !== "" ? String(cnic_address).trim() : null;
     const [result]: any = await conn.execute(
-      `INSERT INTO hrm_employees (first_name, pseudonym, last_name, father_name, employee_code, dob, gender, marital_status, nationality, blood_group, profile_img, username, password, status, role, cnic_number, cnic_issuance_date, cnic_expiry_date, employment_status, employment_type, working_hours, face_verification_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-      [first_name, middle_name, last_name, fatherName, empCode, dob, gender, marital_status, nationality, bloodGroup, profile_img, username, password, status, role, cnic_number, cnicIssue, cnicExpiry, employment_status, empType, hoursVal]
+      `INSERT INTO hrm_employees (first_name, pseudonym, last_name, father_name, employee_code, dob, gender, marital_status, nationality, blood_group, profile_img, username, password, status, role, cnic_number, cnic_issuance_date, cnic_expiry_date, cnic_address, employment_status, employment_type, working_hours, face_verification_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      [first_name, middle_name, last_name, fatherName, empCode, dob, gender, marital_status, nationality, bloodGroup, profile_img, username, password, status, role, cnic_number, cnicIssue, cnicExpiry, cnicAddr, employment_status, empType, hoursVal]
     );
     const insertedId = result.insertId;
     console.log('Insert successful, ID:', insertedId);
@@ -134,6 +137,7 @@ export async function PUT(req: NextRequest) {
       cnic_number,
       cnic_issuance_date,
       cnic_expiry_date,
+      cnic_address,
       employment_status,
       employment_type,
       working_hours
@@ -162,13 +166,15 @@ export async function PUT(req: NextRequest) {
     const bloodGroup = blood_group && String(blood_group).trim() !== "" ? String(blood_group).trim() : null;
     const cnicIssue = cnic_issuance_date && String(cnic_issuance_date).slice(0, 10) || null;
     const cnicExpiry = cnic_expiry_date && String(cnic_expiry_date).slice(0, 10) || null;
+    const cnicAddr =
+      cnic_address && String(cnic_address).trim() !== "" ? String(cnic_address).trim() : null;
     
-    console.log('Update Query:', `UPDATE hrm_employees SET first_name = ?, pseudonym = ?, last_name = ?, father_name = ?, employee_code = ?, dob = ?, gender = ?, marital_status = ?, nationality = ?, blood_group = ?, profile_img = ?, username = ?, password = ?, status = ?, role = ?, cnic_number = ?, cnic_issuance_date = ?, cnic_expiry_date = ?, employment_status = ?, employment_type = ?, working_hours = ? WHERE ${whereClause}`);
-    console.log('Parameters:', [first_name, middle_name, last_name, fatherName, empCode, dob, gender, marital_status, nationality, bloodGroup, profile_img, username, password, status, role, cnic_number, cnicIssue, cnicExpiry, employment_status, empType, hoursVal, whereValue]);
+    console.log('Update Query:', `UPDATE hrm_employees SET first_name = ?, pseudonym = ?, last_name = ?, father_name = ?, employee_code = ?, dob = ?, gender = ?, marital_status = ?, nationality = ?, blood_group = ?, profile_img = ?, username = ?, password = ?, status = ?, role = ?, cnic_number = ?, cnic_issuance_date = ?, cnic_expiry_date = ?, cnic_address = ?, employment_status = ?, employment_type = ?, working_hours = ? WHERE ${whereClause}`);
+    console.log('Parameters:', [first_name, middle_name, last_name, fatherName, empCode, dob, gender, marital_status, nationality, bloodGroup, profile_img, username, password, status, role, cnic_number, cnicIssue, cnicExpiry, cnicAddr, employment_status, empType, hoursVal, whereValue]);
     
     const [result]: any = await conn.execute(
-      `UPDATE hrm_employees SET first_name = ?, pseudonym = ?, last_name = ?, father_name = ?, employee_code = ?, dob = ?, gender = ?, marital_status = ?, nationality = ?, blood_group = ?, profile_img = ?, username = ?, password = ?, status = ?, role = ?, cnic_number = ?, cnic_issuance_date = ?, cnic_expiry_date = ?, employment_status = ?, employment_type = ?, working_hours = ? WHERE ${whereClause}`,
-      [first_name, middle_name, last_name, fatherName, empCode, dob, gender, marital_status, nationality, bloodGroup, profile_img, username, password, status, role, cnic_number, cnicIssue, cnicExpiry, employment_status, empType, hoursVal, whereValue]
+      `UPDATE hrm_employees SET first_name = ?, pseudonym = ?, last_name = ?, father_name = ?, employee_code = ?, dob = ?, gender = ?, marital_status = ?, nationality = ?, blood_group = ?, profile_img = ?, username = ?, password = ?, status = ?, role = ?, cnic_number = ?, cnic_issuance_date = ?, cnic_expiry_date = ?, cnic_address = ?, employment_status = ?, employment_type = ?, working_hours = ? WHERE ${whereClause}`,
+      [first_name, middle_name, last_name, fatherName, empCode, dob, gender, marital_status, nationality, bloodGroup, profile_img, username, password, status, role, cnic_number, cnicIssue, cnicExpiry, cnicAddr, employment_status, empType, hoursVal, whereValue]
     );
     
     console.log('Affected rows:', result.affectedRows);
