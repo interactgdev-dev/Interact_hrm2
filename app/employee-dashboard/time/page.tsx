@@ -23,6 +23,13 @@ import {
   SERVER_TIMEZONE,
   getParts
 } from "../../../lib/timezone";
+import {
+  attendanceSessionDate,
+  breakSessionDate,
+  filterAttendanceByClockInSessionDate,
+  filterRowsByClockInSessionDate,
+  overnightFetchRange,
+} from "@/lib/break-session-date";
 
 
 // Helper to format duration in hh:mm:ss
@@ -166,17 +173,20 @@ export default function EmployeeTimePage() {
     if (!employeeId) return;
     const from = breakFromDate || breakToDate || today;
     const to = breakToDate || breakFromDate || today;
+    const range = overnightFetchRange(from, to);
     const params = new URLSearchParams({
       employeeId,
-      fromDate: from,
-      toDate: to,
+      fromDate: range.fromDate,
+      toDate: range.toDate,
     });
     setLoadingBreaks(true);
     fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
-        if (data.success) setBreaks(data.breaks || []);
-        else setBreaks([]);
+        if (data.success) {
+          const list = filterRowsByClockInSessionDate(data.breaks || [], from, to);
+          setBreaks(list);
+        } else setBreaks([]);
       })
       .catch(() => setBreaks([]))
       .finally(() => setLoadingBreaks(false));
@@ -186,17 +196,20 @@ export default function EmployeeTimePage() {
     if (!employeeId) return;
     const from = prayerFromDate || prayerToDate || today;
     const to = prayerToDate || prayerFromDate || today;
+    const range = overnightFetchRange(from, to);
     const params = new URLSearchParams({
       employeeId,
-      fromDate: from,
-      toDate: to,
+      fromDate: range.fromDate,
+      toDate: range.toDate,
     });
     setLoadingPrayer(true);
     fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
-        if (data.success) setPrayerBreaks(data.prayer_breaks || []);
-        else setPrayerBreaks([]);
+        if (data.success) {
+          const list = filterRowsByClockInSessionDate(data.prayer_breaks || [], from, to);
+          setPrayerBreaks(list);
+        } else setPrayerBreaks([]);
       })
       .catch(() => setPrayerBreaks([]))
       .finally(() => setLoadingPrayer(false));
@@ -206,10 +219,11 @@ export default function EmployeeTimePage() {
     if (!employeeId) return;
     const from = attFromDate || attToDate || today;
     const to = attToDate || attFromDate || today;
+    const range = overnightFetchRange(from, to);
     const params = new URLSearchParams({
       employeeId,
-      fromDate: from,
-      toDate: to,
+      fromDate: range.fromDate,
+      toDate: range.toDate,
       summary: "1",
     });
     setLoadingAttendance(true);
@@ -217,9 +231,9 @@ export default function EmployeeTimePage() {
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
-          const list = data.attendance || [];
-          const valid = list.filter((a: any) => a.clock_in && toKarachiEpochMs(a.clock_in) !== null);
-          const invalid = list.filter((a: any) => !a.clock_in || toKarachiEpochMs(a.clock_in) === null);
+          const scoped = filterAttendanceByClockInSessionDate(data.attendance || [], from, to);
+          const valid = scoped.filter((a: any) => a.clock_in && toKarachiEpochMs(a.clock_in) !== null);
+          const invalid = scoped.filter((a: any) => !a.clock_in || toKarachiEpochMs(a.clock_in) === null);
           valid.sort(
             (a: any, b: any) =>
               (toKarachiEpochMs(b.clock_in) || 0) - (toKarachiEpochMs(a.clock_in) || 0)
@@ -310,13 +324,7 @@ export default function EmployeeTimePage() {
         total_break_time: formatDuration(sessionSeconds),
         total_break_time_today: formatDuration(dailySeconds),
         exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-        date_display: b.session_clock_in
-          ? getDateStringInTimeZone(b.session_clock_in, SERVER_TIMEZONE)
-          : b.date
-          ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE)
-          : b.break_start
-          ? getDateStringInTimeZone(b.break_start, SERVER_TIMEZONE)
-          : "",
+        date_display: breakSessionDate(b),
         isRunning,
       };
     });
@@ -370,13 +378,7 @@ export default function EmployeeTimePage() {
         total_prayer_time: formatDuration(sessionSeconds),
         total_prayer_time_today: formatDuration(dailySeconds),
         exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-        date_display: p.session_clock_in
-          ? getDateStringInTimeZone(p.session_clock_in, SERVER_TIMEZONE)
-          : p.date
-          ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE)
-          : p.prayer_break_start
-          ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE)
-          : "",
+        date_display: breakSessionDate(p),
         isRunning,
       };
     });
@@ -432,7 +434,7 @@ export default function EmployeeTimePage() {
   const downloadAttendanceCSV = async () => {
     const XLSX = await import("xlsx");
     const data = attendance.map(row => {
-      const date = row.date ? getDateStringInTimeZone(row.date, SERVER_TIMEZONE) : "";
+      const date = attendanceSessionDate(row) || (row.date ? getDateStringInTimeZone(row.date, SERVER_TIMEZONE) : "");
       const clockIn = row.clock_in ? getTimeStringInTimeZone(row.clock_in, SERVER_TIMEZONE) : "";
       const clockOut = row.clock_out ? getTimeStringInTimeZone(row.clock_out, SERVER_TIMEZONE) : "";
       const key = row.id ?? `${row.employee_id}-${row.clock_in}`;
@@ -795,7 +797,7 @@ export default function EmployeeTimePage() {
                         </td>
                         <td>{displayPseudonym(a)}</td>
                         <td>{a.department_name || employeeDepartment || "—"}</td>
-                        <td>{formatDateOnly(a.clock_in || a.clock_out || a.date)}</td>
+                        <td>{attendanceSessionDate(a) || formatDateOnly(a.clock_in || a.clock_out || a.date)}</td>
                         <td>{a.clock_in ? getTimeStringInTimeZone(a.clock_in, SERVER_TIMEZONE) : ""}</td>
                         <td>
                           {a.clock_out ? (
