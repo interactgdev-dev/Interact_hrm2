@@ -134,3 +134,56 @@ export function filterRowsByClockInSessionDate<T extends Record<string, unknown>
     return Boolean(eventDate && eventDate >= fromDate && eventDate <= toDate);
   });
 }
+
+/** Attendance row "shift date" = clock-in calendar day (Karachi). */
+export function attendanceSessionDate(row: {
+  clock_in?: string | null;
+  date?: string | null;
+}): string {
+  if (row.clock_in) {
+    return getDateStringInTimeZone(String(row.clock_in), SERVER_TIMEZONE);
+  }
+  if (row.date) {
+    const raw = String(row.date);
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    return getDateStringInTimeZone(raw, SERVER_TIMEZONE);
+  }
+  return "";
+}
+
+function attendanceClockOutDate(row: {
+  clock_out?: string | null;
+}): string {
+  if (!row.clock_out) return "";
+  return getDateStringInTimeZone(String(row.clock_out), SERVER_TIMEZONE);
+}
+
+/**
+ * Keep attendance rows for the viewed range by clock-in session date.
+ * Overnight: open (or still crossing) sessions from D-1 stay visible on D.
+ */
+export function filterAttendanceByClockInSessionDate<T extends Record<string, unknown>>(
+  rows: T[],
+  fromDate: string,
+  toDate: string,
+): T[] {
+  if (!fromDate || !toDate || !rows.length) return rows;
+
+  const dayBeforeFrom = addCalendarDays(fromDate, -1);
+
+  return rows.filter((row) => {
+    const sessionDate = attendanceSessionDate(row as any);
+    if (!sessionDate) return false;
+
+    if (sessionDate >= fromDate && sessionDate <= toDate) return true;
+
+    // Overnight continuation into viewed day(s)
+    if (sessionDate === dayBeforeFrom && sessionDate < fromDate) {
+      const outDate = attendanceClockOutDate(row as any);
+      const stillOpen = !(row as any).clock_out;
+      return stillOpen || Boolean(outDate && outDate >= fromDate);
+    }
+
+    return false;
+  });
+}
