@@ -12,6 +12,11 @@ import { useEmployeePhotoMap } from "../components/use-employee-photo-map";
 import { FaFileExcel } from "react-icons/fa";
 import { getDateStringInTimeZone, getTimeStringInTimeZone, SERVER_TIMEZONE } from "../../lib/timezone";
 import { toastError, toastSuccess } from "@/lib/app-toast";
+import {
+  breakSessionDate,
+  filterRowsByClockInSessionDate,
+  overnightFetchRange,
+} from "@/lib/break-session-date";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
@@ -63,7 +68,12 @@ export default function PrayerSummaryView() {
   useEffect(() => {
     const effectiveFrom = fromDate || toDate || today;
     const effectiveTo = toDate || fromDate || today;
-    const params = new URLSearchParams({ fromDate: effectiveFrom, toDate: effectiveTo });
+    // ±1 day so overnight clock-in sessions (pre + post midnight) load together
+    const range = overnightFetchRange(effectiveFrom, effectiveTo);
+    const params = new URLSearchParams({
+      fromDate: range.fromDate,
+      toDate: range.toDate,
+    });
     setLoading(true);
     fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
@@ -83,7 +93,9 @@ export default function PrayerSummaryView() {
   }, [prayerBreaks]);
 
   const filteredPrayerBreaks = useMemo(() => {
-    return prayerBreaks.filter((p) => {
+    const effectiveFrom = fromDate || toDate || today;
+    const effectiveTo = toDate || fromDate || today;
+    const scoped = prayerBreaks.filter((p) => {
       const term = deferredSearch.trim().toLowerCase();
       if (term) {
         const employeeName = (p.employee_name || "").toLowerCase();
@@ -96,7 +108,9 @@ export default function PrayerSummaryView() {
       if (department && p.department_name !== department) return false;
       return true;
     });
-  }, [prayerBreaks, deferredSearch, department]);
+    // Attribute to clock-in session date (overnight: keep pre-midnight totals)
+    return filterRowsByClockInSessionDate(scoped, effectiveFrom, effectiveTo);
+  }, [prayerBreaks, deferredSearch, department, fromDate, toDate, today]);
 
   const staticTotals = useMemo(() => {
     const map = new Map<string, number>();
@@ -132,11 +146,7 @@ export default function PrayerSummaryView() {
         const exceedToday = dailySeconds > 1800 ? dailySeconds - 1800 : 0;
         return {
           ...p,
-          date_display: p.session_clock_in
-            ? getDateStringInTimeZone(p.session_clock_in, SERVER_TIMEZONE)
-            : p.date
-            ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE)
-            : (p.prayer_break_start ? getDateStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : ""),
+          date_display: breakSessionDate(p),
           prayer_start_display: p.prayer_break_start ? getTimeStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : "",
           prayer_end_display: p.prayer_break_end ? getTimeStringInTimeZone(p.prayer_break_end, SERVER_TIMEZONE) : (isRunning ? "Running..." : ""),
           total_prayer_time: formatDuration(sessionSeconds),
@@ -210,7 +220,11 @@ export default function PrayerSummaryView() {
         toastSuccess(`Imported ${data.imported} prayer break rows`);
         const effectiveFrom = fromDate || toDate || today;
         const effectiveTo = toDate || fromDate || today;
-        const params = new URLSearchParams({ fromDate: effectiveFrom, toDate: effectiveTo });
+        const range = overnightFetchRange(effectiveFrom, effectiveTo);
+        const params = new URLSearchParams({
+          fromDate: range.fromDate,
+          toDate: range.toDate,
+        });
         const r = await fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" });
         const refreshed = await r.json();
         setPrayerBreaks(refreshed.success ? refreshed.prayer_breaks || [] : []);

@@ -13,6 +13,11 @@ import { FaFileExcel } from "react-icons/fa";
 import { getDateStringInTimeZone, getTimeStringInTimeZone, SERVER_TIMEZONE } from "../../lib/timezone";
 import { toastError, toastSuccess } from "@/lib/app-toast";
 import type { SessionBreakConfig } from "@/lib/session-break-config";
+import {
+  breakSessionDate,
+  filterRowsByClockInSessionDate,
+  overnightFetchRange,
+} from "@/lib/break-session-date";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
@@ -63,7 +68,12 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
   useEffect(() => {
     const effectiveFrom = fromDate || toDate || today;
     const effectiveTo = toDate || fromDate || today;
-    const params = new URLSearchParams({ fromDate: effectiveFrom, toDate: effectiveTo });
+    // ±1 day so overnight clock-in sessions (pre + post midnight) load together
+    const range = overnightFetchRange(effectiveFrom, effectiveTo);
+    const params = new URLSearchParams({
+      fromDate: range.fromDate,
+      toDate: range.toDate,
+    });
     setLoading(true);
     fetch(`${config.apiPath}?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
@@ -83,7 +93,9 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
   }, [rows, startField, endField]);
 
   const filteredRows = useMemo(() => {
-    return rows.filter((p) => {
+    const effectiveFrom = fromDate || toDate || today;
+    const effectiveTo = toDate || fromDate || today;
+    const scoped = rows.filter((p) => {
       const term = deferredSearch.trim().toLowerCase();
       if (term) {
         const employeeName = (p.employee_name || "").toLowerCase();
@@ -96,7 +108,9 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
       if (department && p.department_name !== department) return false;
       return true;
     });
-  }, [rows, deferredSearch, department]);
+    // Attribute to clock-in session date (overnight: keep pre-midnight totals)
+    return filterRowsByClockInSessionDate(scoped, effectiveFrom, effectiveTo);
+  }, [rows, deferredSearch, department, fromDate, toDate, today]);
 
   const staticTotals = useMemo(() => {
     const map = new Map<string, number>();
@@ -131,13 +145,7 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
         const dailySeconds = liveTotals.get(key) || sessionSeconds;
         return {
           ...p,
-          date_display: p.session_clock_in
-            ? getDateStringInTimeZone(p.session_clock_in, SERVER_TIMEZONE)
-            : p.date
-            ? getDateStringInTimeZone(p.date, SERVER_TIMEZONE)
-            : p[startField]
-            ? getDateStringInTimeZone(p[startField], SERVER_TIMEZONE)
-            : "",
+          date_display: breakSessionDate(p),
           start_display: p[startField] ? getTimeStringInTimeZone(p[startField], SERVER_TIMEZONE) : "",
           end_display: p[endField] ? getTimeStringInTimeZone(p[endField], SERVER_TIMEZONE) : isRunning ? "Running..." : "",
           total_time: formatDuration(sessionSeconds),

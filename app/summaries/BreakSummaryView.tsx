@@ -14,6 +14,11 @@ import type { EmployeeDetailPayload } from "../components/EmployeeDetailPopup";
 import { buildEmployeeDetailPayload } from "@/lib/employee-detail-from-row";
 import { useEmployeePhotoMap } from "../components/use-employee-photo-map";
 import { toastError, toastSuccess } from "@/lib/app-toast";
+import {
+  breakSessionDate,
+  filterRowsByClockInSessionDate,
+  overnightFetchRange,
+} from "@/lib/break-session-date";
 
 function formatDuration(seconds: number) {
   const h = Math.floor(seconds / 3600).toString().padStart(2, "0");
@@ -81,7 +86,12 @@ export default function BreakSummaryView() {
   useEffect(() => {
     const effectiveFrom = fromDate || toDate || today;
     const effectiveTo = toDate || fromDate || today;
-    const params = new URLSearchParams({ fromDate: effectiveFrom, toDate: effectiveTo });
+    // ±1 day so overnight clock-in sessions (pre + post midnight) load together
+    const range = overnightFetchRange(effectiveFrom, effectiveTo);
+    const params = new URLSearchParams({
+      fromDate: range.fromDate,
+      toDate: range.toDate,
+    });
     setLoading(true);
     fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
@@ -102,7 +112,9 @@ export default function BreakSummaryView() {
   }, [breaks]);
 
   const filteredBreaks = useMemo(() => {
-    return breaks.filter((b) => {
+    const effectiveFrom = fromDate || toDate || today;
+    const effectiveTo = toDate || fromDate || today;
+    const scoped = breaks.filter((b) => {
       const term = deferredSearch.trim().toLowerCase();
       if (term) {
         const employeeName = (b.employee_name || "").toLowerCase();
@@ -115,7 +127,9 @@ export default function BreakSummaryView() {
       if (department && b.department_name !== department) return false;
       return true;
     });
-  }, [breaks, deferredSearch, department]);
+    // Attribute to clock-in session date (overnight: keep pre-midnight totals)
+    return filterRowsByClockInSessionDate(scoped, effectiveFrom, effectiveTo);
+  }, [breaks, deferredSearch, department, fromDate, toDate, today]);
 
   /** Static totals for ended breaks (no live clock). Running rows get live end = now below. */
   const staticTotals = useMemo(() => {
@@ -152,13 +166,7 @@ export default function BreakSummaryView() {
         const exceedToday = dailySeconds > 3600 ? dailySeconds - 3600 : 0;
         return {
           ...b,
-          date_display: b.session_clock_in
-            ? getDateStringInTimeZone(b.session_clock_in, SERVER_TIMEZONE)
-            : b.date
-            ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE)
-            : b.break_start
-            ? getDateStringInTimeZone(b.break_start, SERVER_TIMEZONE)
-            : "",
+          date_display: breakSessionDate(b),
           break_start_display: b.break_start ? getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE) : "",
           break_end_display: b.break_end
             ? getTimeStringInTimeZone(b.break_end, SERVER_TIMEZONE)
@@ -236,7 +244,11 @@ export default function BreakSummaryView() {
         toastSuccess(`Imported ${data.imported} break rows`);
         const effectiveFrom = fromDate || toDate || today;
         const effectiveTo = toDate || fromDate || today;
-        const params = new URLSearchParams({ fromDate: effectiveFrom, toDate: effectiveTo });
+        const range = overnightFetchRange(effectiveFrom, effectiveTo);
+        const params = new URLSearchParams({
+          fromDate: range.fromDate,
+          toDate: range.toDate,
+        });
         const r = await fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" });
         const refreshed = await r.json();
         setBreaks(refreshed.success ? refreshed.breaks || [] : []);
