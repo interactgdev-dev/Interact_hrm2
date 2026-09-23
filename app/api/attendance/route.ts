@@ -374,9 +374,27 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true, message: "inserted" });
       }
       if (clock_out !== undefined && clock_out !== null) {
+        // A badge only for real auto clock-out (client/server auto). Never from overnight date or grace.
         let isAutoClockOut = Boolean(auto_clock_out);
+        let graceExpired = false;
+        if (!isAutoClockOut) {
+          try {
+            const graceConn = await pool.getConnection();
+            try {
+              graceExpired = await isGraceExpiredForEmployee(
+                graceConn,
+                String(employee_id),
+              );
+            } finally {
+              graceConn.release();
+            }
+          } catch (err) {
+            console.warn("[mongo-attendance] grace check failed:", err);
+          }
+        }
+        const relaxChecks = isAutoClockOut || graceExpired;
         const breakStatus = await mongoHasActiveBreak(employee_id);
-        if (!isAutoClockOut && breakStatus.hasActiveBreak) {
+        if (!relaxChecks && breakStatus.hasActiveBreak) {
           const breakName = breakTypeLabel(breakStatus.breakType);
           return NextResponse.json(
             {
@@ -392,7 +410,8 @@ export async function POST(req: NextRequest) {
           ? getDateStringInTimeZone(openSession.clock_in, SERVER_TIMEZONE)
           : "";
         const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-        if (!isAutoClockOut && openDate && openDate >= todayKey) {
+        // Overnight sessions (openDate < today) and grace-expired outs skip face; still not auto-A.
+        if (!relaxChecks && openDate && openDate >= todayKey) {
           const bioBlock = await enforceBiometricOrRespond(
             biometric_token,
             String(employee_id),
@@ -406,7 +425,7 @@ export async function POST(req: NextRequest) {
           employeeId: employee_id,
           clockOut: String(clock_out),
           employeeName: employee_name || null,
-          autoClockOut: isAutoClockOut || (openDate !== "" && openDate < todayKey),
+          autoClockOut: isAutoClockOut,
           clockOutIp,
         });
         if (!closed) {
@@ -516,16 +535,14 @@ export async function POST(req: NextRequest) {
       );
       console.log("Clock-in record inserted successfully");
     } else if (clock_out !== undefined && clock_out !== null) {
+      // A badge only when client/server marks real auto — grace only relaxes bio/break checks.
       let isAutoClockOut = Boolean(auto_clock_out);
+      const graceExpired = !isAutoClockOut
+        ? await isGraceExpiredForEmployee(conn, String(employee_id))
+        : false;
+      const relaxChecks = isAutoClockOut || graceExpired;
 
-      if (!isAutoClockOut) {
-        const graceExpired = await isGraceExpiredForEmployee(conn, String(employee_id));
-        if (graceExpired) {
-          isAutoClockOut = true;
-        }
-      }
-
-      if (!isAutoClockOut) {
+      if (!relaxChecks) {
         const bioBlock = await enforceBiometricOrRespond(
           biometric_token,
           String(employee_id),
@@ -535,7 +552,7 @@ export async function POST(req: NextRequest) {
         if (bioBlock) return bioBlock;
       }
 
-      if (!isAutoClockOut) {
+      if (!relaxChecks) {
       // Check for active breaks before allowing clock out
       const { hasActiveBreak, breakType } = await checkActiveBreaks(conn, employee_id);
       

@@ -584,7 +584,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
   ) => {
     if (clockActionPending) return;
     const now = new Date();
-    const useAutoClockOut = Boolean(options?.autoClockOut || graceExpiredForClockOutRef.current);
+    // A badge only for explicit auto clock-out — grace-expired manual out must not set the flag.
+    const useAutoClockOut = Boolean(options?.autoClockOut);
     try {
       setClockActionPending(true);
       const res = await fetch("/api/attendance", {
@@ -650,7 +651,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
     setShowClockOutConfirm(false);
     if (!confirmed) return;
     if (graceExpiredForClockOutRef.current) {
-      void performClockOut(null, { autoClockOut: true });
+      // Skip face after grace; server must not stamp auto_clock_out for this path.
+      void performClockOut(null);
       return;
     }
     runWithVerify("clock_out", (token) => performClockOut(token));
