@@ -7,13 +7,6 @@ const START_FIELDS = [
   "meeting_break_start",
 ] as const;
 
-const END_FIELDS = [
-  "break_end",
-  "prayer_break_end",
-  "refreshment_break_end",
-  "meeting_break_end",
-] as const;
-
 /** YYYY-MM-DD ± days in calendar arithmetic (UTC date parts). */
 export function addCalendarDays(ymd: string, deltaDays: number): string {
   const [y, m, d] = String(ymd || "")
@@ -60,22 +53,6 @@ export function breakEventDate(row: Record<string, unknown>): string {
   return getDateStringInTimeZone(String(start), SERVER_TIMEZONE);
 }
 
-function isRunningBreak(row: Record<string, unknown>): boolean {
-  const start = firstTruthy(row, START_FIELDS);
-  if (!start) return false;
-  return !firstTruthy(row, END_FIELDS);
-}
-
-function sessionKey(row: Record<string, unknown>): string {
-  const emp = String(row.employee_id ?? row.employeeId ?? "");
-  const sid = row.attendance_session_id ?? row.attendanceSessionId;
-  if (sid !== undefined && sid !== null && sid !== "") {
-    return `${emp}|attendance:${sid}`;
-  }
-  const start = firstTruthy(row, START_FIELDS);
-  return `${emp}|row:${row.id ?? start ?? ""}`;
-}
-
 /**
  * Expand API fetch window so overnight sessions (clock-in day → next morning) are included.
  */
@@ -91,9 +68,8 @@ export function overnightFetchRange(fromDate: string, toDate: string): {
 
 /**
  * Keep rows whose clock-in session date falls in [fromDate, toDate].
- * Also, when viewing a single day D, keep overnight sessions that clocked in on D-1
- * and still have activity on/after D (or an open/running break) so live totals
- * after midnight include pre-midnight breaks.
+ * Overnight post-midnight breaks still count on the clock-in day (via breakSessionDate),
+ * so viewing D-1 includes them; viewing D must NOT list D-1 sessions.
  */
 export function filterRowsByClockInSessionDate<T extends Record<string, unknown>>(
   rows: T[],
@@ -102,34 +78,16 @@ export function filterRowsByClockInSessionDate<T extends Record<string, unknown>
 ): T[] {
   if (!fromDate || !toDate || !rows.length) return rows;
 
-  const allowedSessions = new Set<string>();
-  const dayBeforeFrom = addCalendarDays(fromDate, -1);
-
-  for (const row of rows) {
-    const sessionDate = breakSessionDate(row);
-    const eventDate = breakEventDate(row);
-    const key = sessionKey(row);
-
-    if (sessionDate && sessionDate >= fromDate && sessionDate <= toDate) {
-      allowedSessions.add(key);
-      continue;
-    }
-
-    // Overnight continuation into the viewed day(s)
-    if (sessionDate && sessionDate === dayBeforeFrom && sessionDate < fromDate) {
-      const crosses =
-        Boolean(eventDate && eventDate >= fromDate) || isRunningBreak(row);
-      if (crosses) allowedSessions.add(key);
-    }
-  }
-
   return rows.filter((row) => {
-    const key = sessionKey(row);
-    if (allowedSessions.has(key)) return true;
+    const sessionDate = breakSessionDate(row);
+    if (sessionDate && sessionDate >= fromDate && sessionDate <= toDate) {
+      return true;
+    }
 
     // No session link: fall back to event calendar date in range
     const sid = row.attendance_session_id ?? row.attendanceSessionId;
     if (sid !== undefined && sid !== null && sid !== "") return false;
+    if (sessionDate) return false;
     const eventDate = breakEventDate(row);
     return Boolean(eventDate && eventDate >= fromDate && eventDate <= toDate);
   });
@@ -151,16 +109,9 @@ export function attendanceSessionDate(row: {
   return "";
 }
 
-function attendanceClockOutDate(row: {
-  clock_out?: string | null;
-}): string {
-  if (!row.clock_out) return "";
-  return getDateStringInTimeZone(String(row.clock_out), SERVER_TIMEZONE);
-}
-
 /**
- * Keep attendance rows for the viewed range by clock-in session date.
- * Overnight: open (or still crossing) sessions from D-1 stay visible on D.
+ * Keep attendance rows for the viewed range by clock-in session date only.
+ * Overnight sessions belong on the clock-in day — do not list D-1 rows when viewing D.
  */
 export function filterAttendanceByClockInSessionDate<T extends Record<string, unknown>>(
   rows: T[],
@@ -169,21 +120,9 @@ export function filterAttendanceByClockInSessionDate<T extends Record<string, un
 ): T[] {
   if (!fromDate || !toDate || !rows.length) return rows;
 
-  const dayBeforeFrom = addCalendarDays(fromDate, -1);
-
   return rows.filter((row) => {
     const sessionDate = attendanceSessionDate(row as any);
     if (!sessionDate) return false;
-
-    if (sessionDate >= fromDate && sessionDate <= toDate) return true;
-
-    // Overnight continuation into viewed day(s)
-    if (sessionDate === dayBeforeFrom && sessionDate < fromDate) {
-      const outDate = attendanceClockOutDate(row as any);
-      const stillOpen = !(row as any).clock_out;
-      return stillOpen || Boolean(outDate && outDate >= fromDate);
-    }
-
-    return false;
+    return sessionDate >= fromDate && sessionDate <= toDate;
   });
 }
