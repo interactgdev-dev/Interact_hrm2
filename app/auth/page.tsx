@@ -1,14 +1,9 @@
-
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { FaEye, FaEyeSlash, FaUser } from "react-icons/fa";
-import {
-  loadSavedLogins,
-  persistSavedLogin,
-  type SavedLogin,
-} from "@/lib/saved-login-client";
+import { FaEye, FaEyeSlash } from "react-icons/fa";
+import { persistSavedLogin } from "@/lib/saved-login-client";
 import styles from "./login.module.css";
 import { AuthLoginCarousel } from "./AuthLoginCarousel";
 
@@ -26,8 +21,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [showSavedPicker, setShowSavedPicker] = useState(false);
-  const [savedLogins, setSavedLogins] = useState<SavedLogin[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [carouselImages, setCarouselImages] = useState<CarouselSlideDto[]>([]);
@@ -37,17 +30,6 @@ export default function LoginPage() {
     animation: "fade",
     includeBrandSlide: true,
   });
-
-  const syncSavedLogins = useCallback(async () => {
-    const saved = await loadSavedLogins();
-    setSavedLogins(saved);
-    if (saved.length > 0) setRememberMe(true);
-    return saved;
-  }, []);
-
-  useEffect(() => {
-    void syncSavedLogins();
-  }, [syncSavedLogins]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,11 +66,7 @@ export default function LoginPage() {
   const persistCredentials = useCallback(
     async (id: string, pass: string) => {
       if (!rememberMe) return;
-      const ok = await persistSavedLogin(id, pass);
-      if (ok) {
-        const updated = await loadSavedLogins();
-        setSavedLogins(updated);
-      }
+      await persistSavedLogin(id, pass);
     },
     [rememberMe]
   );
@@ -97,8 +75,7 @@ export default function LoginPage() {
     async (rawLoginId: string, rawPassword: string) => {
       setError("");
       setLoading(true);
-      const trimmedLoginId = rawLoginId.trim();
-      const id = trimmedLoginId.toLowerCase();
+      const id = rawLoginId.trim().toLowerCase();
       const isAdminId =
         id === "admin@interact.com" || id === "interactadmin" || id === "admin";
 
@@ -106,14 +83,14 @@ export default function LoginPage() {
         const adminRes = await fetch("/api/admin-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loginId: trimmedLoginId, password: rawPassword }),
+          body: JSON.stringify({ loginId: rawLoginId, password: rawPassword }),
         });
         const adminData = await adminRes.json();
         if (adminData.success) {
           if (typeof window !== "undefined") {
-            localStorage.setItem("loginId", trimmedLoginId);
+            localStorage.setItem("loginId", rawLoginId);
           }
-          await persistCredentials(trimmedLoginId, rawPassword);
+          await persistCredentials(rawLoginId, rawPassword);
           router.push("/dashboard");
           setLoading(false);
           return;
@@ -127,17 +104,15 @@ export default function LoginPage() {
         const res = await fetch("/api/employee-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loginId: trimmedLoginId, password: rawPassword }),
+          body: JSON.stringify({ loginId: rawLoginId, password: rawPassword }),
         });
         const data = await res.json();
         if (data.success) {
           if (typeof window !== "undefined") {
-            localStorage.setItem("loginId", trimmedLoginId);
+            localStorage.setItem("loginId", rawLoginId);
             localStorage.setItem("userRole", data.role || data.employee?.role || "Officer");
           }
-          await persistCredentials(trimmedLoginId, rawPassword);
-          // Keep role in localStorage for My Team / hierarchy. Dedicated
-          // bod|hod|management|leader dashboard routes do not exist → always employee-dashboard.
+          await persistCredentials(rawLoginId, rawPassword);
           router.push("/employee-dashboard");
         } else {
           setError(data.error || "Invalid credentials. Please try again.");
@@ -154,24 +129,6 @@ export default function LoginPage() {
     e.preventDefault();
     await performLogin(loginId, password);
   };
-
-  const handleUseSaved = (saved: SavedLogin) => {
-    setLoginId(saved.loginId);
-    setPassword(saved.password);
-    setShowSavedPicker(false);
-  };
-
-  const openSavedPickerIfNeeded = () => {
-    void syncSavedLogins().then((saved) => {
-      if (saved.length > 0) setShowSavedPicker(true);
-    });
-  };
-
-  const closeSavedPicker = () => {
-    window.setTimeout(() => setShowSavedPicker(false), 180);
-  };
-
-  const hasSavedPanel = showSavedPicker && savedLogins.length > 0;
 
   return (
     <div className={styles.splitWrap}>
@@ -228,7 +185,7 @@ export default function LoginPage() {
       </section>
 
       <section className={styles.rightPanel}>
-        <div className={`${styles.formWrap} ${hasSavedPanel ? styles.formWrapWithSaved : ""}`}>
+        <div className={styles.formWrap}>
           <div className={styles.loginCard}>
             <div className={styles.logoWrap}>
               <Image
@@ -251,64 +208,31 @@ export default function LoginPage() {
                   type="text"
                   name="username"
                   autoComplete="username"
-                  placeholder="Email, username, or employee ID"
+                  placeholder="Email or Username"
                   className={styles.input}
                   value={loginId}
                   onChange={(e) => setLoginId(e.target.value)}
-                  onFocus={openSavedPickerIfNeeded}
-                  onClick={openSavedPickerIfNeeded}
-                  onBlur={closeSavedPicker}
                   required
                 />
-                <div className={styles.passwordBlock}>
-                  <div className={styles.passwordWrapper}>
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      name="password"
-                      autoComplete="current-password"
-                      placeholder="Password"
-                      className={styles.input}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      onFocus={openSavedPickerIfNeeded}
-                      onClick={openSavedPickerIfNeeded}
-                      onBlur={closeSavedPicker}
-                      required
-                    />
-                    <button
-                      type="button"
-                      className={styles.togglePasswordBtn}
-                      onClick={() => setShowPassword(!showPassword)}
-                      aria-label="Toggle password visibility"
-                    >
-                      {showPassword ? <FaEyeSlash /> : <FaEye />}
-                    </button>
-                  </div>
-                  {hasSavedPanel ? (
-                    <aside
-                      className={styles.savedPanel}
-                      onMouseDown={(e) => e.preventDefault()}
-                      aria-label="Saved logins on this device"
-                    >
-                      <div className={styles.savedPanelTitle}>Saved on this device</div>
-                      <div className={styles.savedPanelList}>
-                        {savedLogins.map((saved) => (
-                          <button
-                            key={saved.loginId}
-                            type="button"
-                            className={styles.savedAccountBtn}
-                            onClick={() => handleUseSaved(saved)}
-                          >
-                            <FaUser className={styles.savedAccountIcon} aria-hidden />
-                            <span className={styles.savedAccountText}>
-                              <strong>{saved.loginId}</strong>
-                              <span>Saved password</span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </aside>
-                  ) : null}
+                <div className={styles.passwordWrapper}>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    name="password"
+                    autoComplete="current-password"
+                    placeholder="Password"
+                    className={styles.input}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className={styles.togglePasswordBtn}
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label="Toggle password visibility"
+                  >
+                    {showPassword ? <FaEyeSlash /> : <FaEye />}
+                  </button>
                 </div>
                 <div className={styles.rowBetween}>
                   <label className={styles.remember}>
