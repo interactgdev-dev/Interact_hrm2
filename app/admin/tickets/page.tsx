@@ -1,6 +1,6 @@
 "use client";
 
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import React from "react";
 import adminStyles from "../admin-page.module.css";
 import TicketThread from "../../components/TicketThread";
@@ -445,7 +445,7 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={adminStyles.inner}>
           <h1 className={adminStyles.title}>
@@ -453,7 +453,7 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
           </h1>
           <p className={adminStyles.subtitle}>
             {inboxMode === "hr"
-              ? "All leave tickets (company-wide) plus HR department tickets. View all — approve only within your department hierarchy."
+              ? "Leave tickets for your hierarchy team, plus HR department tickets. Approve only within your department hierarchy."
               : "Employee tickets. Department leave for CEOs (Joe / Max / Mubeen) appears here for their owned depts."}
           </p>
 
@@ -765,6 +765,6 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
           </div>
         </div>
       ) : null}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

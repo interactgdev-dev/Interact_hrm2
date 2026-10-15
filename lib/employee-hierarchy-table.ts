@@ -305,6 +305,28 @@ export async function listDirectReportIds(
   }
 }
 
+/**
+ * Team leaves scope: direct reports + explicit team members + hierarchy team list.
+ * Used by Ticket Inbox / Leave so managers only see their hierarchy team.
+ */
+export async function listHierarchyVisibleEmployeeIds(
+  managerEmployeeId: string | number,
+): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const id of await listDirectReportIds(managerEmployeeId)) {
+    ids.add(id);
+  }
+  try {
+    const hier = await getEmployeeHierarchy(managerEmployeeId);
+    for (const m of hier?.teamMembers || []) {
+      if (m?.id) ids.add(String(m.id));
+    }
+  } catch {
+    /* ignore */
+  }
+  return [...ids];
+}
+
 export async function getEmployeeHierarchy(
   employeeId: string | number,
 ): Promise<EmployeeHierarchyResult | null> {

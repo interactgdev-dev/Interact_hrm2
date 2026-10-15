@@ -1,8 +1,8 @@
 /**
  * Ticket inbox visibility + leave moderation.
  *
- * - HR Manager inbox: ALL leave tickets (any dept) + HR-dept non-leave tickets.
- *   Approve only when in hierarchy/scope; otherwise view-only.
+ * - HR inbox leave: hierarchy team only (direct reports / team members).
+ *   HR-dept non-leave tickets still visible to HR staff.
  * - Dept heads (Joe / Max / Mubeen): leave tickets for their owned depts in Ticket Inbox.
  * - Non-HR Team Leads: leave approve on Leaves page (not Ticket Inbox).
  * - Admin inbox: non-HR submitter tickets (plus CEO dept leave when viewer is dept head).
@@ -208,7 +208,7 @@ function isLeaveTicket(ticketType?: string | null): boolean {
 /**
  * Filter tickets for list APIs.
  * - inbox=admin: non-HR submitters; dept heads also see their owned-dept leave tickets
- * - inbox=hr: ALL leave tickets + HR-staff non-leave tickets
+ * - inbox=hr: hierarchy-team leave + HR-staff non-leave tickets
  * - employeeId own list: always allow owner's tickets
  */
 export function filterTicketsForInbox<
@@ -222,10 +222,14 @@ export function filterTicketsForInbox<
     empChips?: Map<string, string | null>;
     /** Employee ids that report directly to the viewer (Reporting Manager). */
     directReportIds?: Set<string>;
+    /** Hierarchy team (direct reports + team members) for leave visibility. */
+    hierarchyTeamIds?: Set<string>;
   }
 ): T[] {
-  const { inbox, viewer, hrIds, empChips, directReportIds } = opts;
+  const { inbox, viewer, hrIds, empChips, directReportIds, hierarchyTeamIds } =
+    opts;
   const reportsToMe = directReportIds || new Set<string>();
+  const teamIds = hierarchyTeamIds || reportsToMe;
 
   if (inbox === "own") {
     if (!viewer) return [];
@@ -242,16 +246,19 @@ export function filterTicketsForInbox<
       return tickets.filter((t) => {
         if (!isLeaveTicket(t.ticket_type)) return false;
         const empId = String(t.employee_id || "").trim();
-        if (reportsToMe.has(empId)) return true;
+        if (reportsToMe.has(empId) || teamIds.has(empId)) return true;
         if (!empChips || owned.size === 0) return false;
         const chip = empChips.get(empId);
         return Boolean(chip && owned.has(chip.toLowerCase()));
       });
     }
 
-    // HR Manager / HR staff: every leave ticket company-wide + HR-dept other tickets.
+    // HR staff / managers: only hierarchy-team leave + HR-dept other tickets.
     return tickets.filter((t) => {
-      if (isLeaveTicket(t.ticket_type)) return true;
+      if (isLeaveTicket(t.ticket_type)) {
+        const empId = String(t.employee_id || "").trim();
+        return teamIds.has(empId) || reportsToMe.has(empId);
+      }
       return isHrDepartmentSubmitter(t.employee_id, hrIds);
     });
   }

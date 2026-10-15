@@ -139,21 +139,20 @@ export async function GET(req: NextRequest) {
 
     // Single-ticket fetch: owner or HR inbox viewer (for HR tickets) or admin (non-HR).
     if (ticketId) {
-      let viewerDirectReports: Set<string> | undefined;
+      let viewerTeamIds: Set<string> | undefined;
       if (viewer?.employeeId) {
-        const { listDirectReportIds } = await import(
+        const { listHierarchyVisibleEmployeeIds } = await import(
           "@/lib/employee-hierarchy-table"
         );
-        viewerDirectReports = new Set(
-          await listDirectReportIds(viewer.employeeId),
+        viewerTeamIds = new Set(
+          await listHierarchyVisibleEmployeeIds(viewer.employeeId),
         );
       }
       tickets = tickets.filter((t) => {
         if (isLeaveTicketType(t.ticket_type)) {
-          // Leave visible in HR inbox / admin / owner / dept-head owned chips / direct reports.
+          // Leave: owner / hierarchy team / dept-head owned chips (not company-wide).
           if (viewer && String(t.employee_id) === viewer.employeeId) return true;
-          if (viewerDirectReports?.has(String(t.employee_id))) return true;
-          if (viewer?.canViewHrInbox) return true;
+          if (viewerTeamIds?.has(String(t.employee_id))) return true;
           if (viewer?.deptHead?.headHint) {
             const chip = empChips.get(String(t.employee_id));
             return Boolean(
@@ -163,6 +162,7 @@ export async function GET(req: NextRequest) {
                 )
             );
           }
+          if (viewer?.canViewHrInbox) return false;
           return !isHrDepartmentSubmitter(t.employee_id, hrIds);
         }
         const hrTicket = isHrDepartmentSubmitter(t.employee_id, hrIds);
@@ -198,13 +198,18 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Inbox lists — HR sees all leave; admin hides HR non-leave; dept heads get owned leave.
+    // Inbox lists — HR hierarchy-team leave; admin hides HR non-leave; dept heads get owned leave.
     let directReportIds: Set<string> | undefined;
+    let hierarchyTeamIds: Set<string> | undefined;
     if (viewer?.employeeId) {
-      const { listDirectReportIds } = await import(
-        "@/lib/employee-hierarchy-table"
-      );
+      const {
+        listDirectReportIds,
+        listHierarchyVisibleEmployeeIds,
+      } = await import("@/lib/employee-hierarchy-table");
       directReportIds = new Set(await listDirectReportIds(viewer.employeeId));
+      hierarchyTeamIds = new Set(
+        await listHierarchyVisibleEmployeeIds(viewer.employeeId),
+      );
     }
     const filtered = filterTicketsForInbox(tickets, {
       inbox,
@@ -212,9 +217,10 @@ export async function GET(req: NextRequest) {
       hrIds,
       empChips,
       directReportIds,
+      hierarchyTeamIds,
     });
 
-    // Per-ticket moderation flags (HR Manager may view all leave but approve only in-scope).
+    // Per-ticket moderation flags (approve only in hierarchy/scope).
     const ticketsOut = [];
     let anyModerate = false;
     for (const t of filtered) {

@@ -1,6 +1,6 @@
 "use client";
 
-import LayoutDashboard from "../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -69,19 +69,43 @@ export default function LeavePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [rejectRemark, setRejectRemark] = useState("");
   const [balanceInfo, setBalanceInfo] = useState<any | null>(null);
+  const [viewerId, setViewerId] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: LeaveSortKey; direction: SortDirection } | null>(
     null
   );
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
+  useEffect(() => {
+    try {
+      const id =
+        localStorage.getItem("employeeId") ||
+        localStorage.getItem("loginId") ||
+        "";
+      setViewerId(String(id).trim());
+    } catch {
+      setViewerId("");
+    }
+  }, []);
+
   const fetchLeaves = async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/leaves");
+      const params = new URLSearchParams({ ts: String(Date.now()) });
+      if (viewerId) params.set("viewerId", viewerId);
+      const res = await fetch(`/api/leaves?${params}`, {
+        cache: "no-store",
+        headers: viewerId
+          ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+          : undefined,
+      });
       const data = await res.json();
       if (data.success) {
-        const empRes = await fetch("/api/employee-list");
+        const empRes = await fetch("/api/employee-list", {
+          headers: viewerId
+            ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+            : undefined,
+        });
         const empData = await empRes.json();
         const empMap = new Map<string, { employee_name: string; pseudonym: string; department_name: string }>();
         if (empData.success && Array.isArray(empData.employees)) {
@@ -143,7 +167,7 @@ export default function LeavePage() {
 
   useEffect(() => {
     void fetchLeaves();
-  }, []);
+  }, [viewerId]);
 
   const stats = useMemo(() => {
     let pending = 0;
@@ -308,11 +332,13 @@ export default function LeavePage() {
   const selectedStatus = String(selectedLeave?.status || "pending").toLowerCase();
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <h1 className={styles.title}>Leave requests</h1>
-          <p className={styles.subtitle}>Review and approve employee leave applications.</p>
+          <p className={styles.subtitle}>
+            Review and approve leave for your hierarchy team.
+          </p>
 
           <div className={styles.statRow}>
             <div className={`${styles.statCard} ${styles.statCardGold}`}>
@@ -536,6 +562,6 @@ export default function LeavePage() {
         : null}
 
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

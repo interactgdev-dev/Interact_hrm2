@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET: Fetch all leave requests
+// GET: Fetch leave requests (hierarchy-scoped when viewerId is present)
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -29,6 +29,13 @@ export async function GET(req: NextRequest) {
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
     const status = searchParams.get('status');
+    const viewerId = String(
+      searchParams.get("viewerId") ||
+        searchParams.get("viewer_id") ||
+        req.headers.get("x-hrm-employee-id") ||
+        req.headers.get("x-employee-id") ||
+        "",
+    ).trim();
 
     let sql = "SELECT * FROM employee_leaves WHERE 1=1";
     const params: any[] = [];
@@ -44,6 +51,31 @@ export async function GET(req: NextRequest) {
         sql += ` AND employee_id IN (${employees.map(() => '?').join(',')})`;
         params.push(...employees);
       }
+    } else if (viewerId) {
+      // Only team leaves for the viewer's hierarchy (not company-wide).
+      const { listHierarchyVisibleEmployeeIds } = await import(
+        "@/lib/employee-hierarchy-table"
+      );
+      const { loadHrTicketViewer, getEmployeeDeptChipMap } = await import(
+        "@/lib/hr-department-tickets"
+      );
+      const teamIds = new Set(await listHierarchyVisibleEmployeeIds(viewerId));
+      const viewer = await loadHrTicketViewer(viewerId);
+      if (viewer?.deptHead?.headHint) {
+        const empChips = await getEmployeeDeptChipMap();
+        const owned = new Set(
+          (viewer.deptHead.ownedChips || []).map((c) => c.toLowerCase()),
+        );
+        for (const [empId, chip] of empChips) {
+          if (chip && owned.has(chip.toLowerCase())) teamIds.add(empId);
+        }
+      }
+      const scoped = [...teamIds];
+      if (scoped.length === 0) {
+        return NextResponse.json({ success: true, leaves: [] });
+      }
+      sql += ` AND employee_id IN (${scoped.map(() => "?").join(",")})`;
+      params.push(...scoped);
     }
 
     if (fromDate && toDate) {
