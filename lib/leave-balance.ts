@@ -7,6 +7,7 @@ import {
   getLeaveCycleStartYmd,
   shouldApplyLeaveAdjustment,
 } from "@/lib/leave-cycle";
+import { approvedLeaveKindFromRow } from "@/lib/leave-duration";
 import { getDateStringInTimeZone } from "@/lib/timezone";
 
 export type LeaveBalanceResult = {
@@ -79,7 +80,7 @@ export async function getEmployeeLeaveBalance(
       : 0;
 
     let leavesQuery =
-      "SELECT leave_category, total_days, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
+      "SELECT leave_category, total_days, half_day_part, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
     const leaveId = resolvedEmployeeId ?? employee_id;
     const leaveParams: any[] = [leaveId, String(leaveId)];
     const todayYmd = getDateStringInTimeZone(new Date());
@@ -89,13 +90,32 @@ export async function getEmployeeLeaveBalance(
     }
     leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) <= ?";
     leaveParams.push(todayYmd);
-    const [leaves]: any = await conn.execute(leavesQuery, leaveParams);
+    let leaves: any[] = [];
+    try {
+      const [rows]: any = await conn.execute(leavesQuery, leaveParams);
+      leaves = rows;
+    } catch {
+      // Older DBs without half_day_part column.
+      leavesQuery =
+        "SELECT leave_category, total_days, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
+      if (leaveCycleStart) {
+        leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) >= ?";
+      }
+      leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) <= ?";
+      const [rows]: any = await conn.execute(leavesQuery, leaveParams);
+      leaves = rows;
+    }
 
     const usedLeave: Record<string, number> = {};
     let totalUsedDays = 0;
     for (const leave of leaves as any[]) {
       const category = String(leave.leave_category || "annual");
-      const days = Number(leave.total_days || 0);
+      // Full day → 1+; 1st/2nd half → always 0.5 (even if INT column stored 1).
+      const kind = approvedLeaveKindFromRow(leave);
+      const days =
+        kind === "first_half" || kind === "second_half"
+          ? 0.5
+          : Number(leave.total_days || 0);
       usedLeave[category] = (usedLeave[category] || 0) + days;
       totalUsedDays += days;
     }

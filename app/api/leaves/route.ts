@@ -109,19 +109,54 @@ export async function PATCH(req: NextRequest) {
     if (status === "rejected") {
       await query("UPDATE employee_leaves SET status = ?, admin_remark = ?, updated_at = NOW() WHERE id = ?", [status, admin_remark || "", id]);
     } else {
-      await query("UPDATE employee_leaves SET status = ?, updated_at = NOW() WHERE id = ?", [status, id]);
+      // On approve: force half-day rows to deduct 0.5 from balance (DECIMAL-safe).
+      try {
+        const [rows]: any = await query(
+          "SELECT half_day_part, total_days FROM employee_leaves WHERE id = ? LIMIT 1",
+          [id],
+        );
+        const row = Array.isArray(rows) ? rows[0] : null;
+        const part = String(row?.half_day_part || "").trim().toLowerCase();
+        const isHalf =
+          part === "first" ||
+          part === "second" ||
+          part === "first_half" ||
+          part === "second_half" ||
+          (Number(row?.total_days) > 0 && Number(row?.total_days) < 1);
+        if (isHalf) {
+          await query(
+            "UPDATE employee_leaves SET status = ?, total_days = 0.5, updated_at = NOW() WHERE id = ?",
+            [status, id],
+          );
+        } else {
+          await query(
+            "UPDATE employee_leaves SET status = ?, updated_at = NOW() WHERE id = ?",
+            [status, id],
+          );
+        }
+      } catch {
+        await query(
+          "UPDATE employee_leaves SET status = ?, updated_at = NOW() WHERE id = ?",
+          [status, id],
+        );
+      }
     }
     // WebSocket broadcast (if available)
     try {
-      const wsApi = globalThis as any;
-      if (wsApi?.wss) {
-        wsApi.wss.clients.forEach((client: any) => {
-          if (client.readyState === 1) {
-            client.send(JSON.stringify({ type: "leave_update" }));
-          }
-        });
-      }
-    } catch {}
+      const { broadcastWsEvent } = await import("@/lib/ws-broadcast");
+      broadcastWsEvent({ type: "leave_update" });
+    } catch {
+      try {
+        const wsApi = globalThis as any;
+        if (wsApi?.wss) {
+          wsApi.wss.clients.forEach((client: any) => {
+            if (client.readyState === 1) {
+              client.send(JSON.stringify({ type: "leave_update" }));
+            }
+          });
+        }
+      } catch {}
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : String(error) });
