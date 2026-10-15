@@ -180,6 +180,53 @@
   color: #611f69;
 }
 
+.requiredMark {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.leaveDurationGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.leaveDurationOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+
+.leaveDurationOption input {
+  accent-color: #611f69;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.leaveDurationSelected {
+  border-color: #611f69;
+  background: #f5eef6;
+  color: #4a1850;
+  box-shadow: 0 0 0 1px rgba(97, 31, 105, 0.2);
+}
+
+.leaveDurationHint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dc2626;
+}
+
 .leaveBalanceRow {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

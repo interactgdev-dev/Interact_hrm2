@@ -17,6 +17,13 @@ function roundLeaveDays(value: unknown): number {
   return Math.round(n * 2) / 2;
 }
 
+/** Fixed policy — compute in JS (Mongo SQL adapter drops CASE / literal aliases). */
+function annualAllowanceForStatus(employmentStatus: unknown): number {
+  return String(employmentStatus || "").trim() === "Probation" ? 3 : 20;
+}
+
+const BEREAVEMENT_ALLOWANCE = 3;
+
 // GET: Fetch all employees with their leave allowances
 export async function GET(req: NextRequest) {
   let conn;
@@ -31,8 +38,6 @@ export async function GET(req: NextRequest) {
         e.employee_code,
         e.employment_status,
         j.joined_date,
-        CASE WHEN e.employment_status = 'Probation' THEN 3 ELSE 20 END as annual_allowance,
-        3 as bereavement_allowance,
         COALESCE(ela.annual_balance_adjustment, 0) as annual_balance_adjustment,
         COALESCE(ela.bereavement_balance_adjustment, 0) as bereavement_balance_adjustment,
         ela.updated_at as allowance_updated_at
@@ -92,8 +97,8 @@ export async function GET(req: NextRequest) {
       const cycleStart = cycleStartByEmployee.get(empId) || null;
       const annualAdjustment = Number(emp.annual_balance_adjustment || 0);
       const bereavementAdjustment = Number(emp.bereavement_balance_adjustment || 0);
-      const annualAllowance = Number(emp.annual_allowance || 0);
-      const bereavementAllowance = Number(emp.bereavement_allowance || 0);
+      const annualAllowance = annualAllowanceForStatus(emp.employment_status);
+      const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
 
       return {
         ...emp,
@@ -145,9 +150,7 @@ export async function POST(req: NextRequest) {
       SELECT 
         e.id,
         e.employment_status,
-        j.joined_date,
-        CASE WHEN e.employment_status = 'Probation' THEN 3 ELSE 20 END as annual_allowance,
-        3 as bereavement_allowance
+        j.joined_date
       FROM hrm_employees e
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
       WHERE e.id = ?
@@ -164,8 +167,8 @@ export async function POST(req: NextRequest) {
     const cycleStart = getLeaveCycleStartYmd(emp.joined_date || null);
     const annualTarget = parseLeaveDays(annual_current_balance);
     const bereavementTarget = parseLeaveDays(bereavement_current_balance);
-    const annualAllowance = Number(emp.annual_allowance || 0);
-    const bereavementAllowance = Number(emp.bereavement_allowance || 0);
+    const annualAllowance = annualAllowanceForStatus(emp.employment_status);
+    const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
 
     const [leaveRows]: any = await conn.execute(
       `SELECT leave_category, total_days, start_date
@@ -200,6 +203,8 @@ export async function POST(req: NextRequest) {
       ON DUPLICATE KEY UPDATE
         annual_balance_adjustment = ?,
         bereavement_balance_adjustment = ?,
+        annual_allowance = ?,
+        bereavement_allowance = ?,
         updated_at = NOW()`,
       [
         employee_id,
@@ -209,6 +214,8 @@ export async function POST(req: NextRequest) {
         bereavementAllowance,
         annualAdjustment,
         bereavementAdjustment,
+        annualAllowance,
+        bereavementAllowance,
       ]
     );
 
