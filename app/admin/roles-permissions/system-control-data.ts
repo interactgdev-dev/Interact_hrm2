@@ -1,4 +1,4 @@
-export type TabId = "roles" | "permissions" | "features" | "settings";
+export type TabId = "roles" | "permissions" | "features";
 
 export type RoleDef = {
   id: string;
@@ -33,8 +33,15 @@ export type DemoEmployee = {
   pseudonym?: string;
   profilePhoto?: string;
   roleId: string;
+  /** Explicit System Control assignment; null/undefined = not assigned via Permissions. */
+  accessRoleSlug?: string | null;
+  /** All System Control roles this person is on (org chart can show them on multiple cards). */
+  accessRoleSlugs?: string[];
   departmentId: string;
+  departmentName?: string;
   reportsTo: string | null;
+  /** Live HRM role string (BOD/CEO, HOD, …) before System Control assign. */
+  legacyRole?: string;
 };
 
 export type FeatureModule = {
@@ -52,28 +59,68 @@ export type GlobalFeature = {
 };
 
 const PERM_HINTS: Record<string, string> = {
+  "dashboard.view": "Open the main HRM dashboard.",
+  "admin.home.view": "Open the admin home page.",
   "attendance.summary.view": "View attendance summary reports and filters for employees in scope.",
   "attendance.summary.export": "Download attendance summary as Excel or PDF.",
   "attendance.manage.edit": "Correct punch times, add manual entries, or fix exceptions.",
   "attendance.monthly.view": "Open monthly attendance and deduction views.",
   "attendance.monthly.export": "Export monthly deduction summary for payroll handoff.",
   "attendance.breaks.manage": "Configure break rules and review break usage.",
+  "attendance.tungsten.view": "Open Tungsten biometric IN/OUT punch log.",
+  "attendance.presence.view": "Open desktop presence / idle monitoring.",
+  "attendance.employee_report.view": "Open per-employee attendance report.",
   "leave.list.view": "See leave requests for scoped employees (not only self).",
-  "leave.apply.self": "Submit own leave / PTO requests from employee portal.",
-  "leave.approve.manager": "First-step approval as direct manager in the chain.",
-  "leave.approve.hr": "Final HR approval before leave is booked.",
+  "leave.approve.manager": "Leave approval — Managers and Team Leads, within their department scope (Leaves page).",
+  "leave.approval_status.view": "See pending vs approved status on leave requests.",
   "leave.balances.edit": "Adjust leave balances and entitlements.",
+  "leave.calendar.view": "Open company leave calendar.",
+  "leave.monthly_summary.view": "Open monthly leave summary reports.",
   "payroll.monthly.view": "View monthly payroll sheets and totals.",
   "payroll.monthly.edit": "Edit payroll lines, allowances, and deductions.",
+  "payroll.daily.view": "View daily salary calculator and per-day records.",
+  "payroll.daily.edit": "Generate and edit daily salary day records.",
   "payroll.commissions": "Access commission calculation and payout screens.",
   "payroll.advance": "Process salary advance requests.",
   "payroll.loan": "Manage employee loan schedules and deductions.",
-  "team.dashboard.view": "Open team-lead dashboard with team KPIs.",
-  "team.attendance.view": "View attendance for assigned team members only.",
-  "team.management.assign": "Assign employees to team leads (HR function).",
-  "system.control.access": "Open System Control administration area.",
-  "system.permissions.edit": "Edit role permission matrix and save changes.",
-  "system.users.assign": "Assign roles, departments, and reporting lines to users.",
+  "payroll.financial_requests.view": "Review advance/loan financial request inbox.",
+  "department.salary.view":
+    "View salaries of people in your own department (at or below your level). Off by default for HR — Managers can enable this in Permissions.",
+  "people.employee_list.view": "Browse and search the employee directory (own department by default).",
+  "data.scope.all_departments":
+    "Company-wide data: see ALL departments on employee list, attendance, and break summaries. Without this, those views stay limited to the employee’s own department.",
+  "people.employee.add": "Create new employee records.",
+  "people.credentials.manage": "Reset or issue employee login credentials.",
+  "people.face_enrollment.manage": "Enroll or update biometric face profiles.",
+  "people.files.view": "Access employee document files.",
+  "people.appraisals.view": "Review pending appraisal workflows.",
+  "people.formats.view": "Open HR formats library.",
+  "people.recruitment.view": "Open recruitment module.",
+  "shifts.scheduler.view": "Open shift scheduler.",
+  "shifts.management.view": "Manage shift templates and assignments.",
+  "ops.tickets.view": "Open ticket inbox and reply threads.",
+  "ops.events.view": "Manage upcoming company events.",
+  "ops.departments.view": "Manage departments.",
+  "ops.login_carousel.manage": "Edit login page carousel slides.",
+  "ops.company_policy.view": "View or edit company policies.",
+  "team.dashboard.view": "Open My Team page — list of assigned team members.",
+  "team.attendance.view": "View attendance for assigned team only (includes self).",
+  "team.breaks.view": "View team break + prayer break summaries for assigned team only (includes self).",
+  "team.leaves.view": "View leave applications submitted by assigned team members (includes self).",
+  "team.management.assign": "Assign employees to a team under a lead.",
+  "department.attendance.view": "View attendance for the whole department (manager/HOD scope).",
+  "department.breaks.view": "View break + prayer break data for the whole department.",
+  "department.leaves.view": "View leave applications for the whole department.",
+  "department.monthly.view": "View monthly attendance / deductions for the whole department.",
+  "portal.my_info.view": "Open personal My Info page.",
+  "portal.time.view": "Open employee time / clock page.",
+  "portal.tickets.create": "Create support tickets from employee portal.",
+  "portal.performance.view": "Open performance page.",
+  "system.control.access": "Open System Control in view mode (does not grant edit rights by itself).",
+  "system.permissions.edit": "Edit role/user permission checkmarks and save changes.",
+  "system.users.assign": "Assign or unassign roles to employees.",
+  "system.org_chart.edit": "Create, move, rename, or delete org chart role cards.",
+  "system.features.edit": "Toggle organization-wide feature switches.",
 };
 
 function withPermissionHints(
@@ -120,8 +167,10 @@ const ROLE_SEEDS: RoleSeed[] = [
   ["mp_it", "Managing Partner — IT & Technology", "exec_board", "partner"],
   ["dir_it", "Director of IT", "mp_it", "director"],
   ["it_manager", "IT Manager", "dir_it", "manager"],
+  ["team_lead_it", "Team Lead — IT", "it_manager", "lead"],
+  ["team_lead_cest", "Team Lead — CEst.", "it_manager", "lead"],
   ["sysadmin", "System Administrator / Network Engineer", "it_manager", "lead"],
-  ["it_support", "IT Support Specialist", "sysadmin", "staff"],
+  ["it_support", "IT Support Specialist", "team_lead_it", "staff"],
   ["helpdesk", "Helpdesk Associate", "it_support", "junior"],
   ["telephony", "Telephony & Voice Specialist (Genesys / Avaya)", "it_manager", "staff"],
   ["voice_infra", "Support Voice Infrastructure", "telephony", "support"],
@@ -130,11 +179,13 @@ const ROLE_SEEDS: RoleSeed[] = [
   ["mp_finance", "Managing Partner — Finance & Data Analytics", "exec_board", "partner"],
   ["dir_privacy", "Director of Privacy", "mp_finance", "director"],
   ["finance_manager", "Finance Manager", "dir_privacy", "manager"],
-  ["accountant_billing", "Accountant / Billing Specialist", "finance_manager", "staff"],
+  ["team_lead_finance", "Team Lead — Finance", "finance_manager", "lead"],
+  ["accountant_billing", "Accountant / Billing Specialist", "team_lead_finance", "staff"],
   ["dir_data", "Director of Data Mining & Analytics", "mp_finance", "director"],
   ["bd_sourcing", "BD / Sourcing Manager", "dir_data", "manager"],
-  ["data_engineer", "Data Engineers / ETL Specialists", "bd_sourcing", "staff"],
-  ["data_analyst", "Data Analysts / BI Reporters", "bd_sourcing", "staff"],
+  ["team_lead_dm", "Team Lead — DM / Analytics", "bd_sourcing", "lead"],
+  ["data_engineer", "Data Engineers / ETL Specialists", "team_lead_dm", "staff"],
+  ["data_analyst", "Data Analysts / BI Reporters", "team_lead_dm", "staff"],
   ["junior_data_analyst", "Junior Data Analyst", "data_analyst", "junior"],
   ["provider_insights", "Provider System Performance Insights", "data_analyst", "support"],
   ["provider_forecast", "Provider Reimbursement / P&L Forecasting", "data_analyst", "support"],
@@ -147,16 +198,19 @@ const ROLE_SEEDS: RoleSeed[] = [
   ["qa_lead", "QA Lead / Auditor", "qa_manager", "lead"],
   ["qa_analyst", "QA Analyst / Chart Reviewer", "qa_lead", "junior"],
   ["billing_ops_manager", "Medical Billing Operations Manager", "dir_billing", "manager"],
-  ["team_lead_billing", "Team Lead / Supervisor", "billing_ops_manager", "lead"],
+  ["team_lead_billing", "Team Lead — Medical Billing", "billing_ops_manager", "lead"],
   ["senior_coder", "Senior Medical Coder / Biller", "team_lead_billing", "staff"],
   ["junior_coder", "Junior Medical Coder / CDI", "senior_coder", "junior"],
   // Recruit & Onboard / HR & Admin
   ["dir_hr", "Director of Human Resources & Admin", "mp_medical", "director"],
   ["hr_manager", "HR Manager", "dir_hr", "manager"],
-  ["recruitment", "Recruitment / Talent Acquisition", "hr_manager", "staff"],
-  ["hr_coordinator", "HR Coordinators / Payroll", "hr_manager", "staff"],
+  ["team_lead_hr", "Team Lead — HR", "hr_manager", "lead"],
+  ["team_lead_hit", "Team Lead — HIT", "hr_manager", "lead"],
+  ["recruitment", "Recruitment / Talent Acquisition", "team_lead_hr", "staff"],
+  ["hr_coordinator", "HR Coordinators / Payroll", "team_lead_hr", "staff"],
   ["admin_manager", "Administration Manager", "dir_hr", "manager"],
-  ["admin_officer", "Admin Officers / Facility Executive", "admin_manager", "staff"],
+  ["team_lead_admin", "Team Lead — Admin", "admin_manager", "lead"],
+  ["admin_officer", "Admin Officers / Facility Executive", "team_lead_admin", "staff"],
 ];
 
 export const BASE_ROLES: RoleDef[] = ROLE_SEEDS.map(([id, name, parentId, tier], i) => {
@@ -199,6 +253,26 @@ export const INITIAL_EMPLOYEES: DemoEmployee[] = [
 
 export const FEATURE_MODULES = withPermissionHints([
   {
+    id: "data_scope",
+    name: "Data scope",
+    icon: "🔎",
+    permissions: [
+      {
+        key: "data.scope.all_departments",
+        label: "All departments (company-wide)",
+      },
+    ],
+  },
+  {
+    id: "dashboard",
+    name: "Dashboard & Admin",
+    icon: "🏠",
+    permissions: [
+      { key: "dashboard.view", label: "View main dashboard" },
+      { key: "admin.home.view", label: "View admin home" },
+    ],
+  },
+  {
     id: "attendance",
     name: "Attendance",
     icon: "⏱",
@@ -209,6 +283,9 @@ export const FEATURE_MODULES = withPermissionHints([
       { key: "attendance.monthly.view", label: "View monthly attendance" },
       { key: "attendance.monthly.export", label: "Export deduction summary" },
       { key: "attendance.breaks.manage", label: "Manage breaks" },
+      { key: "attendance.tungsten.view", label: "Tungsten IN/OUT page" },
+      { key: "attendance.presence.view", label: "Presence / Idle page" },
+      { key: "attendance.employee_report.view", label: "Employee attendance report" },
     ],
   },
   {
@@ -217,10 +294,11 @@ export const FEATURE_MODULES = withPermissionHints([
     icon: "🌴",
     permissions: [
       { key: "leave.list.view", label: "View all leave requests" },
-      { key: "leave.apply.self", label: "Apply own leave" },
-      { key: "leave.approve.manager", label: "Approve leave (Manager step)" },
-      { key: "leave.approve.hr", label: "Approve leave (HR final)" },
+      { key: "leave.approve.manager", label: "Approve leave" },
+      { key: "leave.approval_status.view", label: "View leave approval status" },
       { key: "leave.balances.edit", label: "Edit leave balances" },
+      { key: "leave.calendar.view", label: "Leave calendar" },
+      { key: "leave.monthly_summary.view", label: "Monthly leave summary" },
     ],
   },
   {
@@ -230,19 +308,86 @@ export const FEATURE_MODULES = withPermissionHints([
     permissions: [
       { key: "payroll.monthly.view", label: "View monthly payroll" },
       { key: "payroll.monthly.edit", label: "Edit monthly payroll" },
+      { key: "payroll.daily.view", label: "View daily salary calculator" },
+      { key: "payroll.daily.edit", label: "Edit daily salary records" },
       { key: "payroll.commissions", label: "Commissions" },
       { key: "payroll.advance", label: "Advance" },
       { key: "payroll.loan", label: "Loan" },
+      { key: "payroll.financial_requests.view", label: "Financial request inbox" },
+      {
+        key: "department.salary.view",
+        label: "View department salaries (Manager toggle)",
+      },
+    ],
+  },
+  {
+    id: "people",
+    name: "People & Onboarding",
+    icon: "👤",
+    permissions: [
+      { key: "people.employee_list.view", label: "Employee list" },
+      { key: "people.employee.add", label: "Add employee" },
+      { key: "people.credentials.manage", label: "Employee credentials" },
+      { key: "people.face_enrollment.manage", label: "Face enrollment" },
+      { key: "people.files.view", label: "Employee files" },
+      { key: "people.appraisals.view", label: "Pending appraisals" },
+      { key: "people.formats.view", label: "Formats library" },
+      { key: "people.recruitment.view", label: "Recruitment" },
+    ],
+  },
+  {
+    id: "shifts",
+    name: "Shifts",
+    icon: "📅",
+    permissions: [
+      { key: "shifts.scheduler.view", label: "Shift scheduler" },
+      { key: "shifts.management.view", label: "Shift management" },
+    ],
+  },
+  {
+    id: "ops",
+    name: "Operations & Org",
+    icon: "🏢",
+    permissions: [
+      { key: "ops.tickets.view", label: "Ticket inbox" },
+      { key: "ops.events.view", label: "Events" },
+      { key: "ops.departments.view", label: "Departments" },
+      { key: "ops.login_carousel.manage", label: "Login carousel" },
+      { key: "ops.company_policy.view", label: "Company policy" },
     ],
   },
   {
     id: "team",
-    name: "Team Lead module",
+    name: "Team",
     icon: "👥",
     permissions: [
       { key: "team.dashboard.view", label: "Team dashboard" },
-      { key: "team.attendance.view", label: "View team attendance" },
-      { key: "team.management.assign", label: "Assign team members (HR)" },
+      { key: "team.attendance.view", label: "View team attendance (incl. self)" },
+      { key: "team.breaks.view", label: "View team breaks (break + prayer)" },
+      { key: "team.leaves.view", label: "View team leave applications" },
+      { key: "team.management.assign", label: "Assign team members" },
+    ],
+  },
+  {
+    id: "department",
+    name: "Department",
+    icon: "🏛",
+    permissions: [
+      { key: "department.attendance.view", label: "View department attendance" },
+      { key: "department.breaks.view", label: "View department breaks (break + prayer)" },
+      { key: "department.leaves.view", label: "View department leave applications" },
+      { key: "department.monthly.view", label: "View department monthly attendance" },
+    ],
+  },
+  {
+    id: "portal",
+    name: "Employee portal",
+    icon: "📱",
+    permissions: [
+      { key: "portal.my_info.view", label: "My Info" },
+      { key: "portal.time.view", label: "Time / clock page" },
+      { key: "portal.tickets.create", label: "Generate ticket" },
+      { key: "portal.performance.view", label: "Performance" },
     ],
   },
   {
@@ -253,6 +398,8 @@ export const FEATURE_MODULES = withPermissionHints([
       { key: "system.control.access", label: "Open System Control" },
       { key: "system.permissions.edit", label: "Edit permission checkmarks" },
       { key: "system.users.assign", label: "Assign roles to employees" },
+      { key: "system.org_chart.edit", label: "Edit org chart cards" },
+      { key: "system.features.edit", label: "Edit global features toggles" },
     ],
   },
 ]);
@@ -276,11 +423,18 @@ function permissionsForTier(tier: RoleTier): string[] {
         "attendance.monthly.export",
         "leave.list.view",
         "leave.approve.manager",
-        "leave.approve.hr",
+        "leave.approval_status.view",
+        "department.attendance.view",
+        "department.breaks.view",
+        "department.leaves.view",
+        "department.monthly.view",
         "team.dashboard.view",
         "team.attendance.view",
+        "team.breaks.view",
+        "team.leaves.view",
         "team.management.assign",
         "payroll.monthly.view",
+        "payroll.daily.view",
       ];
     case "manager":
       return [
@@ -289,13 +443,32 @@ function permissionsForTier(tier: RoleTier): string[] {
         "attendance.monthly.view",
         "leave.list.view",
         "leave.approve.manager",
+        "leave.approval_status.view",
+        "department.attendance.view",
+        "department.breaks.view",
+        "department.leaves.view",
+        "department.monthly.view",
         "team.dashboard.view",
-        "team.attendance.view",
+        "system.control.access",
+        "system.permissions.edit",
+        "system.users.assign",
+        "system.org_chart.edit",
+        "system.features.edit",
+        // department.salary.view stays OFF by default — Manager enables in Permissions
       ];
     case "lead":
-      return ["leave.apply.self", "team.dashboard.view", "team.attendance.view"];
+      return [
+        "leave.list.view",
+        "leave.approve.manager",
+        "leave.approval_status.view",
+        "department.leaves.view",
+        "team.dashboard.view",
+        "team.attendance.view",
+        "team.breaks.view",
+        "team.leaves.view",
+      ];
     default:
-      return ["leave.apply.self"];
+      return [];
   }
 }
 
@@ -303,19 +476,94 @@ export const DEFAULT_PERMISSIONS: Record<string, Set<string>> = Object.fromEntri
   BASE_ROLES.map((r) => [r.id, new Set(permissionsForTier(r.tier ?? "staff"))]),
 );
 
+/** Extra defaults for HR System Control roles (ops + payroll; no dept salary; System Control only on hr_manager). */
+const HR_ROLE_OPS = [
+  "attendance.summary.view",
+  "attendance.breaks.manage",
+  "attendance.monthly.view",
+  "attendance.manage.edit",
+  "department.attendance.view",
+  "department.breaks.view",
+  "department.leaves.view",
+  "department.monthly.view",
+  "leave.list.view",
+  "leave.approval_status.view",
+  "leave.monthly_summary.view",
+  "payroll.monthly.view",
+  "payroll.daily.view",
+  "payroll.daily.edit",
+  "payroll.advance",
+  "payroll.loan",
+  "ops.tickets.view",
+];
+for (const roleId of ["hr_manager", "hr_coordinator", "team_lead_hr"]) {
+  const set = DEFAULT_PERMISSIONS[roleId];
+  if (!set) continue;
+  for (const k of HR_ROLE_OPS) set.add(k);
+  set.delete("department.salary.view");
+  if (roleId !== "hr_manager") {
+    for (const k of [...set]) {
+      if (k.startsWith("system.")) set.delete(k);
+    }
+  }
+}
+
+/**
+ * “Reset role to Default” = Officer / employee dashboard only.
+ * Sidebar base tabs (Employee Dashboard, My Info, Generate Ticket) need no
+ * System Control checkmarks — so the template is an empty permission set.
+ * Tier-heavy DEFAULT_PERMISSIONS are NOT used here.
+ */
+export function defaultPermissionKeysForRole(
+  _roleId?: string,
+  _allRoles?: RoleDef[],
+): string[] {
+  return [];
+}
+
 export const GLOBAL_FEATURES: GlobalFeature[] = [
+  {
+    key: "hr_department_defaults",
+    name: "HR department auto permissions",
+    desc: "ON = HR staff automatically get the default HR pack (attendance, leave, payroll, tickets). OFF = only permissions assigned in System Control.",
+    on: false,
+  },
+  {
+    key: "all_employee_dashboard",
+    name: "All profiles → employee dashboard",
+    desc: "ON = every role (CEO, Team Lead, HR Manager, etc.) only sees the default employee dashboard. OFF = each role keeps its own menus from permissions.",
+    on: true,
+  },
   { key: "biometric", name: "Biometric face clock-in", desc: "Require face verify on clock in/out", on: true },
   { key: "tungsten", name: "Tungsten IN/OUT sync", desc: "Punch reconciliation page", on: true },
   { key: "prayer", name: "Prayer break tracking", desc: "Prayer module on employee time page", on: true },
-  { key: "two_step_leave", name: "Two-step leave approval", desc: "Manager first, then HR final", on: false },
-  { key: "team_lead_module", name: "Team Lead module", desc: "Leader dashboard and team summaries", on: false },
+  {
+    key: "two_step_leave",
+    name: "Two-step leave approval",
+    desc: "1st step then 2nd step required before leave is final",
+    on: true,
+  },
+  {
+    key: "team_lead_module",
+    name: "Team module",
+    desc: "Org flag for team features; assigned team.* permissions still always show in the employee sidebar",
+    on: false,
+  },
+  { key: "tickets", name: "Ticket system", desc: "Employee tickets and admin ticket inbox", on: true },
+  { key: "recruitment", name: "Recruitment module", desc: "Recruitment workflows and pages", on: true },
+  { key: "presence_agent", name: "Desktop presence agent", desc: "Presence / idle monitoring integration", on: true },
+  { key: "login_carousel", name: "Login carousel", desc: "Branded login page slides", on: true },
+  { key: "employee_files", name: "Employee files", desc: "HR document library for employees", on: true },
+  { key: "appraisals", name: "Appraisals", desc: "Pending appraisal workflows", on: true },
+  { key: "financial_requests", name: "Financial requests", desc: "Advance/loan request inbox", on: true },
+  { key: "events", name: "Company events", desc: "Upcoming events module", on: true },
+  { key: "shift_management", name: "Shift management", desc: "Shift scheduler and management pages", on: true },
 ];
 
 export const TAB_HINT: Record<TabId, string> = {
-  roles: "Drag any card onto another to change its reporting line. Click a card to add a role under it, rename it, set its level, or delete it. Changes sync to the other tabs.",
-  permissions: "Select a role to configure permissions, assign it to an employee, and toggle feature access.",
-  features: "Globally enable or disable features for the entire organization.",
-  settings: "Session defaults, leave workflow, and who can access System Control.",
+  roles: "Drag any card onto another to change its reporting line. Click a card to add a role under it, rename it, set its level, or delete it. All card changes are saved to the database and survive refresh.",
+  permissions: "Select a role to configure permissions across every HRM module, assign it to a live employee, then Save — stored in Mongo/MySQL.",
+  features: "Globally enable or disable features for the entire organization. Save writes to the database.",
 };
 
 /** Managing partners — each owns one org-chart department column. */
@@ -450,8 +698,11 @@ export function isSystemRole(roleId: string) {
   return Boolean(base?.system);
 }
 
-export function isCustomRole(roleId: string, customRoles: RoleDef[]) {
-  return customRoles.some((r) => r.id === roleId);
+export function isCustomRole(roleId: string, customRoles?: RoleDef[]) {
+  if (customRoles && customRoles.length) {
+    return customRoles.some((r) => r.id === roleId);
+  }
+  return !BASE_ROLES.some((r) => r.id === roleId);
 }
 
 export function isRoleLocked(roleId: string) {
@@ -489,4 +740,156 @@ export function empNameById(employees: DemoEmployee[], id: string | null) {
 
 export function deptNameById(deptId: string) {
   return DEPARTMENTS.find((d) => d.id === deptId)?.name || deptId;
+}
+
+/** Top CEO cards on Org Chart → All (match live employee names). */
+export const ORG_CEO_NAME_HINTS = ["Joe", "Max", "Mubeen"] as const;
+
+/**
+ * Department manager map (display keys).
+ * Marketing is folded under IT (not a separate manager chip bucket).
+ * Mubeen → IT + Marketing + CEst. | Max → HIT + HR + Medical Billing + Finance | Joe → DM
+ */
+export const ORG_DEPT_MANAGER_NAME: Record<string, string> = {
+  IT: "Mubeen",
+  "CEst.": "Mubeen",
+  HIT: "Max",
+  HR: "Max",
+  "Medical Billing": "Max",
+  Finance: "Max",
+  DM: "Joe",
+};
+
+function normDeptToken(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ");
+}
+
+/** Canonical chip label for an HRM department name.
+ *  Marketing (standalone) → IT; Digital Marketing / DM / Analytics → DM.
+ */
+export function orgDeptChipLabel(departmentName: string | undefined | null): string | null {
+  const t = normDeptToken(departmentName || "");
+  if (!t) return null;
+  // DM must win before generic "marketing" → IT (Digital Marketing contains "marketing")
+  if (
+    t === "dm" ||
+    t === "digital marketing" ||
+    t.startsWith("dm ") ||
+    t.includes("digital marketing") ||
+    (t.includes("analytics") && !t.includes("data mining")) ||
+    t === "dm / analytics" ||
+    t.includes("dm /")
+  ) {
+    return "DM";
+  }
+  if (t === "marketing") return "IT";
+  if (t === "it" || t === "tech" || t.includes("technology")) return "IT";
+  if (t === "cest" || t === "c est") return "CEst.";
+  if (t === "hit") return "HIT";
+  if (t === "hr" || t === "human resources") return "HR";
+  if (
+    t === "medical billing" ||
+    t.includes("medical billing") ||
+    t === "billing" ||
+    (t.includes("billing") && t.includes("medical"))
+  ) {
+    return "Medical Billing";
+  }
+  if (t === "finance" || t === "accounts") return "Finance";
+  return String(departmentName || "").trim() || null;
+}
+
+/** Whether an employee belongs in a selected org-dept chip view. */
+export function employeeMatchesOrgDept(
+  emp: DemoEmployee,
+  chipLabel: string,
+): boolean {
+  const empChip = orgDeptChipLabel(emp.departmentName || emp.departmentId);
+  if (!empChip) return false;
+  if (chipLabel === "IT") {
+    const raw = normDeptToken(emp.departmentName || "");
+    // Marketing folds into IT; Digital Marketing is DM (handled by orgDeptChipLabel)
+    if (empChip === "IT") return true;
+    if (raw === "marketing") return true;
+    return false;
+  }
+  return empChip.toLowerCase() === chipLabel.toLowerCase();
+}
+
+/** Unique department chips for Org Chart (All + depts). Marketing folded into IT. */
+export function listOrgDeptChips(employees: DemoEmployee[]): string[] {
+  const seen = new Map<string, string>();
+  for (const e of employees) {
+    const label = orgDeptChipLabel(e.departmentName || e.departmentId);
+    if (!label) continue;
+    const key = label.toLowerCase();
+    if (!seen.has(key)) seen.set(key, label);
+  }
+  // Prefer known order, then the rest A–Z
+  const preferred = ["IT", "CEst.", "HIT", "HR", "Medical Billing", "Finance", "DM"];
+  const rest = [...seen.values()]
+    .filter((l) => !preferred.some((p) => p.toLowerCase() === l.toLowerCase()))
+    .sort((a, b) => a.localeCompare(b));
+  const ordered = [
+    ...preferred.filter((p) => seen.has(p.toLowerCase())),
+    ...rest,
+  ];
+  return ordered;
+}
+
+export function employeesInOrgDept(
+  employees: DemoEmployee[],
+  chipLabel: string,
+): DemoEmployee[] {
+  return employees
+    .filter((e) => employeeMatchesOrgDept(e, chipLabel))
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function nameLooksLike(empName: string, hint: string): boolean {
+  const n = empName.trim().toLowerCase();
+  const h = hint.trim().toLowerCase();
+  if (!n || !h) return false;
+  return n === h || n.startsWith(h + " ") || n.includes(" " + h) || n.includes(h);
+}
+
+/** Resolve department manager from live employees by configured name hint. */
+export function findOrgDeptManager(
+  employees: DemoEmployee[],
+  chipLabel: string,
+): DemoEmployee | null {
+  const hint =
+    ORG_DEPT_MANAGER_NAME[chipLabel] ||
+    ORG_DEPT_MANAGER_NAME[
+      Object.keys(ORG_DEPT_MANAGER_NAME).find(
+        (k) => k.toLowerCase() === chipLabel.toLowerCase(),
+      ) || ""
+    ];
+  if (!hint) return null;
+  const inDept = employeesInOrgDept(employees, chipLabel);
+  const fromDept = inDept.find((e) => nameLooksLike(e.name, hint));
+  if (fromDept) return fromDept;
+  return employees.find((e) => nameLooksLike(e.name, hint)) ?? null;
+}
+
+/** Top CEO cards for All view (ordered). Missing names → placeholder stubs. */
+export function resolveOrgCeoCards(employees: DemoEmployee[]): DemoEmployee[] {
+  return ORG_CEO_NAME_HINTS.map((hint, i) => {
+    const found = employees.find((e) => nameLooksLike(e.name, hint));
+    if (found) return found;
+    return {
+      id: `ceo-placeholder-${i}`,
+      name: hint,
+      initials: hint.slice(0, 2).toUpperCase(),
+      roleId: "",
+      departmentId: "executive",
+      departmentName: "Executive",
+      reportsTo: null,
+    };
+  });
 }

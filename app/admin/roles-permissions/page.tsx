@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import FeaturesTab from "./FeaturesTab";
 import NewRoleModal from "./NewRoleModal";
 import OrgChartTab from "./OrgChartTab";
@@ -12,16 +12,16 @@ import {
   saveOrgChartPhoto,
 } from "./org-chart-photo-api";
 import RolesPermissionsPanel from "./RolesPermissionsPanel";
-import SettingsTab from "./SettingsTab";
 import styles from "./system-control-demo.module.css";
 import { ModalPortal } from "@/app/components/ModalPortal";
+import { effectiveAccessSlugs } from "@/lib/access-control/effective-slugs";
 import {
   BASE_ROLES,
   childRoles,
   clonePermissionMap,
+  defaultPermissionKeysForRole,
   FEATURE_MODULES,
   GLOBAL_FEATURES,
-  INITIAL_EMPLOYEES,
   TAB_HINT,
   isCustomRole,
   isDescendantOf,
@@ -34,85 +34,213 @@ import {
   type TabId,
 } from "./system-control-data";
 
+function toPermissionSets(map: Record<string, string[]>): Record<string, Set<string>> {
+  const base = clonePermissionMap();
+  for (const [roleId, keys] of Object.entries(map || {})) {
+    base[roleId] = new Set(keys);
+  }
+  return base;
+}
+
+type ViewerCaps = {
+  systemPermissionsEdit: boolean;
+  systemUsersAssign: boolean;
+  systemOrgChartEdit: boolean;
+  systemFeaturesEdit: boolean;
+  systemControlOpen: boolean;
+};
+
+const FULL_CAPS: ViewerCaps = {
+  systemControlOpen: true,
+  systemPermissionsEdit: true,
+  systemUsersAssign: true,
+  systemOrgChartEdit: true,
+  systemFeaturesEdit: true,
+};
+
+function accessApiHeaders(extra?: Record<string, string>): HeadersInit {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(extra || {}),
+  };
+  if (typeof window === "undefined") return headers;
+  const path = window.location.pathname || "";
+  const empId =
+    localStorage.getItem("employeeId") || localStorage.getItem("loginId") || "";
+  if (path.startsWith("/employee-dashboard") && empId) {
+    headers["x-employee-id"] = empId;
+  } else {
+    headers["x-hrm-portal"] = "admin";
+  }
+  return headers;
+}
+
 export default function SystemControlPage() {
   const [activeTab, setActiveTab] = useState<TabId>("roles");
-  const [employees, setEmployees] = useState<DemoEmployee[]>(INITIAL_EMPLOYEES);
-  const [customRoles, setCustomRoles] = useState<RoleDef[]>([]);
-  const [deletedBaseIds, setDeletedBaseIds] = useState<string[]>([]);
+  const [employees, setEmployees] = useState<DemoEmployee[]>([]);
+  const [accessLoading, setAccessLoading] = useState(true);
+  const [accessSaving, setAccessSaving] = useState(false);
+  /** Full org-chart role tree — loaded/saved to DB (hrm_roles). */
+  const [orgRoles, setOrgRoles] = useState<RoleDef[]>(() => BASE_ROLES.map((r) => ({ ...r })));
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
-  const [levelOverrides, setLevelOverrides] = useState<Record<string, number>>({});
-  // Org-chart structure overrides (in-memory). parentOverrides re-parents roles
-  // via drag-drop; nameOverrides renames roles inline from the chart.
-  const [parentOverrides, setParentOverrides] = useState<Record<string, string | null>>({});
-  const [nameOverrides, setNameOverrides] = useState<Record<string, string>>({});
   const [newRoleParentId, setNewRoleParentId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState(clonePermissionMap);
+  const [employeePermissions, setEmployeePermissions] = useState<Record<string, string[]>>(
+    {},
+  );
+  const [viewerCaps, setViewerCaps] = useState<ViewerCaps>(FULL_CAPS);
   const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({
+    data_scope: true,
+    dashboard: true,
     attendance: true,
     leave: true,
     payroll: true,
+    people: false,
+    shifts: false,
+    ops: false,
     team: true,
+    department: true,
+    portal: false,
     system: true,
   });
 
   const [selectedRoleId, setSelectedRoleId] = useState("it_manager");
   const [globalFeatures, setGlobalFeatures] = useState(GLOBAL_FEATURES);
-  const [sessionTimeout, setSessionTimeout] = useState("480");
-  const [defaultRole, setDefaultRole] = useState("helpdesk");
-  const [twoStepLeave, setTwoStepLeave] = useState(true);
-  const [systemControlRoles, setSystemControlRoles] = useState(["exec_board"]);
   const [toast, setToast] = useState("");
   const [rolePhotos, setRolePhotos] = useState<Record<string, string>>({});
+  const persistTimerRef = React.useRef<number | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchOrgChartPhotos()
-      .then(({ employeePhotos, rolePhotos: storedRolePhotos }) => {
-        if (cancelled) return;
-        setEmployees(applyStoredEmployeePhotos(INITIAL_EMPLOYEES, employeePhotos));
-        setRolePhotos(storedRolePhotos);
-      })
-      .catch(() => {
-        /* table may not exist yet — photos stay empty until SQL is run */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const [showNewRoleModal, setShowNewRoleModal] = useState(false);
-  const [newRoleName, setNewRoleName] = useState("");
-  const [newRoleCloneFrom, setNewRoleCloneFrom] = useState("it_manager");
-  const [newRolePortal, setNewRolePortal] = useState("admin-dashboard");
-  const [newRoleScope, setNewRoleScope] = useState("DEPARTMENT");
-
-  const allRoles = useMemo(
-    () =>
-      [
-        ...BASE_ROLES.filter((r) => !deletedBaseIds.includes(r.id)),
-        ...customRoles,
-      ]
-        .map((r) => ({
-          ...r,
-          name: nameOverrides[r.id] ?? r.name,
-          hierarchyLevel: levelOverrides[r.id] ?? r.hierarchyLevel,
-          parentId:
-            parentOverrides[r.id] !== undefined
-              ? parentOverrides[r.id]
-              : (r.parentId ?? null),
-        }))
-        .sort((a, b) => a.hierarchyLevel - b.hierarchyLevel),
-    [customRoles, deletedBaseIds, levelOverrides, nameOverrides, parentOverrides],
+  const customRoles = useMemo(
+    () => orgRoles.filter((r) => isCustomRole(r.id)),
+    [orgRoles],
   );
-  const totalPermCount = FEATURE_MODULES.reduce((n, m) => n + m.permissions.length, 0);
 
   function showToast(msg: string) {
     setToast(msg);
     window.setTimeout(() => setToast(""), 2800);
   }
 
+  function schedulePersistRoles(next: RoleDef[]) {
+    if (!viewerCaps.systemOrgChartEdit) {
+      showToast("Missing permission: system.org_chart.edit");
+      return;
+    }
+    if (persistTimerRef.current != null) {
+      window.clearTimeout(persistTimerRef.current);
+    }
+    persistTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setAccessSaving(true);
+          const res = await fetch("/api/access-control/system-control", {
+            method: "PUT",
+            headers: accessApiHeaders(),
+            body: JSON.stringify({ type: "org-roles", roles: next }),
+          });
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || "Failed to save org chart");
+          if (Array.isArray(data.roles) && data.roles.length) {
+            setOrgRoles(data.roles as RoleDef[]);
+          }
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : "Failed to save org chart");
+        } finally {
+          setAccessSaving(false);
+        }
+      })();
+    }, 450);
+  }
+
+  function commitOrgRoles(updater: (prev: RoleDef[]) => RoleDef[]) {
+    setOrgRoles((prev) => {
+      const next = updater(prev);
+      schedulePersistRoles(next);
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAccessControl() {
+      setAccessLoading(true);
+      try {
+        const [accessRes, photoPayload] = await Promise.all([
+          fetch("/api/access-control/system-control", {
+            cache: "no-store",
+            headers: accessApiHeaders(),
+          }).then((r) => r.json()),
+          fetchOrgChartPhotos().catch(() => ({
+            employeePhotos: {} as Record<string, string>,
+            rolePhotos: {} as Record<string, string>,
+          })),
+        ]);
+        if (cancelled) return;
+
+        if (accessRes?.success) {
+          if (Array.isArray(accessRes.roles) && accessRes.roles.length) {
+            setOrgRoles(accessRes.roles as RoleDef[]);
+          }
+          if (accessRes.permissions) {
+            setPermissions(toPermissionSets(accessRes.permissions));
+          }
+          if (accessRes.employeePermissions && typeof accessRes.employeePermissions === "object") {
+            setEmployeePermissions(accessRes.employeePermissions as Record<string, string[]>);
+          }
+          if (accessRes.viewer?.capabilities) {
+            setViewerCaps({ ...FULL_CAPS, ...accessRes.viewer.capabilities });
+          }
+          if (Array.isArray(accessRes.features)) {
+            setGlobalFeatures(accessRes.features);
+          }
+          if (Array.isArray(accessRes.employees)) {
+            const live = accessRes.employees as DemoEmployee[];
+            setEmployees(applyStoredEmployeePhotos(live, photoPayload.employeePhotos || {}));
+          }
+        } else {
+          setToast(accessRes?.error || "Failed to load access control");
+          window.setTimeout(() => setToast(""), 2800);
+        }
+        setRolePhotos(photoPayload.rolePhotos || {});
+      } catch (err) {
+        if (!cancelled) {
+          setToast(err instanceof Error ? err.message : "Failed to load access control");
+          window.setTimeout(() => setToast(""), 2800);
+        }
+      } finally {
+        if (!cancelled) setAccessLoading(false);
+      }
+    }
+
+    loadAccessControl();
+    return () => {
+      cancelled = true;
+      if (persistTimerRef.current != null) {
+        window.clearTimeout(persistTimerRef.current);
+      }
+    };
+  }, []);
+
+  const [showNewRoleModal, setShowNewRoleModal] = useState(false);
+  /** After create, make this role report to the newly created role (Add above). */
+  const [newRoleInsertAboveTargetId, setNewRoleInsertAboveTargetId] = useState<
+    string | null
+  >(null);
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleCloneFrom, setNewRoleCloneFrom] = useState("it_manager");
+  const [newRolePortal, setNewRolePortal] = useState("admin-dashboard");
+  const [newRoleScope, setNewRoleScope] = useState("DEPARTMENT");
+  const [newRoleEmployeeIds, setNewRoleEmployeeIds] = useState<string[]>([]);
+  const [newRoleCreating, setNewRoleCreating] = useState(false);
+
+  const allRoles = useMemo(
+    () => [...orgRoles].sort((a, b) => a.hierarchyLevel - b.hierarchyLevel),
+    [orgRoles],
+  );
+  const totalPermCount = FEATURE_MODULES.reduce((n, m) => n + m.permissions.length, 0);
+
   function employeeCountByRole(roleId: string) {
-    return employees.filter((e) => e.roleId === roleId).length;
+    return employees.filter((e) => effectiveAccessSlugs(e).includes(roleId)).length;
   }
 
   function permCountByRole(roleId: string) {
@@ -149,6 +277,53 @@ export default function SystemControlPage() {
     });
   }
 
+  function toggleEmployeePermission(
+    employeeId: string,
+    key: string,
+    baseRoleId?: string,
+  ) {
+    setEmployeePermissions((prev) => {
+      const roleId =
+        baseRoleId ||
+        employees.find((e) => e.id === employeeId)?.accessRoleSlug ||
+        employees.find((e) => e.id === employeeId)?.roleId ||
+        "";
+      const base =
+        prev[employeeId] != null
+          ? [...prev[employeeId]]
+          : [...(permissions[roleId] || new Set())];
+      const set = new Set(base);
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+      return { ...prev, [employeeId]: [...set] };
+    });
+  }
+
+  function toggleModuleForEmployee(
+    employeeId: string,
+    module: { permissions: { key: string }[] },
+    checked: boolean,
+    baseRoleId?: string,
+  ) {
+    setEmployeePermissions((prev) => {
+      const roleId =
+        baseRoleId ||
+        employees.find((e) => e.id === employeeId)?.accessRoleSlug ||
+        employees.find((e) => e.id === employeeId)?.roleId ||
+        "";
+      const base =
+        prev[employeeId] != null
+          ? [...prev[employeeId]]
+          : [...(permissions[roleId] || new Set())];
+      const set = new Set(base);
+      for (const p of module.permissions) {
+        if (checked) set.add(p.key);
+        else set.delete(p.key);
+      }
+      return { ...prev, [employeeId]: [...set] };
+    });
+  }
+
   function openNewRoleModal(cloneFrom?: string) {
     const base = cloneFrom || selectedRoleId;
     const clone = roleMeta(base, allRoles);
@@ -156,7 +331,16 @@ export default function SystemControlPage() {
     setNewRoleCloneFrom(isRoleLocked(base) ? "it_manager" : base);
     setNewRolePortal(clone.portal);
     setNewRoleScope(clone.scope);
+    setNewRoleEmployeeIds([]);
     setShowNewRoleModal(true);
+  }
+
+  function toggleNewRoleEmployee(employeeId: string) {
+    setNewRoleEmployeeIds((prev) =>
+      prev.includes(employeeId)
+        ? prev.filter((id) => id !== employeeId)
+        : [...prev, employeeId],
+    );
   }
 
   function applyCloneDefaults(cloneId: string) {
@@ -166,7 +350,7 @@ export default function SystemControlPage() {
     setNewRoleScope(clone.scope);
   }
 
-  function handleCreateRole() {
+  async function handleCreateRole() {
     const name = newRoleName.trim();
     if (!name) {
       showToast("Enter a role name");
@@ -192,22 +376,116 @@ export default function SystemControlPage() {
       scopeLabel: scopeLabelFromScope(newRoleScope),
       hierarchyLevel: clone.hierarchyLevel + 1,
       parentId,
+      tier: clone.tier,
+      accent: clone.accent,
     };
-    setCustomRoles((prev) => [...prev, newRole]);
-    setPermissions((prev) => ({
-      ...prev,
-      [slug]: new Set(prev[newRoleCloneFrom] || []),
-    }));
-    setShowNewRoleModal(false);
-    setNewRoleParentId(null);
-    setSelectedRoleId(slug);
-    const parentName = parentId ? roleMeta(parentId, allRoles).name : "top level";
-    showToast(`Role "${name}" added under ${parentName}`);
+    const aboveTarget = newRoleInsertAboveTargetId;
+    const clonedKeys = [...(permissions[newRoleCloneFrom] || [])];
+    const assignIds = [...newRoleEmployeeIds];
+
+    setNewRoleCreating(true);
+    try {
+      let nextRoles: RoleDef[] = [];
+      commitOrgRoles((prev) => {
+        nextRoles = [...prev, newRole];
+        if (aboveTarget && aboveTarget !== slug) {
+          nextRoles = nextRoles.map((r) =>
+            r.id === aboveTarget ? { ...r, parentId: slug } : r,
+          );
+        }
+        return nextRoles;
+      });
+
+      // Persist org chart immediately so assign/permissions hit the new slug.
+      if (persistTimerRef.current != null) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+      const persistRes = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "org-roles", roles: nextRoles }),
+      });
+      const persistData = await persistRes.json();
+      if (!persistData.success) {
+        throw new Error(persistData.error || "Failed to save new role");
+      }
+      if (Array.isArray(persistData.roles) && persistData.roles.length) {
+        setOrgRoles(persistData.roles as RoleDef[]);
+      }
+
+      setPermissions((prev) => ({
+        ...prev,
+        [slug]: new Set(clonedKeys),
+      }));
+
+      const permRes = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({
+          type: "permissions",
+          roleId: slug,
+          keys: clonedKeys,
+        }),
+      });
+      const permData = await permRes.json();
+      if (!permData.success) {
+        throw new Error(permData.error || "Failed to save role permissions");
+      }
+
+      if (assignIds.length) {
+        const assignRes = await fetch("/api/access-control/system-control", {
+          method: "PUT",
+          headers: accessApiHeaders(),
+          body: JSON.stringify({
+            type: "assign-many",
+            employeeIds: assignIds,
+            roleId: slug,
+          }),
+        });
+        const assignData = await assignRes.json();
+        if (!assignData.success) {
+          throw new Error(assignData.error || "Role created but assign failed");
+        }
+        await refreshEmployeesFromApi();
+      }
+
+      setShowNewRoleModal(false);
+      setNewRoleParentId(null);
+      setNewRoleInsertAboveTargetId(null);
+      setNewRoleEmployeeIds([]);
+      setSelectedRoleId(slug);
+      setActiveTab("permissions");
+
+      const assignNote = assignIds.length
+        ? ` · ${assignIds.length} employee(s) assigned`
+        : "";
+      showToast(
+        `Role "${name}" created${assignNote}. Fine-tune permissions below, then Save role.`,
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to create role");
+    } finally {
+      setNewRoleCreating(false);
+    }
   }
 
   function openAddChildRole(parentId: string) {
+    setNewRoleInsertAboveTargetId(null);
     setNewRoleParentId(parentId);
     openNewRoleModal(isRoleLocked(parentId) ? "it_manager" : parentId);
+  }
+
+  /** Insert a new role as the manager of `targetId` (same parent as target had). */
+  function openAddRoleAbove(targetId: string) {
+    if (isRoleLocked(targetId)) {
+      showToast("Can't add a role above a locked top role");
+      return;
+    }
+    const parentId = effectiveParentOf(targetId);
+    setNewRoleInsertAboveTargetId(targetId);
+    setNewRoleParentId(parentId);
+    openNewRoleModal(isRoleLocked(targetId) ? "it_manager" : targetId);
   }
 
   /** Target id plus every role beneath it in the current tree. */
@@ -238,12 +516,15 @@ export default function SystemControlPage() {
       return;
     }
     const oldParent = effectiveParentOf(childId);
-    setParentOverrides((prev) => {
-      const next = { ...prev };
-      if (newParentId && isDescendantOf(allRoles, childId, newParentId)) {
-        next[newParentId] = oldParent;
+    commitOrgRoles((prev) => {
+      const next = prev.map((r) => ({ ...r }));
+      const byId = new Map(next.map((r) => [r.id, r]));
+      if (newParentId && isDescendantOf(next, childId, newParentId)) {
+        const loopNode = byId.get(newParentId);
+        if (loopNode) loopNode.parentId = oldParent;
       }
-      next[childId] = newParentId;
+      const child = byId.get(childId);
+      if (child) child.parentId = newParentId;
       return next;
     });
     const childName = roleMeta(childId, allRoles).name;
@@ -270,17 +551,20 @@ export default function SystemControlPage() {
     }
     const targetParent = effectiveParentOf(targetId);
     const draggedOldParent = effectiveParentOf(draggedId);
-    setParentOverrides((prev) => {
-      const next = { ...prev };
+    commitOrgRoles((prev) => {
+      const next = prev.map((r) => ({ ...r }));
+      const byId = new Map(next.map((r) => [r.id, r]));
       if (
         targetParent &&
-        (targetParent === draggedId ||
-          isDescendantOf(allRoles, draggedId, targetParent))
+        (targetParent === draggedId || isDescendantOf(next, draggedId, targetParent))
       ) {
-        next[targetParent] = draggedOldParent;
+        const loopNode = byId.get(targetParent);
+        if (loopNode) loopNode.parentId = draggedOldParent;
       }
-      next[draggedId] = targetParent;
-      next[targetId] = draggedId;
+      const dragged = byId.get(draggedId);
+      const target = byId.get(targetId);
+      if (dragged) dragged.parentId = targetParent;
+      if (target) target.parentId = draggedId;
       return next;
     });
 
@@ -322,16 +606,18 @@ export default function SystemControlPage() {
       showToast(`${roleMeta(draggedId, allRoles).name} is already parallel here`);
       return;
     }
-    setParentOverrides((prev) => {
-      const next = { ...prev };
+    commitOrgRoles((prev) => {
+      const next = prev.map((r) => ({ ...r }));
+      const byId = new Map(next.map((r) => [r.id, r]));
       if (
         targetParent &&
-        (targetParent === draggedId ||
-          isDescendantOf(allRoles, draggedId, targetParent))
+        (targetParent === draggedId || isDescendantOf(next, draggedId, targetParent))
       ) {
-        next[targetParent] = currentParent;
+        const loopNode = byId.get(targetParent);
+        if (loopNode) loopNode.parentId = currentParent;
       }
-      next[draggedId] = targetParent;
+      const dragged = byId.get(draggedId);
+      if (dragged) dragged.parentId = targetParent;
       return next;
     });
     const draggedName = roleMeta(draggedId, allRoles).name;
@@ -342,9 +628,9 @@ export default function SystemControlPage() {
   }
 
   function resetOrgChart() {
-    setParentOverrides({});
-    setLevelOverrides({});
-    setNameOverrides({});
+    const defaults = BASE_ROLES.map((r) => ({ ...r }));
+    setOrgRoles(defaults);
+    schedulePersistRoles(defaults);
     setPermissions(clonePermissionMap());
     showToast("Org chart reset to default hierarchy and permissions");
   }
@@ -352,19 +638,45 @@ export default function SystemControlPage() {
   function renameRole(roleId: string, newName: string) {
     const name = newName.trim();
     if (!name || name === roleMeta(roleId, allRoles).name) return;
-    setNameOverrides((prev) => ({ ...prev, [roleId]: name }));
+    commitOrgRoles((prev) =>
+      prev.map((r) => (r.id === roleId ? { ...r, name } : r)),
+    );
     showToast(`Role renamed to "${name}"`);
   }
 
-  function requestDeleteRole(roleId: string) {
+  async function requestDeleteRole(roleId: string) {
     if (isRoleLocked(roleId)) {
       showToast("Core system role cannot be deleted");
       return;
     }
     const name = roleMeta(roleId, allRoles).name;
-    if (employees.some((e) => e.roleId === roleId)) {
-      showToast(`Reassign employees first — "${name}" still has users`);
-      return;
+    const assignees = employees.filter((e) =>
+      effectiveAccessSlugs(e).includes(roleId),
+    );
+    if (assignees.length) {
+      setAccessSaving(true);
+      try {
+        const res = await fetch("/api/access-control/system-control", {
+          method: "PUT",
+          headers: accessApiHeaders(),
+          body: JSON.stringify({
+            type: "unassign-many",
+            employeeIds: assignees.map((e) => e.id),
+            roleId,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "Unassign failed");
+        await refreshEmployeesFromApi();
+        showToast(
+          `Unassigned ${assignees.length} user(s) from "${name}" — confirm delete`,
+        );
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Failed to unassign");
+        return;
+      } finally {
+        setAccessSaving(false);
+      }
     }
     setDeleteTargetId(roleId);
   }
@@ -372,7 +684,7 @@ export default function SystemControlPage() {
   function confirmDeleteRole() {
     const roleId = deleteTargetId;
     if (!roleId) return;
-    if (isRoleLocked(roleId) || employees.some((e) => e.roleId === roleId)) {
+    if (isRoleLocked(roleId)) {
       setDeleteTargetId(null);
       return;
     }
@@ -380,25 +692,14 @@ export default function SystemControlPage() {
     const deletedParent = roleMeta(roleId, allRoles).parentId ?? null;
     const kids = childRoles(allRoles, roleId);
 
-    if (isCustomRole(roleId, customRoles)) {
-      setCustomRoles((prev) => prev.filter((r) => r.id !== roleId));
-    } else {
-      setDeletedBaseIds((prev) => [...prev, roleId]);
-    }
+    commitOrgRoles((prev) =>
+      prev
+        .filter((r) => r.id !== roleId)
+        .map((r) =>
+          kids.some((k) => k.id === r.id) ? { ...r, parentId: deletedParent } : r,
+        ),
+    );
     setPermissions((prev) => {
-      const next = { ...prev };
-      delete next[roleId];
-      return next;
-    });
-    // Reattach any children to the deleted role's parent so the tree stays
-    // connected, and drop the deleted role's own overrides.
-    setParentOverrides((prev) => {
-      const next = { ...prev };
-      for (const kid of kids) next[kid.id] = deletedParent;
-      delete next[roleId];
-      return next;
-    });
-    setNameOverrides((prev) => {
       const next = { ...prev };
       delete next[roleId];
       return next;
@@ -412,10 +713,70 @@ export default function SystemControlPage() {
     );
   }
 
+  async function changeEmployeeOrgRole(employeeId: string, orgRole: string) {
+    const emp = employees.find((e) => e.id === employeeId);
+    if (!emp || !orgRole) return;
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({
+          type: "employee-org-role",
+          employeeId,
+          orgRole,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Role update failed");
+      await refreshEmployeesFromApi();
+      const slug = data.accessRoleSlug
+        ? roleMeta(String(data.accessRoleSlug), allRoles).name
+        : orgRole;
+      showToast(
+        `${emp.name} → ${orgRole} (${slug}). Default permissions applied — refine in Permissions.`,
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to change role");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function deleteEmployeeFromOrg(employeeId: string) {
+    const emp = employees.find((e) => e.id === employeeId);
+    if (!emp) return;
+    const ok = window.confirm(
+      `Delete employee "${emp.name}" (ID ${emp.id})?\n\nThis removes them from HR and unassigns all System Control roles. Cannot be undone.`,
+    );
+    if (!ok) return;
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "delete-employee", employeeId }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Delete failed");
+      setEmployees((prev) => prev.filter((e) => e.id !== employeeId));
+      setEmployeePermissions((prev) => {
+        const next = { ...prev };
+        delete next[employeeId];
+        return next;
+      });
+      showToast(`${emp.name} deleted and roles unassigned`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to delete employee");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
   const deleteTargetMeta = deleteTargetId
     ? {
         name: roleMeta(deleteTargetId, allRoles).name,
-        isCustom: isCustomRole(deleteTargetId, customRoles),
+        isCustom: isCustomRole(deleteTargetId),
       }
     : null;
 
@@ -426,16 +787,12 @@ export default function SystemControlPage() {
     }
     if (!Number.isFinite(newLevel) || newLevel < 1) newLevel = 1;
 
-    const newOverrides = { ...levelOverrides, [roleId]: newLevel };
-    setLevelOverrides(newOverrides);
+    commitOrgRoles((prev) =>
+      prev.map((r) => (r.id === roleId ? { ...r, hierarchyLevel: newLevel } : r)),
+    );
 
-    const rawList = [
-      ...BASE_ROLES.filter((r) => !deletedBaseIds.includes(r.id)),
-      ...customRoles,
-    ];
-    const levelOf = (r: RoleDef) => newOverrides[r.id] ?? r.hierarchyLevel;
-    const belowRoles = rawList.filter(
-      (r) => r.id !== roleId && r.id !== "super_admin" && levelOf(r) > newLevel,
+    const belowRoles = orgRoles.filter(
+      (r) => r.id !== roleId && r.id !== "super_admin" && r.hierarchyLevel > newLevel,
     );
 
     setPermissions((prev) => {
@@ -457,13 +814,269 @@ export default function SystemControlPage() {
     setActiveTab("permissions");
   }
 
-  function saveEmployeeRole(empId: string, roleId: string) {
+  async function refreshEmployeesFromApi() {
+    try {
+      const accessRes = await fetch("/api/access-control/system-control", {
+        cache: "no-store",
+        headers: accessApiHeaders(),
+      }).then((r) => r.json());
+      if (accessRes?.success && Array.isArray(accessRes.employees)) {
+        const photoPayload = await fetchOrgChartPhotos().catch(() => ({
+          employeePhotos: {} as Record<string, string>,
+        }));
+        setEmployees(
+          applyStoredEmployeePhotos(
+            accessRes.employees as DemoEmployee[],
+            photoPayload.employeePhotos || {},
+          ),
+        );
+        if (accessRes.employeePermissions && typeof accessRes.employeePermissions === "object") {
+          setEmployeePermissions(accessRes.employeePermissions as Record<string, string[]>);
+        }
+      }
+    } catch {
+      /* keep local state */
+    }
+  }
+
+  async function saveEmployeeRole(empId: string, roleId: string) {
     const emp = employees.find((e) => e.id === empId);
     if (!emp) return;
-    setEmployees((prev) => prev.map((e) => (e.id === empId ? { ...e, roleId } : e)));
-    showToast(
-      `${emp.name} → ${roleMeta(roleId, allRoles).name}. Portal: ${roleMeta(roleId, allRoles).portal} on next login.`,
-    );
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "assign", employeeId: empId, roleId }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Assign failed");
+      await refreshEmployeesFromApi();
+
+      let permNote = "";
+      try {
+        const meRes = await fetch(
+          `/api/access-control/me?employeeId=${encodeURIComponent(empId)}`,
+          { cache: "no-store" },
+        );
+        const me = await meRes.json();
+        if (me?.success) {
+          const n = Array.isArray(me.permissions) ? me.permissions.length : 0;
+          const links = Array.isArray(me.menu) ? me.menu.length : 0;
+          permNote = ` (${n} permissions → ${links} dashboard links)`;
+        }
+      } catch {
+        /* ignore verify errors */
+      }
+
+      showToast(
+        `${emp.name} → ${roleMeta(roleId, allRoles).name}${permNote}. Ask them to refresh.`,
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to assign role");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function assignEmployeesToRole(employeeIds: string[], roleId: string) {
+    const ids = [...new Set(employeeIds.map(String).filter(Boolean))];
+    if (!ids.length || !roleId) return;
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "assign-many", employeeIds: ids, roleId }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Assign failed");
+      await refreshEmployeesFromApi();
+      const names = ids
+        .map((id) => employees.find((e) => e.id === id)?.name || id)
+        .slice(0, 3)
+        .join(", ");
+      const extra = ids.length > 3 ? ` +${ids.length - 3}` : "";
+      showToast(
+        `${ids.length} user(s) → ${roleMeta(roleId, allRoles).name}: ${names}${extra}. Ask them to refresh.`,
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to assign role");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function unassignEmployeesFromRole(employeeIds: string[], roleId: string) {
+    const ids = [...new Set(employeeIds.map(String).filter(Boolean))];
+    if (!ids.length || !roleId) return;
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "unassign-many", employeeIds: ids, roleId }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Unassign failed");
+      await refreshEmployeesFromApi();
+      showToast(
+        `${ids.length} user(s) removed from ${roleMeta(roleId, allRoles).name}. Other roles kept.`,
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to unassign");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function savePermissionsToDb(roleId: string, keysOverride?: string[]) {
+    const targetRole = String(roleId || selectedRoleId || "").trim();
+    if (!targetRole) {
+      showToast("Select a role first");
+      return;
+    }
+    setAccessSaving(true);
+    try {
+      const keys =
+        keysOverride != null
+          ? keysOverride
+          : [...(permissions[targetRole] || [])];
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "permissions", roleId: targetRole, keys }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Save failed");
+      showToast(`Role permissions saved for ${roleMeta(targetRole, allRoles).name}.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to save permissions");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function resetRoleToDefault(roleId: string) {
+    const targetRole = String(roleId || "").trim();
+    if (!targetRole) {
+      showToast("Select a role first");
+      return;
+    }
+    if (isRoleLocked(targetRole)) {
+      showToast("This role cannot be reset");
+      return;
+    }
+    const keys = defaultPermissionKeysForRole(targetRole, allRoles);
+    setPermissions((prev) => ({ ...prev, [targetRole]: new Set(keys) }));
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "permissions", roleId: targetRole, keys }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Reset failed");
+      showToast(
+        `${roleMeta(targetRole, allRoles).name} → Officer dashboard default (My Info + Generate Ticket only). All extra permissions unchecked.`,
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to reset role");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function saveEmployeePermissionsToDb(
+    employeeId: string,
+    baseRoleId?: string,
+  ) {
+    const eid = String(employeeId || "").trim();
+    if (!eid) return;
+    setAccessSaving(true);
+    try {
+      const roleId =
+        baseRoleId ||
+        employees.find((e) => e.id === eid)?.accessRoleSlug ||
+        employees.find((e) => e.id === eid)?.roleId ||
+        "";
+      const keys =
+        employeePermissions[eid] != null
+          ? employeePermissions[eid]
+          : [...(permissions[roleId] || new Set())];
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({ type: "employee-permissions", employeeId: eid, keys }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Save failed");
+      setEmployeePermissions((prev) => ({ ...prev, [eid]: keys }));
+      await refreshEmployeesFromApi();
+      const name = employees.find((e) => e.id === eid)?.name || eid;
+      showToast(`Custom permissions saved for ${name}. Ask them to refresh.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to save user permissions");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function clearEmployeeOverrides(employeeId: string) {
+    const eid = String(employeeId || "").trim();
+    if (!eid) return;
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({
+          type: "employee-permissions",
+          employeeId: eid,
+          clear: true,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Clear failed");
+      setEmployeePermissions((prev) => {
+        const next = { ...prev };
+        delete next[eid];
+        return next;
+      });
+      const name = employees.find((e) => e.id === eid)?.name || eid;
+      showToast(`${name} now uses role default permissions.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to reset user permissions");
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function saveFeaturesToDb() {
+    setAccessSaving(true);
+    try {
+      const res = await fetch("/api/access-control/system-control", {
+        method: "PUT",
+        headers: accessApiHeaders(),
+        body: JSON.stringify({
+          type: "features",
+          features: globalFeatures.map((f) => ({
+            key: f.key,
+            on: f.on,
+            name: f.name,
+            desc: f.desc,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Save failed");
+      showToast("Global features saved");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to save features");
+    } finally {
+      setAccessSaving(false);
+    }
   }
 
   async function updateEmployeePhoto(empId: string, photo: string) {
@@ -544,26 +1157,41 @@ export default function SystemControlPage() {
     { id: "roles", label: "Org Chart" },
     { id: "permissions", label: "Permissions" },
     { id: "features", label: "Features" },
-    { id: "settings", label: "Settings" },
   ];
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
-        <header className={styles.scHeader}>
-          <div>
+        <header className={styles.scHero}>
+          <div className={styles.scHeroMain}>
             <p className={styles.scEyebrow}>Administration</p>
             <h1 className={styles.scTitle}>System Control</h1>
             <p className={styles.scSubtitle}>
-              Manage roles, permissions, user assignments, and features from one place.
+              Roles, permissions, org chart, and feature flags — one control center for HRM access.
             </p>
+            <div className={styles.scHeroMeta}>
+              <span className={styles.scMetaChip}>
+                {accessLoading
+                  ? "Loading employees…"
+                  : `${employees.length} employees`}
+              </span>
+              <span className={styles.scMetaChip}>
+                {allRoles.length} roles
+              </span>
+              {accessSaving ? (
+                <span className={`${styles.scMetaChip} ${styles.scMetaChipLive}`}>
+                  Saving…
+                </span>
+              ) : null}
+            </div>
           </div>
-          <div className={styles.scHeaderBadge}>Super Admin</div>
+          <div className={styles.scHeroSide}>
+            <span className={styles.scHeaderBadge}>Live DB</span>
+            <p className={styles.scHeroSideHint}>{TAB_HINT[activeTab]}</p>
+          </div>
         </header>
 
-        <div className={styles.scHintBar}>{TAB_HINT[activeTab]}</div>
-
-        <nav className={styles.scTabs} aria-label="System Control sections">
+        <nav className={styles.scTabRail} aria-label="System Control sections">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -590,8 +1218,13 @@ export default function SystemControlPage() {
               onMakeSibling={makeRoleSibling}
               onResetChart={resetOrgChart}
               onAddChild={openAddChildRole}
+              onAddAbove={openAddRoleAbove}
               onRename={renameRole}
-              onDelete={requestDeleteRole}
+              onDelete={(roleId) => void requestDeleteRole(roleId)}
+              onDeleteEmployee={(id) => void deleteEmployeeFromOrg(id)}
+              onChangeEmployeeOrgRole={(id, orgRole) =>
+                void changeEmployeeOrgRole(id, orgRole)
+              }
               onManage={manageRolePermissions}
               onUpdateLevel={updateRoleLevel}
               onUpdateProfilePhoto={updateEmployeePhoto}
@@ -600,7 +1233,8 @@ export default function SystemControlPage() {
               onRemoveRolePhoto={removeRolePhoto}
               rolePhotos={rolePhotos}
               isRoleLocked={isRoleLocked}
-              isCustomRole={(id) => isCustomRole(id, customRoles)}
+              isCustomRole={(id) => isCustomRole(id)}
+              readOnly={!viewerCaps.systemOrgChartEdit}
             />
           )}
 
@@ -610,6 +1244,7 @@ export default function SystemControlPage() {
               employees={employees}
               initialRoleId={selectedRoleId}
               permissions={permissions}
+              employeePermissions={employeePermissions}
               modules={FEATURE_MODULES}
               expandedModules={expandedModules}
               onToggleModuleExpand={(id) =>
@@ -620,15 +1255,25 @@ export default function SystemControlPage() {
               }
               onTogglePermission={togglePermission}
               onToggleModuleForRole={toggleModuleForRole}
-              onResetAll={() => {
-                setPermissions(clonePermissionMap());
-                showToast("All roles reset to default templates");
+              onToggleEmployeePermission={toggleEmployeePermission}
+              onToggleModuleForEmployee={toggleModuleForEmployee}
+              onResetRole={(roleId) => void resetRoleToDefault(roleId)}
+              onSaveRole={(roleId) => void savePermissionsToDb(roleId)}
+              onSaveEmployee={(empId, roleId) =>
+                void saveEmployeePermissionsToDb(empId, roleId)
+              }
+              onClearEmployeeOverrides={(empId) => void clearEmployeeOverrides(empId)}
+              onAssignEmployees={(ids, roleId) => void assignEmployeesToRole(ids, roleId)}
+              onUnassignEmployees={(ids, roleId) => void unassignEmployeesFromRole(ids, roleId)}
+              onCreateRole={() => {
+                setNewRoleInsertAboveTargetId(null);
+                setNewRoleParentId(null);
+                openNewRoleModal(selectedRoleId);
               }}
-              onSave={() => showToast("Permissions saved (demo)")}
-              onAssignEmployee={saveEmployeeRole}
               isRoleLocked={isRoleLocked}
-              isCustomRole={(id) => isCustomRole(id, customRoles)}
+              isCustomRole={(id) => isCustomRole(id)}
               employeeCountByRole={employeeCountByRole}
+              caps={viewerCaps}
             />
           )}
 
@@ -636,41 +1281,36 @@ export default function SystemControlPage() {
             <FeaturesTab
               features={globalFeatures}
               onToggle={(key) => {
+                if (!viewerCaps.systemFeaturesEdit) return;
                 setGlobalFeatures((prev) =>
                   prev.map((f) => (f.key === key ? { ...f, on: !f.on } : f)),
                 );
               }}
-              onSave={() => showToast("Features saved (demo)")}
-            />
-          )}
-
-          {activeTab === "settings" && (
-            <SettingsTab
-              sessionTimeout={sessionTimeout}
-              onSessionTimeoutChange={setSessionTimeout}
-              defaultRole={defaultRole}
-              onDefaultRoleChange={setDefaultRole}
-              twoStepLeave={twoStepLeave}
-              onTwoStepLeaveChange={setTwoStepLeave}
-              systemControlRoles={systemControlRoles}
-              onSystemControlRolesChange={setSystemControlRoles}
-              allRoles={allRoles}
-              onSave={() => showToast("Settings saved (demo)")}
+              onSave={() => void saveFeaturesToDb()}
+              readOnly={!viewerCaps.systemFeaturesEdit}
             />
           )}
         </div>
 
         <p className={styles.scDemoNote}>
-          Static UI preview — production will save to MySQL (<code>hrm_roles</code>,{" "}
-          <code>hrm_role_permissions</code>).
+          Org chart, permissions, and features save to the database (
+          <code>hrm_roles</code>, <code>hrm_role_permissions</code>,{" "}
+          <code>hrm_global_features</code>).
         </p>
 
         {toast && <div className={styles.toast}>{toast}</div>}
 
         <NewRoleModal
           open={showNewRoleModal}
-          onClose={() => setShowNewRoleModal(false)}
+          onClose={() => {
+            if (newRoleCreating) return;
+            setShowNewRoleModal(false);
+            setNewRoleInsertAboveTargetId(null);
+            setNewRoleParentId(null);
+            setNewRoleEmployeeIds([]);
+          }}
           allRoles={allRoles}
+          employees={employees}
           name={newRoleName}
           onNameChange={setNewRoleName}
           cloneFrom={newRoleCloneFrom}
@@ -679,7 +1319,10 @@ export default function SystemControlPage() {
           onPortalChange={setNewRolePortal}
           scope={newRoleScope}
           onScopeChange={setNewRoleScope}
-          onCreate={handleCreateRole}
+          selectedEmployeeIds={newRoleEmployeeIds}
+          onToggleEmployee={toggleNewRoleEmployee}
+          onCreate={() => void handleCreateRole()}
+          creating={newRoleCreating}
         />
 
         {deleteTargetMeta && (
@@ -725,6 +1368,6 @@ export default function SystemControlPage() {
           </ModalPortal>
         )}
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

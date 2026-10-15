@@ -486,8 +486,8 @@ export default function AssignHierarchyPanel({ roles, onToast }: Props) {
           <h3 className={hStyles.panelSectionTitle}>Team Lead → select team members</h3>
           <p style={{ fontSize: "0.88rem", color: "#718096", marginTop: 0 }}>
             Select a <strong>Team Lead</strong>, then choose the officers in the same department
-            who belong to their team. Team Leads may view attendance for assigned members only;
-            they cannot edit records or approve leave.
+            who belong to their team. Leads with team leave permission can view team leave
+            applications; 1st-step / 2nd-step approve is granted separately in Permissions.
           </p>
 
           <div className={hStyles.formRow}>

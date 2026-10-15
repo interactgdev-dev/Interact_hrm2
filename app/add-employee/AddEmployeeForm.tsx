@@ -5,6 +5,12 @@ import Image from "next/image";
 import styles from "./add-employee.module.css";
 import AttachmentsUploader from "./AttachmentsUploader";
 import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
+import {
+  ORG_ROLE_OPTIONS,
+  normalizeOrgRole,
+  orgRoleNeedsDepartmentConfirm,
+  type OrgRoleDbValue,
+} from "@/lib/org-role";
 
 const employeeTabs = [
   { name: "Personal Details" },
@@ -29,9 +35,22 @@ export default function AddEmployeeForm({
 }) {
   // Departments state for dropdown
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
+  /** Joe / Max / Mubeen — Reporting Manager for Manager / Team Lead */
+  const [ceoOptions, setCeoOptions] = useState<
+    { id: string; name: string; hint: string }[]
+  >([]);
+  const [reportingManagerId, setReportingManagerId] = useState("");
 
   // Fetch departments on mount
   useEffect(() => {
+    fetch("/api/org-ceos")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success && Array.isArray(data.ceos)) {
+          setCeoOptions(data.ceos);
+        }
+      })
+      .catch(() => {});
     fetch('/api/departments')
       .then(res => res.json())
       .then(data => {
@@ -166,6 +185,20 @@ export default function AddEmployeeForm({
       toastInfo('Please save Personal Details first.');
       return;
     }
+    if (!jobDetails.departmentId) {
+      toastError("Please select a department.");
+      return;
+    }
+    if (orgRoleNeedsDepartmentConfirm(role) && !departmentScopeConfirmed) {
+      toastError(
+        "Please confirm the department — this becomes their attendance/leave scope.",
+      );
+      return;
+    }
+    if (orgRoleNeedsDepartmentConfirm(role) && !reportingManagerId) {
+      toastError("Please select Reporting Manager (CEO) on Personal Details.");
+      return;
+    }
     try {
       const res = await fetch('/api/employee_jobs', {
         method: isEdit ? 'PUT' : 'POST',
@@ -191,6 +224,10 @@ export default function AddEmployeeForm({
       });
       const data = await res.json();
       if (data.success) {
+        if (employeeId) {
+          const ok = await saveReportingManager(employeeId);
+          if (!ok) return;
+        }
         toastSuccess('Job details saved!');
         setActiveTab('Assign Shift');
       } else {
@@ -400,8 +437,36 @@ export default function AddEmployeeForm({
   const [employmentStatus, setEmploymentStatus] = useState("");
   const [employmentType, setEmploymentType] = useState("");
   const [workingHours, setWorkingHours] = useState<string>("");
-  // Role is fixed for add/edit form — System Control handles access roles separately.
-  const role = "Officer";
+  // Overall org role (Add Employee). Feature permissions → System Control.
+  const [role, setRole] = useState<OrgRoleDbValue>("Officer");
+  const [departmentScopeConfirmed, setDepartmentScopeConfirmed] = useState(false);
+
+  const saveReportingManager = async (empId: string) => {
+    if (!orgRoleNeedsDepartmentConfirm(role)) return true;
+    if (!reportingManagerId) {
+      toastError("Please select Reporting Manager (CEO).");
+      return false;
+    }
+    try {
+      const res = await fetch("/api/employee-hierarchy", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employeeId: empId,
+          reportsToEmployeeId: reportingManagerId,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        toastError(data.error || "Failed to save reporting manager");
+        return false;
+      }
+      return true;
+    } catch (err) {
+      toastError("Failed to save reporting manager: " + String(err));
+      return false;
+    }
+  };
   const [createLogin, setCreateLogin] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState("");
@@ -569,15 +634,25 @@ export default function AddEmployeeForm({
             );
             setProfileImg(data.employee.profile_img || null);
             setUsername(data.employee.username || "");
-              // Set status to "enabled" - default for login details
-              setStatus("enabled");
-            // Role stays fixed as Officer on this form.
+            setStatus("enabled");
+            setRole(normalizeOrgRole(data.employee.role));
             setCreateLogin(!!data.employee.username);
               // Pre-fill password fields in edit mode with existing password
               if (data.employee.password) {
                 setPassword(data.employee.password);
                 setConfirmPassword(data.employee.password);
               }
+            const eid = String(data.employee.id || editEmployeeId || "");
+            if (eid) {
+              fetch(`/api/employee-hierarchy?employeeId=${encodeURIComponent(eid)}`)
+                .then((r) => r.json())
+                .then((h) => {
+                  if (h?.success && h.reportsTo?.id) {
+                    setReportingManagerId(String(h.reportsTo.id));
+                  }
+                })
+                .catch(() => {});
+            }
           }
         })
         .catch(err => console.error('Error fetching personal details:', err));
@@ -660,6 +735,9 @@ export default function AddEmployeeForm({
             includeContract: !!data.job.include_contract,
             departmentId: data.job.department_id ? String(data.job.department_id) : ""
           });
+          if (data.job.department_id) {
+            setDepartmentScopeConfirmed(true);
+          }
         }
       })
       .catch(err => console.error('Error fetching job details:', err));
@@ -750,6 +828,10 @@ export default function AddEmployeeForm({
         return;
       }
     }
+    if (orgRoleNeedsDepartmentConfirm(role) && !reportingManagerId) {
+      toastError("Please select Reporting Manager (CEO).");
+      return;
+    }
     // Do not require employeeId before save; it will be set after backend returns it
     const hrmPayload: any = {
       first_name: firstName || '',
@@ -800,8 +882,15 @@ export default function AddEmployeeForm({
       }
       return;
     }
+    const savedId = String(
+      (!isEdit && hrmData.id ? hrmData.id : employeeId || editEmployeeId) || "",
+    );
     if (!isEdit && hrmData.id) {
       setEmployeeId(hrmData.id.toString());
+    }
+    if (savedId && orgRoleNeedsDepartmentConfirm(role)) {
+      const ok = await saveReportingManager(savedId);
+      if (!ok) return;
     }
     toastSuccess(isEdit ? 'Employee updated.' : 'Employee saved.');
     setActiveTab('Contact Details');
@@ -1040,17 +1129,58 @@ export default function AddEmployeeForm({
                 </div>
               ) : null}
               <div>
-                <label className={styles.fieldLabel}>Role</label>
-                <input
-                  className={styles.input}
-                  type="text"
+                <label className={styles.fieldLabel}>Role*</label>
+                <select
+                  className={styles.select}
                   value={role}
-                  readOnly
-                  disabled
-                  aria-readonly="true"
-                  title="Role is fixed to Officer"
-                />
+                  onChange={(e) => {
+                    const next = normalizeOrgRole(e.target.value);
+                    setRole(next);
+                    setDepartmentScopeConfirmed(false);
+                    if (!orgRoleNeedsDepartmentConfirm(next)) {
+                      setReportingManagerId("");
+                    }
+                  }}
+                  required
+                  title="Overall role. Team Lead / Manager / CEO get default System Control permissions for their department; refine in System Control."
+                >
+                  {ORG_ROLE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <div className={styles.note} style={{ marginTop: 6 }}>
+                  {role === "BOD/CEO"
+                    ? "CEO gets full default permissions. Refine anytime in System Control → Permissions."
+                    : orgRoleNeedsDepartmentConfirm(role)
+                      ? "Manager / Team Lead: default department permissions apply on save. Pick Reporting Manager (CEO) below for leave routing. Refine in System Control."
+                      : "Officer: department-scoped staff defaults. Extra menus via System Control if needed."}
+                </div>
               </div>
+              {orgRoleNeedsDepartmentConfirm(role) ? (
+                <div>
+                  <label className={styles.fieldLabel}>Reporting Manager (CEO)*</label>
+                  <select
+                    className={styles.select}
+                    value={reportingManagerId}
+                    onChange={(e) => setReportingManagerId(e.target.value)}
+                    required
+                  >
+                    <option value="">-- Select CEO --</option>
+                    {ceoOptions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className={styles.note} style={{ marginTop: 6 }}>
+                    Choose Joe, Max, or Mubeen — leave approval for this{" "}
+                    {role === "Management" ? "Manager" : "Team Lead"} appears in that
+                    CEO’s ticket inbox.
+                  </div>
+                </div>
+              ) : null}
               <div className={styles.toggleRow}>
                 <span className={styles.toggleLabel}>Create Login Details</span>
                 <label style={{ display: "inline-block", position: "relative", width: 40, height: 22 }}>
@@ -1293,13 +1423,46 @@ export default function AddEmployeeForm({
                 </div>
                 <div className={styles.row}>
                   <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Department</label>
-                    <select className={styles.select} value={jobDetails.departmentId || ""} onChange={e => setJobDetails(j => ({ ...j, departmentId: e.target.value }))} required>
+                    <label className={styles.fieldLabel}>Department*</label>
+                    <select
+                      className={styles.select}
+                      value={jobDetails.departmentId || ""}
+                      onChange={(e) => {
+                        setJobDetails((j) => ({ ...j, departmentId: e.target.value }));
+                        setDepartmentScopeConfirmed(false);
+                      }}
+                      required
+                    >
                       <option value="">-- Select Department --</option>
                       {departments.map(dep => (
                         <option key={dep.id} value={dep.id}>{dep.name}</option>
                       ))}
                     </select>
+                    {orgRoleNeedsDepartmentConfirm(role) ? (
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 8,
+                          marginTop: 10,
+                          fontSize: 13,
+                          color: "#334155",
+                          lineHeight: 1.4,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={departmentScopeConfirmed}
+                          onChange={(e) => setDepartmentScopeConfirmed(e.target.checked)}
+                          style={{ marginTop: 3 }}
+                        />
+                        <span>
+                          Confirm: this department is their scope (attendance / leave visibility
+                          for this {role === "Management" ? "Manager" : "Team Lead"}).
+                        </span>
+                      </label>
+                    ) : null}
                   </div>
                   <div className={styles.field}>
                     <label className={styles.fieldLabel}>Location</label>

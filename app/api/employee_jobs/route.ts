@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '../../../lib/db';
+import { syncEmployeeAccessRoleFromOrg } from '@/lib/access-control/store';
 
 function normalizeFirstAppraisalMonths(v: unknown): number | null {
 	const n = Number(v);
@@ -84,6 +85,12 @@ export async function PUT(req: NextRequest) {
 			);
 			console.log('PUT employee_jobs - Successfully INSERTED employee_id:', employee_id, 'with department_id:', departmentId || null);
 		}
+
+		try {
+			await syncEmployeeAccessRoleFromOrg(employee_id, { clearOverrides: true });
+		} catch (syncErr) {
+			console.warn('PUT employee_jobs - access role sync:', syncErr);
+		}
 		
 		return NextResponse.json({ success: true });
 	} catch (err) {
@@ -122,6 +129,12 @@ export async function POST(req: NextRequest) {
 			} catch (syncErr) {
 				console.log('POST employee_jobs - Note: Could not sync to hrm_employees:', syncErr);
 			}
+		}
+
+		try {
+			await syncEmployeeAccessRoleFromOrg(employee_id, { clearOverrides: true });
+		} catch (syncErr) {
+			console.warn('POST employee_jobs - access role sync:', syncErr);
 		}
 		
 		return NextResponse.json({ success: true });
