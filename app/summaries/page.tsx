@@ -3,7 +3,7 @@
 import React, { startTransition, Suspense, useCallback, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import LayoutDashboard from "../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../break-summary/break-summary.module.css";
 import { REFRESHMENT_BREAK_CONFIG, MEETING_BREAK_CONFIG } from "@/lib/session-break-config";
 
@@ -105,7 +105,7 @@ function SummariesHubInner() {
   }, [view]);
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.breakSummaryContainer} style={{ marginBottom: 0, paddingBottom: 0 }}>
         <div
           style={{
@@ -138,13 +138,13 @@ function SummariesHubInner() {
         </div>
       </div>
       {panel}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }
 
 export default function SummariesPage() {
   return (
-    <Suspense fallback={<LayoutDashboard><SummaryLoading label="" /></LayoutDashboard>}>
+    <Suspense fallback={<OptionalAdminShell><SummaryLoading label="" /></OptionalAdminShell>}>
       <SummariesHubInner />
     </Suspense>
   );

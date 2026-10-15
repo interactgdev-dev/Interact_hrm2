@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "./shift-management.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
@@ -629,7 +629,7 @@ export default function ShiftManagementPage() {
   }, [employees]);
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
       <div className={styles.pageContainer}>
         <div className={adminStyles.pageHeader}>
@@ -1358,6 +1358,6 @@ export default function ShiftManagementPage() {
           </div>
         </div>
       )}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

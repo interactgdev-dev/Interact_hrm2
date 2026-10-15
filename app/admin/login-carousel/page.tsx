@@ -2,7 +2,7 @@
 
 import React from "react";
 import { FaImages, FaTrash, FaUpload } from "react-icons/fa";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import adminStyles from "../admin-page.module.css";
 import styles from "./login-carousel.module.css";
 import { toastError, toastSuccess } from "@/lib/app-toast";
@@ -159,7 +159,7 @@ export default function LoginCarouselAdminPage() {
   const intervalSec = Math.round((settings.intervalMs || 5000) / 1000);
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={styles.wrap}>
           <header className={styles.header}>
@@ -314,6 +314,6 @@ export default function LoginCarouselAdminPage() {
           )}
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

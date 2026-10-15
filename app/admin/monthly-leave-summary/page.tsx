@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { FaFilter, FaSort, FaSortUp, FaSortDown } from "react-icons/fa";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
@@ -143,7 +143,7 @@ export default function MonthlyLeaveSummaryPage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.breakSummaryContainer} style={{ position: 'relative', maxWidth: 1200, margin: '0 auto' }}>
         <div className={styles.breakSummaryHeader}>Leave Summary</div>
         <div className={styles.breakSummaryFilters} style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 18 }}>
@@ -253,6 +253,6 @@ export default function MonthlyLeaveSummaryPage() {
         </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../admin-page.module.css";
 
 interface CalendarDayOverride {
@@ -116,7 +116,7 @@ export default function AdminCalendarPage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <style>{`
         .calendar-controls {
           display: flex;
@@ -412,6 +412,6 @@ export default function AdminCalendarPage() {
           </div>
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

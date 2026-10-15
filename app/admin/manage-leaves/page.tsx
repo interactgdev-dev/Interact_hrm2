@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "./manage-leaves.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
@@ -339,17 +339,17 @@ export default function ManageLeavesPage() {
 
   if (loading) {
     return (
-      <LayoutDashboard>
+      <OptionalAdminShell>
         <div className={styles.container}>
           <h1 className={styles.title}>Manage Leaves</h1>
           <p>Loading employees...</p>
         </div>
-      </LayoutDashboard>
+      </OptionalAdminShell>
     );
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={adminStyles.inner}>
           <h1 className={adminStyles.title}>Manage leaves</h1>
@@ -594,6 +594,6 @@ export default function ManageLeavesPage() {
         </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

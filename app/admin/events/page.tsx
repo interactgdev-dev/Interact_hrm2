@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { showAppConfirm } from "@/lib/app-confirm";
-import LayoutDashboard from "@/app/layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import { CompanyPolicySection } from "../company-policy/CompanyPolicySection";
 import styles from "../admin-page.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
@@ -230,7 +230,7 @@ export default function AdminEventsPage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <h1 className={styles.title}>Events & Announcements</h1>
@@ -476,6 +476,6 @@ export default function AdminEventsPage() {
           </div>
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

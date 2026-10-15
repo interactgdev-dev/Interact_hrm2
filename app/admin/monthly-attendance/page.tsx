@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
@@ -1586,7 +1586,7 @@ export default function MonthlyAttendancePage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.breakSummaryContainer}>
         <div style={{ marginBottom: 20 }}>
           <h1 className={styles.pageTitle}>
@@ -1980,6 +1980,6 @@ export default function MonthlyAttendancePage() {
         )}
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

@@ -15,6 +15,11 @@ import { buildEmployeeDetailPayload } from "@/lib/employee-detail-from-row";
 import { useEmployeePhotoMap } from "../components/use-employee-photo-map";
 import { toastError, toastSuccess } from "@/lib/app-toast";
 import {
+  filterDepartmentsByScope,
+  rowAllowedByScope,
+  useViewerDataScope,
+} from "@/lib/access-control/use-viewer-scope";
+import {
   breakSessionDate,
   filterRowsByClockInSessionDate,
   overnightFetchRange,
@@ -59,6 +64,7 @@ function getSessionGroupingKey(record: any) {
 }
 
 export default function BreakSummaryView() {
+  const viewerScope = useViewerDataScope();
   const [breaks, setBreaks] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -74,6 +80,11 @@ export default function BreakSummaryView() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const { getPhoto } = useEmployeePhotoMap();
 
+  const scopedDepartments = useMemo(
+    () => filterDepartmentsByScope(departments, viewerScope),
+    [departments, viewerScope],
+  );
+
   useEffect(() => {
     fetch("/api/departments")
       .then((res) => res.json())
@@ -82,6 +93,16 @@ export default function BreakSummaryView() {
       })
       .catch(() => setDepartments([]));
   }, []);
+
+  useEffect(() => {
+    if (viewerScope.mode === "all") return;
+    if (
+      department &&
+      !scopedDepartments.some((d: any) => d.name === department)
+    ) {
+      setDepartment("");
+    }
+  }, [viewerScope.mode, scopedDepartments, department]);
 
   useEffect(() => {
     const effectiveFrom = fromDate || toDate || today;
@@ -115,6 +136,9 @@ export default function BreakSummaryView() {
     const effectiveFrom = fromDate || toDate || today;
     const effectiveTo = toDate || fromDate || today;
     const scoped = breaks.filter((b) => {
+      if (!rowAllowedByScope(viewerScope, b.employee_id, b.department_name)) {
+        return false;
+      }
       const term = deferredSearch.trim().toLowerCase();
       if (term) {
         const employeeName = (b.employee_name || "").toLowerCase();
@@ -129,7 +153,7 @@ export default function BreakSummaryView() {
     });
     // Attribute to clock-in session date (overnight: keep pre-midnight totals)
     return filterRowsByClockInSessionDate(scoped, effectiveFrom, effectiveTo);
-  }, [breaks, deferredSearch, department, fromDate, toDate, today]);
+  }, [breaks, deferredSearch, department, viewerScope, fromDate, toDate, today]);
 
   /** Static totals for ended breaks (no live clock). Running rows get live end = now below. */
   const staticTotals = useMemo(() => {
@@ -178,12 +202,7 @@ export default function BreakSummaryView() {
           exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
         };
       })
-      .sort((a, b) => {
-        const aRunning = !!(a.break_start && !a.break_end);
-        const bRunning = !!(b.break_start && !b.break_end);
-        if (aRunning !== bRunning) return aRunning ? -1 : 1;
-        return new Date(b.break_start || 0).getTime() - new Date(a.break_start || 0).getTime();
-      });
+      .sort((a, b) => new Date(b.break_start || 0).getTime() - new Date(a.break_start || 0).getTime());
   }, [filteredBreaks, staticTotals, now]);
 
   const downloadBreakCSV = () => {
@@ -283,8 +302,10 @@ export default function BreakSummaryView() {
             className={styles.breakSummaryDate}
             style={{ width: 180 }}
           >
-            <option value="">All Departments</option>
-            {departments.map((dept: any) => (
+            <option value="">
+              {viewerScope.mode === "all" ? "All Departments" : "All (your departments)"}
+            </option>
+            {scopedDepartments.map((dept: any) => (
               <option key={dept.id} value={dept.name}>
                 {dept.name}
               </option>

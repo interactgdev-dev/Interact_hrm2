@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
@@ -131,7 +131,7 @@ export default function AdvancePage() {
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.breakSummaryContainer} style={{ position: 'relative', maxWidth: 1200, margin: '0 auto' }}>
         <h1 className={styles.pageTitle}>Advance Salary Records</h1>
         {successMsg && <div style={{ color: 'green', marginBottom: 8 }}>{successMsg}</div>}
@@ -246,7 +246,7 @@ export default function AdvancePage() {
         </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }
 

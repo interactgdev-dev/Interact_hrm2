@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
 import { FaSave, FaTimes, FaEdit, FaKey, FaEnvelope, FaUser } from "react-icons/fa";
@@ -148,7 +148,7 @@ export default function EmployeeCredentialsPage() {
   );
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
       <div className={styles.breakSummaryContainer}>
         <h1 className={styles.pageTitle}>
@@ -329,6 +329,6 @@ export default function EmployeeCredentialsPage() {
       </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

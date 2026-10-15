@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { showAppConfirm } from "@/lib/app-confirm";
-import LayoutDashboard from "@/app/layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../admin-page.module.css";
 
 export default function CompanyPolicyPage() {
@@ -71,7 +71,7 @@ export default function CompanyPolicyPage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <h1 className={styles.title}>Company Policy</h1>
@@ -143,6 +143,6 @@ export default function CompanyPolicyPage() {
           </div>
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

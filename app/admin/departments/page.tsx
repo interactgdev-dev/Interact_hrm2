@@ -1,12 +1,12 @@
 "use client";
 import React from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import DepartmentsTable from "../../components/DepartmentsTable";
 import styles from "../admin-page.module.css";
 
 export default function DepartmentsPage() {
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <h1 className={styles.title}>Departments</h1>
@@ -14,6 +14,6 @@ export default function DepartmentsPage() {
           <DepartmentsTable />
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

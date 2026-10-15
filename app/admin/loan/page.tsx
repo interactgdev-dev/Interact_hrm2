@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import { FaSave, FaTrash } from "react-icons/fa";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
@@ -215,7 +215,7 @@ export default function LoanManagementPage() {
 	const getEmployeeRecord = (id: number) => employees.find(e => e.id === id);
 
 	return (
-		<LayoutDashboard>
+		<OptionalAdminShell>
 			<div className={styles.breakSummaryContainer} style={{ position: "relative", maxWidth: 1200, margin: "0 auto" }}>
 				<h1 className={styles.pageTitle}>Loan Management</h1>
 				{formSuccess && <div style={{ color: "#38A169", marginBottom: 8 }}>{formSuccess}</div>}
@@ -438,6 +438,6 @@ export default function LoanManagementPage() {
 				</div>
 			</div>
 			{popup}
-		</LayoutDashboard>
+		</OptionalAdminShell>
 	);
 }

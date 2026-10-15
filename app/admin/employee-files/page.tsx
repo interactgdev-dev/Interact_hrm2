@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "./employee-files.module.css";
 import { DOCUMENT_UPLOAD_ACCEPT } from "@/lib/document-constants";
 import { formatFieldValueForDisplay, isCheckboxGroup, toggleCheckboxGroupValue } from "@/lib/form-field-options";
@@ -341,7 +341,7 @@ export default function AdminEmployeeFilesPage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <header className={styles.header}>
@@ -633,6 +633,6 @@ export default function AdminEmployeeFilesPage() {
           </div>
         </div>
       ) : null}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

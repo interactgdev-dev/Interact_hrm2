@@ -1,6 +1,6 @@
 "use client";
 import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
@@ -17,6 +17,11 @@ import {
 } from "../../../lib/timezone";
 import { compareAttendanceRows } from "../../../lib/attendance-sort";
 import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
+import {
+  filterDepartmentsByScope,
+  rowAllowedByScope,
+  useViewerDataScope,
+} from "@/lib/access-control/use-viewer-scope";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
@@ -81,6 +86,7 @@ interface AttendanceRecord {
 }
 
 export default function ManageAttendancePage() {
+  const viewerScope = useViewerDataScope();
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
@@ -100,6 +106,11 @@ export default function ManageAttendancePage() {
     clock_out: null
   });
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  const scopedDepartments = useMemo(
+    () => filterDepartmentsByScope(departments, viewerScope),
+    [departments, viewerScope],
+  );
 
   // Fetch all employees
   useEffect(() => {
@@ -157,11 +168,28 @@ export default function ManageAttendancePage() {
   };
 
   useEffect(() => {
+    if (viewerScope.mode === "all") return;
+    if (
+      selectedDepartment &&
+      !scopedDepartments.some(
+        (d) => String(d.name || "").trim() === selectedDepartment,
+      )
+    ) {
+      setSelectedDepartment("");
+    }
+  }, [viewerScope, scopedDepartments, selectedDepartment]);
+
+  useEffect(() => {
     fetchAttendance();
   }, [fromDate, toDate]);
 
   const filteredAttendance = useMemo(() => {
     let rows = [...attendance].sort(compareAttendanceRows);
+    if (viewerScope.mode !== "all") {
+      rows = rows.filter((a) =>
+        rowAllowedByScope(viewerScope, a.employee_id, a.department_name),
+      );
+    }
     if (selectedDepartment) {
       rows = rows.filter((a) => a.department_name === selectedDepartment);
     }
@@ -175,7 +203,7 @@ export default function ManageAttendancePage() {
       );
     }
     return rows;
-  }, [attendance, deferredSearchName, selectedDepartment]);
+  }, [attendance, deferredSearchName, selectedDepartment, viewerScope]);
 
   // Toggle edit mode
   const toggleEdit = (id: number) => {
@@ -337,7 +365,7 @@ export default function ManageAttendancePage() {
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={styles.breakSummaryContainer}>
         <div className={adminStyles.pageHeader}>
@@ -493,7 +521,7 @@ export default function ManageAttendancePage() {
             style={{ width: 180 }}
           >
             <option value="">All Departments</option>
-            {departments.map(dept => (
+            {scopedDepartments.map(dept => (
               <option key={dept.id} value={dept.name}>{dept.name}</option>
             ))}
           </select>
@@ -726,6 +754,6 @@ export default function ManageAttendancePage() {
         </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

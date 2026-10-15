@@ -1,6 +1,6 @@
 "use client";
 import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
@@ -394,7 +394,7 @@ export default function ManageBreaksPage() {
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={styles.breakSummaryContainer}>
         <div className={adminStyles.pageHeader}>
@@ -790,7 +790,7 @@ export default function ManageBreaksPage() {
         </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }
 

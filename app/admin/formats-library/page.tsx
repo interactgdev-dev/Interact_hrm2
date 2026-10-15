@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../employee-files/employee-files.module.css";
 import { showAppToast } from "@/lib/app-toast";
 import { showAppConfirm } from "@/lib/app-confirm";
@@ -332,7 +332,7 @@ export default function FormatsLibraryPage() {
   const deptTemplates = templates.filter((t) => t.scope === "department");
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <header className={styles.header}>
@@ -729,6 +729,6 @@ export default function FormatsLibraryPage() {
         onClose={() => setPreviewTemplateId(null)}
         onSaved={() => void load()}
       />
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }
