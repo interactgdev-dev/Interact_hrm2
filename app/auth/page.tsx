@@ -4,6 +4,11 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 import { persistSavedLogin } from "@/lib/saved-login-client";
+import { markAdminPortal, markEmployeePortal } from "@/lib/access-control/employee-shell";
+import {
+  employeeDisplayNameFromRecord,
+  sanitizeEmployeeDisplayName,
+} from "@/lib/employee-login-lookup";
 import styles from "./login.module.css";
 import { AuthLoginCarousel } from "./AuthLoginCarousel";
 
@@ -88,7 +93,8 @@ export default function LoginPage() {
         const adminData = await adminRes.json();
         if (adminData.success) {
           if (typeof window !== "undefined") {
-            localStorage.setItem("loginId", rawLoginId);
+            localStorage.setItem("loginId", rawLoginId.trim());
+            markAdminPortal();
           }
           await persistCredentials(rawLoginId, rawPassword);
           router.push("/dashboard");
@@ -109,8 +115,49 @@ export default function LoginPage() {
         const data = await res.json();
         if (data.success) {
           if (typeof window !== "undefined") {
-            localStorage.setItem("loginId", rawLoginId);
+            const trimmedLoginId = rawLoginId.trim();
+            localStorage.setItem("loginId", trimmedLoginId);
             localStorage.setItem("userRole", data.role || data.employee?.role || "Officer");
+            const empId = String(
+              data.employee?.id ?? data.employee?.employee_id ?? "",
+            ).trim();
+            const empName = sanitizeEmployeeDisplayName(
+              data.display_name || employeeDisplayNameFromRecord(data.employee),
+              "Employee",
+            );
+            markEmployeePortal(empId || undefined, empName);
+            localStorage.setItem("employeeName", empName);
+            if (empId && /^\d+$/.test(empId)) {
+              localStorage.setItem("employeeId", empId);
+              // Warm permission menu before dashboard mounts
+              void fetch(
+                `/api/access-control/me?employeeId=${encodeURIComponent(empId)}`,
+                { cache: "no-store" },
+              )
+                .then((r) => r.json())
+                .then((me) => {
+                  if (!me?.success) return;
+                  const menu = Array.isArray(me.menu) ? me.menu : [];
+                  const permissions = Array.isArray(me.permissions) ? me.permissions : [];
+                  localStorage.setItem(
+                    "employeeAccessMenuCache",
+                    JSON.stringify({
+                      employeeId: empId,
+                      menu,
+                      permissions,
+                      roleSlug: String(me.role?.slug || ""),
+                    }),
+                  );
+                  localStorage.setItem("accessPermissions", JSON.stringify(permissions));
+                  localStorage.setItem(
+                    "accessRoleSlug",
+                    String(me.role?.slug || ""),
+                  );
+                })
+                .catch(() => undefined);
+            } else {
+              localStorage.removeItem("employeeId");
+            }
           }
           await persistCredentials(rawLoginId, rawPassword);
           router.push("/employee-dashboard");

@@ -31,10 +31,11 @@
   background: #1a1d24 !important;
   border-right: none !important;
   box-shadow: 8px 0 32px rgba(15, 23, 42, 0.12) !important;
-  width: 240px !important;
+  width: 260px !important;
   padding-top: 8px !important;
   display: flex !important;
   flex-direction: column !important;
+  min-height: 0 !important;
 }
 
 .sidebarBrand {
@@ -42,18 +43,19 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 22px 16px 18px;
+  padding: 16px 16px 12px;
   border-bottom: none;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   box-sizing: border-box;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .sidebarGlobe {
-  width: 120px;
-  height: 120px;
+  width: 88px;
+  height: 88px;
   display: block;
   flex-shrink: 0;
   pointer-events: none;
@@ -93,21 +95,66 @@
 }
 
 .sidebarNav {
-  padding-top: 4px !important;
-  gap: 4px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 6px 10px 24px !important;
+  gap: 8px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
 
 .navItemPdf {
+  display: flex !important;
   background: transparent !important;
   color: #f0f0f0 !important;
   font-weight: 500 !important;
-  font-size: 0.9rem !important;
-  padding: 11px 18px !important;
-  margin: 0 8px !important;
-  border-radius: 8px !important;
+  font-size: 0.875rem !important;
+  line-height: 1.3 !important;
+  padding: 11px 14px !important;
+  margin: 0 !important;
+  border-radius: 10px !important;
   gap: 12px !important;
   position: relative;
+  overflow: visible !important;
+  flex: 0 0 auto !important;
+  flex-shrink: 0 !important;
+  min-height: 44px !important;
+  box-sizing: border-box !important;
+  align-items: center !important;
+}
+
+.navLabelPdf {
+  display: inline-block;
   overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.navLabelStacked {
+  display: flex !important;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  white-space: normal !important;
+  line-height: 1.15;
+}
+
+.navLabelLine {
+  display: block;
+  line-height: 1.15;
+}
+
+.navItemPdf > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .navItemPdf:not(.navItemPdfActive)::before {
@@ -122,11 +169,11 @@
 
 .navItemPdfActive,
 .navItemPdf.navItemPdfActive {
-  background: rgba(255, 255, 255, 0.16) !important;
+  background: rgba(255, 255, 255, 0.14) !important;
   color: #fff !important;
   font-weight: 600 !important;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
     inset 0 -1px 0 rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -140,7 +187,7 @@
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
-  height: 62%;
+  height: 58%;
   min-height: 18px;
   border-radius: 0 3px 3px 0;
   background: #00c2cb;
@@ -149,8 +196,11 @@
 
 .navIconPdf {
   color: #fff !important;
-  font-size: 1.05rem !important;
+  font-size: 1rem !important;
   opacity: 0.95;
+  flex-shrink: 0 !important;
+  width: 20px;
+  justify-content: center;
 }
 
 .sidebarFooter {

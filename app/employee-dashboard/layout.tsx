@@ -191,6 +191,8 @@ const PREFETCH_PATHS = [
   "/employee-dashboard/my-team",
   "/employee-dashboard/my-info",
   "/employee-dashboard/generate-ticket",
+  "/employee-dashboard/tickets",
+  "/employee-dashboard/leave-inbox",
   "/employee-dashboard/time",
   "/employee-dashboard/attendance",
 ];
@@ -255,12 +257,21 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       return;
     }
     const cachedId = localStorage.getItem("employeeId");
+    const numericId =
+      cachedId && /^\d+$/.test(cachedId)
+        ? cachedId
+        : /^\d+$/.test(loginId)
+          ? loginId
+          : "";
     const cachedName = sanitizeEmployeeDisplayName(
       localStorage.getItem("employeeName"),
       "",
     );
-    setEmployeeId(cachedId || loginId);
+    const cachedPseudo = String(localStorage.getItem("employeePseudonym") || "").trim();
+    // Prefer numeric HR id so permission fetch starts immediately (not email loginId).
+    setEmployeeId(numericId || cachedId || loginId);
     if (cachedName) setEmployeeName(cachedName);
+    if (cachedPseudo) setEmployeePseudonym(cachedPseudo);
   }, []);
 
   React.useEffect(() => {
