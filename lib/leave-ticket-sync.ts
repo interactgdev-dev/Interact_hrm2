@@ -9,6 +9,7 @@ import {
   rowToTicket,
   type EmployeeTicketRow,
 } from "@/lib/employee-tickets-table";
+import { calendarDay } from "@/lib/mongo-helpers";
 import { broadcastWsEvent } from "@/lib/ws-broadcast";
 
 function ticketForm(ticket: EmployeeTicketRow): Record<string, unknown> {
@@ -16,26 +17,9 @@ function ticketForm(ticket: EmployeeTicketRow): Record<string, unknown> {
   return fd && typeof fd === "object" ? (fd as Record<string, unknown>) : {};
 }
 
+/** Business calendar day in Asia/Karachi (never UTC ISO prefix alone). */
 function ymd(v: unknown): string {
-  if (v == null || v === "") return "";
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    const y = v.getFullYear();
-    const m = String(v.getMonth() + 1).padStart(2, "0");
-    const d = String(v.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-  const s = String(v).trim();
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
-  if (m) return m[1];
-  // ISO / locale Date strings from Mongo driver
-  const parsed = new Date(s);
-  if (!Number.isNaN(parsed.getTime())) {
-    const y = parsed.getFullYear();
-    const mo = String(parsed.getMonth() + 1).padStart(2, "0");
-    const d = String(parsed.getDate()).padStart(2, "0");
-    return `${y}-${mo}-${d}`;
-  }
-  return "";
+  return calendarDay(v);
 }
 
 function parseTicketFormData(raw: unknown): Record<string, unknown> {
@@ -96,16 +80,9 @@ export async function syncLeaveRecordFromTicket(
 
   const fd = ticketForm(ticket);
   const employeeId = String(ticket.employee_id || "").trim();
-  // form_data dates may be Date objects from Mongo
-  const startDate = ymd(
-    fd.start_date instanceof Date
-      ? fd.start_date.toISOString()
-      : fd.start_date
-  );
-  const endDate =
-    ymd(
-      fd.end_date instanceof Date ? fd.end_date.toISOString() : fd.end_date
-    ) || startDate;
+  // form_data dates may be Date / ISO from Mongo — calendarDay keeps Karachi day
+  const startDate = ymd(fd.start_date);
+  const endDate = ymd(fd.end_date) || startDate;
   if (!employeeId || !startDate) return null;
 
   const leaveCategory = String(fd.leave_category || "annual").trim() || "annual";

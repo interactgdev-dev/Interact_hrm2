@@ -571,22 +571,16 @@ export default function MonthlyAttendancePage() {
       params.append("employees", employeeIds.join(","));
       params.append("fromDate", from);
       params.append("toDate", to);
-      // Include all statuses; map builder keeps approved only. Prefer calendar
-      // YYYY-MM-DD from ISO so TL-approved future leave (e.g. 10/29) maps correctly.
-      const leaveDateKey = (raw: string) => {
-        const s = String(raw || "").trim();
-        const iso = /^(\d{4}-\d{2}-\d{2})/.exec(s);
-        if (iso) return iso[1];
-        return normalizeToDateKey(s);
-      };
-
+      // Include all statuses; map builder keeps approved only.
+      // Use Asia/Karachi calendar day (not UTC ISO prefix) so BSON/ISO midnights
+      // map to the same business date the monthly grid uses (e.g. 10/29 leave).
       const response = await fetch(`/api/leaves?${params.toString()}`, { cache: "no-store" });
       const data = await response.json();
 
       if (data.success && data.leaves) {
         setApprovedLeavesMap(
           buildApprovedLeavesMap(data.leaves as Array<Record<string, unknown>>, {
-            normalizeDateKey: leaveDateKey,
+            normalizeDateKey: normalizeToDateKey,
             addDays: addDaysToDateKey,
           }),
         );
@@ -616,6 +610,28 @@ export default function MonthlyAttendancePage() {
     setExpandedEmployeeIds({});
     fetchAttendance();
   }, [fromDate, toDate, selectedDepartment, showingImported]);
+
+  // After TL/HR approve leave elsewhere, refresh Leave / half-day cells on focus.
+  useEffect(() => {
+    if (showingImported) return;
+    const onFocus = () => {
+      const ids = [
+        ...new Set(attendance.map((r: any) => String(r.employee_id))),
+      ].filter(Boolean) as string[];
+      if (ids.length && fromDate && toDate) {
+        void fetchApprovedLeaves(ids, fromDate, toDate);
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [attendance, fromDate, toDate, showingImported]);
 
   useEffect(() => {
     if (!selectedMonth) return;
