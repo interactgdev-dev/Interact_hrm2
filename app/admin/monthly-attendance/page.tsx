@@ -151,15 +151,16 @@ function parseDeductionPercent(deduction: string | number | null | undefined): n
   return parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
 }
 
-/** Empty working-day cell: future --- / full Leave / 1st-Half / 2nd-Half / Absent. */
+/** Empty cell: approved leave always wins; else Off / future --- / Absent. */
 function emptyWorkingDayStatus(
   dateKey: string,
   workingDay: boolean,
   leaveKind: ReturnType<typeof approvedLeaveOnDay>,
 ): { statusLabel: string; deduction: string } {
+  // Full / 1st-half / 2nd-half leave must show even on Off or future dates.
+  if (leaveKind) return attendanceFromApprovedLeaveDay(leaveKind);
   if (!workingDay) return { statusLabel: "Off", deduction: "" };
   if (isFutureAttendanceDay(dateKey)) return { statusLabel: "---", deduction: "" };
-  if (leaveKind) return attendanceFromApprovedLeaveDay(leaveKind);
   return { statusLabel: "Absent", deduction: "100%" };
 }
 
@@ -978,8 +979,7 @@ export default function MonthlyAttendancePage() {
 
   /**
    * Same status/deduction the table cell shows.
-   * Order: manual override → (empty: Off/future/leave/Absent) → leave on working days → meta.
-   * Must not count half-day leave on Off/future days (grid shows Off/--- there).
+   * Order: manual override → approved leave (full/half, any day) → empty Off/---/Absent → meta.
    */
   function resolveDayAttendanceDisplay(
     employee: any,
@@ -1000,13 +1000,11 @@ export default function MonthlyAttendancePage() {
       employee.employeeId,
       dateKey,
     );
-    // Empty day: Off / --- / leave / Absent (leave only after Off & future checks).
-    if (!dayRecords.length) {
-      return emptyWorkingDayStatus(dateKey, workingDay, leaveKind);
-    }
-    // Punches present: approved leave wins only on real working days (not Off/future).
-    if (leaveKind && workingDay && !isFutureAttendanceDay(dateKey)) {
+    if (leaveKind) {
       return attendanceFromApprovedLeaveDay(leaveKind);
+    }
+    if (!dayRecords.length) {
+      return emptyWorkingDayStatus(dateKey, workingDay, null);
     }
     return {
       statusLabel: normalizeAttendanceStatus(meta?.statusLabel || "-"),
