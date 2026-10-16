@@ -284,12 +284,57 @@ export function filterTicketsForInbox<
   });
 }
 
-function isLeaveApproverRole(orgRole: string | null | undefined): boolean {
+function slugLooksLikeTeamLead(slugs: string[] | undefined): boolean {
+  return (slugs || []).some((s) => {
+    const v = String(s || "").toLowerCase();
+    return (
+      v.startsWith("team_lead") ||
+      v.includes("team_lead_") ||
+      v.includes("team-lead") ||
+      (v.includes("lead") && !v.includes("leaderboard"))
+    );
+  });
+}
+
+function slugLooksLikeManager(slugs: string[] | undefined): boolean {
+  return (slugs || []).some((s) => {
+    const v = String(s || "").toLowerCase();
+    if (v.startsWith("team_lead") || v.includes("team_lead_")) return false;
+    return v.includes("manager") || v.endsWith("_mgr") || v.includes("_manager");
+  });
+}
+
+/** Org role OR System Control slug (e.g. team_lead_dm) — many TLs only have the slug. */
+export function viewerIsTeamLead(viewer: HrTicketViewer | null): boolean {
+  if (!viewer) return false;
+  return isTeamLeadOrgRole(viewer.orgRole) || slugLooksLikeTeamLead(viewer.accessRoleSlugs);
+}
+
+export function viewerIsManager(viewer: HrTicketViewer | null): boolean {
+  if (!viewer) return false;
+  return isManagerOrgRole(viewer.orgRole) || slugLooksLikeManager(viewer.accessRoleSlugs);
+}
+
+function isLeaveApproverViewer(viewer: HrTicketViewer | null): boolean {
+  if (!viewer) return false;
   return (
-    isCeoOrgRole(orgRole) ||
-    isManagerOrgRole(orgRole) ||
-    isTeamLeadOrgRole(orgRole)
+    isCeoOrgRole(viewer.orgRole) ||
+    viewerIsManager(viewer) ||
+    viewerIsTeamLead(viewer) ||
+    Boolean(viewer.deptHead?.headHint)
   );
+}
+
+function empIdInList(
+  employeeId: string | number,
+  ids: Iterable<string | number>,
+): boolean {
+  const want = String(employeeId ?? "").trim();
+  if (!want) return false;
+  for (const id of ids) {
+    if (String(id ?? "").trim() === want) return true;
+  }
+  return false;
 }
 
 /**
@@ -319,8 +364,8 @@ export function canModerateTicketStatus(opts: {
   // HR officers (not Manager / Team Lead / CEO / dept head) — view only.
   if (
     viewer?.isHrStaff &&
-    !isManagerOrgRole(viewer.orgRole) &&
-    !isTeamLeadOrgRole(viewer.orgRole) &&
+    !viewerIsManager(viewer) &&
+    !viewerIsTeamLead(viewer) &&
     !isCeoOrgRole(viewer.orgRole) &&
     !viewer.deptHead?.headHint
   ) {
@@ -343,9 +388,9 @@ export function canModerateTicketStatus(opts: {
 
     // Team Lead / Manager / HR Manager / CEO: approve only when inScope says so.
     if (typeof inScope === "boolean") {
-      return inScope && isLeaveApproverRole(viewer.orgRole);
+      return inScope && isLeaveApproverViewer(viewer);
     }
-    return isLeaveApproverRole(viewer.orgRole);
+    return isLeaveApproverViewer(viewer);
   }
 
   const hrTicket = isHrDepartmentSubmitter(ticketEmployeeId, hrIds);
@@ -413,7 +458,7 @@ export async function canModerateTicketStatusAsync(opts: {
           }
         }
       }
-    } else if (viewer.isHrStaff && isManagerOrgRole(viewer.orgRole)) {
+    } else if (viewer.isHrStaff && viewerIsManager(viewer)) {
       // HR Manager: company-wide view; approve only own dept (same org chip).
       const chips = await getEmployeeDeptChipMap();
       const submitterChipResolved =
@@ -428,16 +473,31 @@ export async function canModerateTicketStatusAsync(opts: {
       } else {
         inScope = false;
       }
-    } else if (
-      isTeamLeadOrgRole(viewer.orgRole) &&
-      !isManagerOrgRole(viewer.orgRole)
-    ) {
-      // Team Lead: approve only own hierarchy team (direct reports + team members).
+    } else if (viewerIsTeamLead(viewer) && !viewerIsManager(viewer)) {
+      // Team Lead: hierarchy team first, then same department (so Approve shows
+      // even when Assign Hierarchy / team_members rows are missing).
       const { listHierarchyVisibleEmployeeIds } = await import(
         "@/lib/employee-hierarchy-table"
       );
       const teamIds = await listHierarchyVisibleEmployeeIds(viewer.employeeId);
-      inScope = teamIds.includes(String(ticketEmployeeId));
+      inScope = empIdInList(ticketEmployeeId, teamIds);
+      if (!inScope) {
+        const chips = await getEmployeeDeptChipMap();
+        const submitterChipResolved =
+          submitterChip || chips.get(String(ticketEmployeeId)) || null;
+        const viewerChip = orgDeptChipLabel(viewer.departmentName);
+        if (
+          viewerChip &&
+          submitterChipResolved &&
+          viewerChip.toLowerCase() === submitterChipResolved.toLowerCase()
+        ) {
+          inScope = true;
+        }
+      }
+      if (!inScope) {
+        const scope = await resolveViewerDataScope(viewer.employeeId);
+        inScope = rowInViewerScope(scope, { employeeId: ticketEmployeeId });
+      }
     } else {
       // Manager / other leave approvers: department / data-scope.
       const scope = await resolveViewerDataScope(viewer.employeeId);

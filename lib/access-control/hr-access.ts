@@ -110,8 +110,23 @@ export function mergeHrAccessPermissions(opts: {
    */
   allEmployeeDashboardEnabled?: boolean;
 }): string[] {
-  const manager = isManagerOrgRole(opts.orgRole);
-  const teamLead = isTeamLeadOrgRole(opts.orgRole);
+  const slugsNorm = (opts.accessRoleSlugs || []).map((s) =>
+    String(s || "").trim().toLowerCase(),
+  );
+  const slugTeamLead = slugsNorm.some(
+    (s) =>
+      s.startsWith("team_lead") ||
+      s.includes("team_lead_") ||
+      s.includes("team-lead"),
+  );
+  const slugManager = slugsNorm.some(
+    (s) =>
+      !s.startsWith("team_lead") &&
+      !s.includes("team_lead_") &&
+      (s.includes("manager") || s.endsWith("_mgr")),
+  );
+  const manager = isManagerOrgRole(opts.orgRole) || slugManager;
+  const teamLead = isTeamLeadOrgRole(opts.orgRole) || slugTeamLead;
   const ceo = isCeoOrgRole(opts.orgRole);
   const headHint = detectDeptHeadHint(opts.firstName, opts.lastName);
   const deptHeadCeo = ceo || Boolean(headHint);
@@ -135,9 +150,7 @@ export function mergeHrAccessPermissions(opts: {
   const set = new Set(opts.permissions.filter(Boolean));
   const hr = isHrDepartment(opts.departmentName);
   const hrDefaultsOn = opts.hrDepartmentDefaultsEnabled !== false;
-  const slugs = (opts.accessRoleSlugs || []).map((s) =>
-    String(s || "").trim().toLowerCase()
-  );
+  const slugs = slugsNorm;
 
   // Joe / Max / Mubeen (and BOD/CEO): leave tickets in Ticket Inbox — not Leaves page.
   if (deptHeadCeo) {

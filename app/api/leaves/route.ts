@@ -52,25 +52,44 @@ export async function GET(req: NextRequest) {
         params.push(...employees);
       }
     } else if (viewerId) {
-      const { loadHrTicketViewer, getEmployeeDeptChipMap } = await import(
-        "@/lib/hr-department-tickets"
+      const {
+        loadHrTicketViewer,
+        getEmployeeDeptChipMap,
+        viewerIsTeamLead,
+        viewerIsManager,
+      } = await import("@/lib/hr-department-tickets");
+      const { orgDeptChipLabel } = await import(
+        "@/app/admin/roles-permissions/system-control-data"
       );
       const viewer = await loadHrTicketViewer(viewerId);
 
       // HR staff (e.g. Aqsa HR Manager): see ALL pending/approved leaves company-wide.
-      // Non-HR TL / dept head: hierarchy / owned-dept only.
+      // Non-HR TL / Manager / dept head: hierarchy + same department.
       if (!(viewer?.isHrStaff && viewer.canViewHrInbox)) {
         const { listHierarchyVisibleEmployeeIds } = await import(
           "@/lib/employee-hierarchy-table"
         );
         const teamIds = new Set(await listHierarchyVisibleEmployeeIds(viewerId));
+        const empChips = await getEmployeeDeptChipMap();
         if (viewer?.deptHead?.headHint) {
-          const empChips = await getEmployeeDeptChipMap();
           const owned = new Set(
             (viewer.deptHead.ownedChips || []).map((c) => c.toLowerCase()),
           );
           for (const [empId, chip] of empChips) {
             if (chip && owned.has(chip.toLowerCase())) teamIds.add(empId);
+          }
+        } else if (viewerIsTeamLead(viewer) || viewerIsManager(viewer)) {
+          // Ensure TL/Manager always see same-dept leaves (Approve buttons need this list).
+          const viewerChip = orgDeptChipLabel(viewer?.departmentName);
+          if (viewerChip) {
+            for (const [empId, chip] of empChips) {
+              if (
+                chip &&
+                chip.toLowerCase() === viewerChip.toLowerCase()
+              ) {
+                teamIds.add(empId);
+              }
+            }
           }
         }
         const scoped = [...teamIds];
@@ -189,17 +208,25 @@ export async function PATCH(req: NextRequest) {
     if (viewerId) {
       try {
         const { orgRoleLabel } = await import("@/lib/org-role");
+        const { loadHrTicketViewer, viewerIsTeamLead, viewerIsManager } =
+          await import("@/lib/hr-department-tickets");
         const [actorRows]: any = await query(
           "SELECT first_name, last_name, role FROM hrm_employees WHERE id = ? LIMIT 1",
           [viewerId],
         );
         const actor = Array.isArray(actorRows) ? actorRows[0] : null;
+        const viewer = await loadHrTicketViewer(viewerId);
         if (actor) {
           const name = [actor.first_name, actor.last_name]
             .filter(Boolean)
             .join(" ")
             .trim();
-          const role = orgRoleLabel(actor.role);
+          let role = orgRoleLabel(actor.role);
+          if (viewerIsTeamLead(viewer) && !viewerIsManager(viewer)) {
+            role = "Team Lead";
+          } else if (viewerIsManager(viewer)) {
+            role = "Manager";
+          }
           actorName = name ? `${name} (${role})` : role;
         }
       } catch {
