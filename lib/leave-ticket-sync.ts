@@ -9,6 +9,11 @@ import {
   rowToTicket,
   type EmployeeTicketRow,
 } from "@/lib/employee-tickets-table";
+import {
+  DEPT_HEAD_NAME_HINT,
+  loadDeptHeadViewer,
+  nameLooksLikeDeptHead,
+} from "@/lib/dept-heads";
 import { calendarDay } from "@/lib/mongo-helpers";
 import { broadcastWsEvent } from "@/lib/ws-broadcast";
 
@@ -396,9 +401,64 @@ async function applyTicketDecision(
 }
 
 /**
+ * IT / Marketing / CEst → Mubeen; HIT/HR/Billing/Finance → Max; DM → Joe.
+ * TL/Manager leave-page approve must NOT clear CEO Pending inbox for these chips.
+ */
+async function leaveNeedsDeptHeadTicketApproval(opts: {
+  employeeId?: string | null;
+  actorId?: string | null;
+  actorName?: string | null;
+}): Promise<boolean> {
+  const eid = String(opts.employeeId || "").trim();
+  if (!eid) return false;
+  try {
+    const { getEmployeeDeptChipMap } = await import(
+      "@/lib/hr-department-tickets"
+    );
+    const chips = await getEmployeeDeptChipMap();
+    const chip = chips.get(eid);
+    if (!chip) return false;
+    const ownerHint = DEPT_HEAD_NAME_HINT[chip] || null;
+    if (!ownerHint) return false;
+
+    const actorId = String(opts.actorId || "").trim();
+    if (actorId) {
+      const actorHead = await loadDeptHeadViewer(actorId);
+      if (
+        actorHead?.headHint &&
+        actorHead.headHint.toLowerCase() === ownerHint.toLowerCase()
+      ) {
+        return false; // Joe / Max / Mubeen themselves — close ticket
+      }
+    }
+
+    const actorName = String(opts.actorName || "").trim();
+    if (actorName) {
+      // "Mubeen Chughtai (CEO)" / "Max Miles (Manager)" without actorId
+      const nameOnly = actorName.replace(/\s*\([^)]*\)\s*$/, "").trim();
+      const parts = nameOnly.split(/\s+/);
+      const first = parts[0] || "";
+      const last = parts.slice(1).join(" ");
+      if (nameLooksLikeDeptHead(first, last, ownerHint)) return false;
+      // Explicit Team Lead label → always keep pending for dept-head CEO
+      if (/\bteam\s*lead\b/i.test(actorName)) return true;
+    }
+
+    // TL / Manager / HR approved leave — ticket stays Pending for dept-head CEO
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * When leave is approved/rejected on Leaves page, mirror status onto the linked ticket
  * so Ticket Inbox stays in sync and shows Approved by (TL / Manager / CEO).
+ *
+ * Exception: for Joe/Max/Mubeen owned depts, TL approve updates leave (monthly) but
+ * keeps the ticket Pending so the CEO always sees it in their inbox.
  */
+/** @returns true when the ticket was closed (resolved/rejected). */
 export async function syncTicketFromLeaveDecision(opts: {
   leaveReason: unknown;
   status: "approved" | "rejected";
@@ -407,7 +467,7 @@ export async function syncTicketFromLeaveDecision(opts: {
   employeeId?: string | null;
   startDate?: string | null;
   endDate?: string | null;
-}): Promise<void> {
+}): Promise<boolean> {
   let ticketId = ticketIdFromLeaveReason(opts.leaveReason);
   if (!ticketId) {
     ticketId = await findLeaveTicketIdByDates(
@@ -422,11 +482,56 @@ export async function syncTicketFromLeaveDecision(opts: {
       String(opts.employeeId || ""),
       ymd(opts.startDate),
     );
-    return;
+    return false;
   }
-  const ticketStatus = opts.status === "approved" ? "resolved" : "rejected";
   const actorId = String(opts.actorId || "").trim() || null;
   const actorName = String(opts.actorName || "").trim() || null;
+
+  // Approved by TL/Manager: leave stays approved for monthly; ticket stays open for CEO.
+  if (
+    opts.status === "approved" &&
+    (await leaveNeedsDeptHeadTicketApproval({
+      employeeId: opts.employeeId,
+      actorId,
+      actorName,
+    }))
+  ) {
+    try {
+      const marker = `[ticket:${ticketId}]`;
+      const reason = String(opts.leaveReason || "");
+      const start = ymd(opts.startDate);
+      const end = ymd(opts.endDate) || start;
+      if (opts.employeeId && start && !reason.includes(marker)) {
+        const [byDate] = await query(
+          `SELECT id, reason, start_date, end_date FROM employee_leaves
+           WHERE employee_id = ? ORDER BY id DESC LIMIT 20`,
+          [String(opts.employeeId)],
+        );
+        for (const row of (Array.isArray(byDate) ? byDate : []) as {
+          id: number;
+          reason?: string;
+          start_date?: unknown;
+          end_date?: unknown;
+        }[]) {
+          if (ymd(row.start_date) !== start) continue;
+          if ((ymd(row.end_date) || ymd(row.start_date)) !== end) continue;
+          const prev = String(row.reason || "");
+          if (prev.includes(marker)) break;
+          const next = `${prev}${prev ? " " : ""}${marker}`.trim();
+          await query(`UPDATE employee_leaves SET reason = ? WHERE id = ?`, [
+            next,
+            row.id,
+          ]);
+          break;
+        }
+      }
+    } catch {
+      /* marker optional */
+    }
+    return false;
+  }
+
+  const ticketStatus = opts.status === "approved" ? "resolved" : "rejected";
   const ok = await applyTicketDecision(ticketId, ticketStatus, actorId, actorName);
   if (ok) {
     // Keep leave reason linked for future syncs / monthly attendance.
@@ -465,6 +570,78 @@ export async function syncTicketFromLeaveDecision(opts: {
     broadcastWsEvent({ type: "ticket_update" });
     broadcastWsEvent({ type: "leave_update" });
   }
+  return ok;
+}
+
+/**
+ * Re-open leave tickets a Team Lead resolved for Joe/Max/Mubeen owned depts,
+ * and return them so Pending inbox (status=open SQL) still lists them for the CEO.
+ */
+export async function reopenDeptHeadLeaveTicketsClosedByTeamLead(opts: {
+  ownedChips: string[];
+  headHint: string;
+}): Promise<EmployeeTicketRow[]> {
+  const owned = new Set(
+    (opts.ownedChips || []).map((c) => String(c || "").toLowerCase()),
+  );
+  if (owned.size === 0) return [];
+
+  let chips: Map<string, string | null>;
+  try {
+    const { getEmployeeDeptChipMap } = await import(
+      "@/lib/hr-department-tickets"
+    );
+    chips = await getEmployeeDeptChipMap();
+  } catch {
+    return [];
+  }
+
+  const reopened: EmployeeTicketRow[] = [];
+  try {
+    const [rows] = await query(
+      `SELECT * FROM ${EMPLOYEE_TICKETS_TABLE}
+       WHERE ticket_type = ? AND status = ?
+       ORDER BY id DESC LIMIT 200`,
+      ["leave", "resolved"],
+    );
+    const list = Array.isArray(rows) ? rows : [];
+    const nowIso = new Date().toISOString().slice(0, 19).replace("T", " ");
+    for (const raw of list) {
+      const t = rowToTicket(raw as Record<string, unknown>);
+      const by = String(t.approved_by_name || "");
+      if (!/\bteam\s*lead\b/i.test(by)) continue;
+      const eid = String(t.employee_id || "").trim();
+      const chip = chips.get(eid);
+      if (!chip || !owned.has(chip.toLowerCase())) continue;
+      const nameOnly = by.replace(/\s*\([^)]*\)\s*$/, "").trim();
+      const parts = nameOnly.split(/\s+/);
+      if (
+        nameLooksLikeDeptHead(parts[0], parts.slice(1).join(" "), opts.headHint)
+      ) {
+        continue;
+      }
+      try {
+        await query(
+          `UPDATE ${EMPLOYEE_TICKETS_TABLE}
+           SET status = ?, approved_by = ?, approved_by_name = ?, resolved_at = ?, updated_at = ?
+           WHERE id = ?`,
+          ["pending", null, null, null, nowIso, t.id],
+        );
+        reopened.push({
+          ...t,
+          status: "pending",
+          approved_by: null,
+          approved_by_name: null,
+          resolved_at: null,
+        });
+      } catch {
+        /* skip */
+      }
+    }
+  } catch {
+    return [];
+  }
+  return reopened;
 }
 
 /**
@@ -531,7 +708,7 @@ export async function repairPendingTicketsFromLeaves<
       const actorName = String(
         decided.step2_by || decided.step1_by || "",
       ).trim();
-      await syncTicketFromLeaveDecision({
+      const closed = await syncTicketFromLeaveDecision({
         leaveReason: decided.reason || `[ticket:${t.id}]`,
         status: leaveStatus,
         actorId: null,
@@ -540,6 +717,8 @@ export async function repairPendingTicketsFromLeaves<
         startDate: ymd(decided.start_date) || start,
         endDate: ymd(decided.end_date) || end,
       });
+      // Dept-head chips stay Pending when only TL approved (CEO inbox).
+      if (!closed) continue;
       t.status = leaveStatus === "approved" ? "resolved" : "rejected";
       if (actorName) t.approved_by_name = actorName;
     } catch {

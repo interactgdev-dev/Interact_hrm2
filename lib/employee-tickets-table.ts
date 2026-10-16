@@ -23,6 +23,10 @@ export type EmployeeTicketRow = {
   status: TicketStatus;
   admin_remark: string | null;
   messages?: TicketThreadMessage[];
+  /** Approver employee id (Mongo / flexible columns). */
+  approved_by?: string | number | null;
+  /** e.g. "Mubeen Chughtai (CEO)" / "Maheen Qureshi (Team Lead)" */
+  approved_by_name?: string | null;
   resolved_at: string | null;
   requested_at: string;
   updated_at: string;
