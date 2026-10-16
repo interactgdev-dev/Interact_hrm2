@@ -505,7 +505,7 @@ export default function LeavePage() {
                 </div>
                 {selectedLeave.admin_remark ? (
                   <div className={styles.modalRow}>
-                    <b>Admin remarks:</b> {selectedLeave.admin_remark}
+                    <b>Remarks:</b> {selectedLeave.admin_remark}
                   </div>
                 ) : null}
                 {balanceInfo ? (
@@ -547,7 +547,7 @@ export default function LeavePage() {
                 selectedLeave.can_moderate !== false ? (
                   <div style={{ marginTop: 14 }}>
                     <label className={styles.modalRow}>
-                      <b>Admin remarks (for rejection)</b>
+                      <b>Remarks for Rejection</b>
                       <textarea
                         className={styles.textarea}
                         value={rejectRemark}

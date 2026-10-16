@@ -489,7 +489,7 @@ export default function LeavePage() {
                 </div>
                 {selectedLeave.admin_remark ? (
                   <div className={styles.modalRow}>
-                    <b>Admin remarks:</b> {selectedLeave.admin_remark}
+                    <b>Remarks:</b> {selectedLeave.admin_remark}
                   </div>
                 ) : null}
                 <div className={styles.modalRow}>
