@@ -150,8 +150,9 @@ export async function GET(req: NextRequest) {
       }
       tickets = tickets.filter((t) => {
         if (isLeaveTicketType(t.ticket_type)) {
-          // Leave: owner / hierarchy team / dept-head owned chips (not company-wide).
+          // Leave: owner / HR inbox viewer (all leave) / hierarchy / dept-head owned chips.
           if (viewer && String(t.employee_id) === viewer.employeeId) return true;
+          if (viewer?.isHrStaff && viewer.canViewHrInbox) return true;
           if (viewerTeamIds?.has(String(t.employee_id))) return true;
           if (viewer?.deptHead?.headHint) {
             const chip = empChips.get(String(t.employee_id));
@@ -162,7 +163,6 @@ export async function GET(req: NextRequest) {
                 )
             );
           }
-          if (viewer?.canViewHrInbox) return false;
           return !isHrDepartmentSubmitter(t.employee_id, hrIds);
         }
         const hrTicket = isHrDepartmentSubmitter(t.employee_id, hrIds);

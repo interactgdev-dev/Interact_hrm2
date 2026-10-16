@@ -79,43 +79,48 @@ export async function getEmployeeLeaveBalance(
       ? Number(customAllowance?.bereavement_balance_adjustment ?? 0)
       : 0;
 
+    // Fetch approved leaves for this employee. Do NOT use DATE(col) <= today —
+    // on Mongo the adapter strips DATE() and datetime `updated_at` then fails
+    // string-compare against a date-only bound, so half-day deducts never apply.
     let leavesQuery =
-      "SELECT leave_category, total_days, half_day_part, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
+      "SELECT leave_category, total_days, half_day_part, start_date, end_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
     const leaveId = resolvedEmployeeId ?? employee_id;
     const leaveParams: any[] = [leaveId, String(leaveId)];
-    const todayYmd = getDateStringInTimeZone(new Date());
-    if (leaveCycleStart) {
-      leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) >= ?";
-      leaveParams.push(leaveCycleStart);
-    }
-    leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) <= ?";
-    leaveParams.push(todayYmd);
     let leaves: any[] = [];
     try {
       const [rows]: any = await conn.execute(leavesQuery, leaveParams);
-      leaves = rows;
+      leaves = Array.isArray(rows) ? rows : [];
     } catch {
       // Older DBs without half_day_part column.
       leavesQuery =
-        "SELECT leave_category, total_days, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
-      if (leaveCycleStart) {
-        leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) >= ?";
-      }
-      leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) <= ?";
+        "SELECT leave_category, total_days, start_date, end_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
       const [rows]: any = await conn.execute(leavesQuery, leaveParams);
-      leaves = rows;
+      leaves = Array.isArray(rows) ? rows : [];
     }
 
+    const cycleStart = leaveCycleStart || "";
     const usedLeave: Record<string, number> = {};
     let totalUsedDays = 0;
     for (const leave of leaves as any[]) {
+      // Keep leaves approved/taken in the current cycle (by approval or start date).
+      const updatedYmd = getDateStringInTimeZone(
+        leave.updated_at || leave.start_date || "",
+      );
+      const startYmd = getDateStringInTimeZone(leave.start_date || "");
+      const cycleKey = updatedYmd || startYmd;
+      if (cycleStart && cycleKey && cycleKey < cycleStart) continue;
+
       const category = String(leave.leave_category || "annual");
       // Full day → 1+; 1st/2nd half → always 0.5 (even if INT column stored 1).
       const kind = approvedLeaveKindFromRow(leave);
+      const rawDays = Number(leave.total_days);
       const days =
         kind === "first_half" || kind === "second_half"
           ? 0.5
-          : Number(leave.total_days || 0);
+          : Number.isFinite(rawDays) && rawDays > 0
+            ? rawDays
+            : 0;
+      if (days <= 0) continue;
       usedLeave[category] = (usedLeave[category] || 0) + days;
       totalUsedDays += days;
     }

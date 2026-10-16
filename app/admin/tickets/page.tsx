@@ -453,7 +453,7 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
           </h1>
           <p className={adminStyles.subtitle}>
             {inboxMode === "hr"
-              ? "Leave tickets for your hierarchy team, plus HR department tickets. Approve only within your department hierarchy."
+              ? "All leave tickets (company-wide) plus HR department tickets. View all — approve only within your own department."
               : "Employee tickets. Department leave for CEOs (Joe / Max / Mubeen) appears here for their owned depts."}
           </p>
 

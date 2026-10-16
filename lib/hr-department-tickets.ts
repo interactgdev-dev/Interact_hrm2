@@ -1,8 +1,8 @@
 /**
  * Ticket inbox visibility + leave moderation.
  *
- * - HR inbox leave: hierarchy team only (direct reports / team members).
- *   HR-dept non-leave tickets still visible to HR staff.
+ * - HR Manager / HR staff inbox: ALL leave tickets (any dept) + HR-dept non-leave.
+ *   Approve only within own department / hierarchy; otherwise view-only.
  * - Dept heads (Joe / Max / Mubeen): leave tickets for their owned depts in Ticket Inbox.
  * - Non-HR Team Leads: leave approve on Leaves page (not Ticket Inbox).
  * - Admin inbox: non-HR submitter tickets (plus CEO dept leave when viewer is dept head).
@@ -208,7 +208,7 @@ function isLeaveTicket(ticketType?: string | null): boolean {
 /**
  * Filter tickets for list APIs.
  * - inbox=admin: non-HR submitters; dept heads also see their owned-dept leave tickets
- * - inbox=hr: hierarchy-team leave + HR-staff non-leave tickets
+ * - inbox=hr: ALL leave (HR staff) or owned/team leave (dept heads); + HR non-leave
  * - employeeId own list: always allow owner's tickets
  */
 export function filterTicketsForInbox<
@@ -253,12 +253,10 @@ export function filterTicketsForInbox<
       });
     }
 
-    // HR staff / managers: only hierarchy-team leave + HR-dept other tickets.
+    // HR Manager / HR staff: every leave ticket company-wide + HR-dept other tickets.
+    // Approve stays department-scoped via canModerateTicketStatusAsync.
     return tickets.filter((t) => {
-      if (isLeaveTicket(t.ticket_type)) {
-        const empId = String(t.employee_id || "").trim();
-        return teamIds.has(empId) || reportsToMe.has(empId);
-      }
+      if (isLeaveTicket(t.ticket_type)) return true;
       return isHrDepartmentSubmitter(t.employee_id, hrIds);
     });
   }

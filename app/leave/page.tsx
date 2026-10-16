@@ -192,15 +192,26 @@ export default function LeavePage() {
 
   const handleAction = async (id: number, status: "approved" | "rejected") => {
     try {
-      await fetch("/api/leaves", {
+      const res = await fetch("/api/leaves", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(viewerId
+            ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+            : {}),
+        },
         body: JSON.stringify({
           id,
           status,
           admin_remark: status === "rejected" ? rejectRemark : undefined,
+          viewerId: viewerId || undefined,
         }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.success === false) {
+        setError(data?.error || "Not allowed to update this leave");
+        return;
+      }
       void fetchLeaves();
       setModalOpen(false);
       setSelectedLeave(null);
@@ -337,7 +348,8 @@ export default function LeavePage() {
         <div className={styles.inner}>
           <h1 className={styles.title}>Leave requests</h1>
           <p className={styles.subtitle}>
-            Review and approve leave for your hierarchy team.
+            Review leave requests. HR can view all — approve only within your own
+            department.
           </p>
 
           <div className={styles.statRow}>
@@ -421,7 +433,8 @@ export default function LeavePage() {
                                 <button type="button" className={styles.btnView} onClick={() => openModal(l)}>
                                   View
                                 </button>
-                                {status === "pending" && (
+                                {status === "pending" &&
+                                  l.can_moderate !== false && (
                                   <>
                                     <button
                                       type="button"
@@ -438,6 +451,12 @@ export default function LeavePage() {
                                       Reject
                                     </button>
                                   </>
+                                )}
+                                {status === "pending" &&
+                                  l.can_moderate === false && (
+                                  <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                                    View only
+                                  </span>
                                 )}
                               </div>
                             </td>
@@ -523,7 +542,8 @@ export default function LeavePage() {
                   <b>Requested:</b>{" "}
                   {selectedLeave.requested_at ? formatDateTime(selectedLeave.requested_at) : "—"}
                 </div>
-                {selectedStatus === "pending" ? (
+                {selectedStatus === "pending" &&
+                selectedLeave.can_moderate !== false ? (
                   <div style={{ marginTop: 14 }}>
                     <label className={styles.modalRow}>
                       <b>Admin remarks (for rejection)</b>
@@ -551,6 +571,11 @@ export default function LeavePage() {
                       </button>
                     </div>
                   </div>
+                ) : selectedStatus === "pending" &&
+                  selectedLeave.can_moderate === false ? (
+                  <p style={{ marginTop: 14, color: "#64748b", fontSize: "0.9rem" }}>
+                    View only — approve is limited to your own department.
+                  </p>
                 ) : null}
                 <button type="button" className={styles.modalClose} onClick={closeModal}>
                   Close

@@ -92,11 +92,23 @@ export async function syncLeaveRecordFromTicket(
           ? "second_half"
           : ""
     ) ||
+    parseLeaveDuration(fd.halfDayPart) ||
+    // Fall back when total_days was already stored as 0.5 on the ticket form.
+    (Number(fd.total_days) > 0 && Number(fd.total_days) < 1
+      ? "first_half"
+      : null) ||
     "full";
   const effectiveEnd =
     duration === "first_half" || duration === "second_half" ? startDate : endDate;
-  const totalDays = leaveDaysForDuration(duration, startDate, effectiveEnd);
+  const totalDays =
+    duration === "first_half" || duration === "second_half"
+      ? 0.5
+      : leaveDaysForDuration(duration, startDate, effectiveEnd);
   const halfDayPart = halfDayPartFromDuration(duration);
+  // Persist duration on form_data so later balance/sync stays correct.
+  fd.leave_duration = duration;
+  fd.total_days = totalDays;
+  fd.half_day_part = halfDayPart;
   const reasonBody = String(fd.reason || ticket.description || "").trim();
   const marker = `[ticket:${ticket.id}]`;
   const reason = reasonBody.includes(marker)

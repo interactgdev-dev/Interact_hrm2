@@ -52,30 +52,34 @@ export async function GET(req: NextRequest) {
         params.push(...employees);
       }
     } else if (viewerId) {
-      // Only team leaves for the viewer's hierarchy (not company-wide).
-      const { listHierarchyVisibleEmployeeIds } = await import(
-        "@/lib/employee-hierarchy-table"
-      );
       const { loadHrTicketViewer, getEmployeeDeptChipMap } = await import(
         "@/lib/hr-department-tickets"
       );
-      const teamIds = new Set(await listHierarchyVisibleEmployeeIds(viewerId));
       const viewer = await loadHrTicketViewer(viewerId);
-      if (viewer?.deptHead?.headHint) {
-        const empChips = await getEmployeeDeptChipMap();
-        const owned = new Set(
-          (viewer.deptHead.ownedChips || []).map((c) => c.toLowerCase()),
+
+      // HR staff (e.g. Aqsa HR Manager): see ALL pending/approved leaves company-wide.
+      // Non-HR TL / dept head: hierarchy / owned-dept only.
+      if (!(viewer?.isHrStaff && viewer.canViewHrInbox)) {
+        const { listHierarchyVisibleEmployeeIds } = await import(
+          "@/lib/employee-hierarchy-table"
         );
-        for (const [empId, chip] of empChips) {
-          if (chip && owned.has(chip.toLowerCase())) teamIds.add(empId);
+        const teamIds = new Set(await listHierarchyVisibleEmployeeIds(viewerId));
+        if (viewer?.deptHead?.headHint) {
+          const empChips = await getEmployeeDeptChipMap();
+          const owned = new Set(
+            (viewer.deptHead.ownedChips || []).map((c) => c.toLowerCase()),
+          );
+          for (const [empId, chip] of empChips) {
+            if (chip && owned.has(chip.toLowerCase())) teamIds.add(empId);
+          }
         }
+        const scoped = [...teamIds];
+        if (scoped.length === 0) {
+          return NextResponse.json({ success: true, leaves: [] });
+        }
+        sql += ` AND employee_id IN (${scoped.map(() => "?").join(",")})`;
+        params.push(...scoped);
       }
-      const scoped = [...teamIds];
-      if (scoped.length === 0) {
-        return NextResponse.json({ success: true, leaves: [] });
-      }
-      sql += ` AND employee_id IN (${scoped.map(() => "?").join(",")})`;
-      params.push(...scoped);
     }
 
     if (fromDate && toDate) {
@@ -92,7 +96,33 @@ export async function GET(req: NextRequest) {
 
     sql += ' ORDER BY requested_at DESC';
     const [rows] = (await query(sql, params)) as any;
-    const leaves = Array.isArray(rows) ? rows : [];
+    let leaves = Array.isArray(rows) ? rows : [];
+
+    // Per-row approve flag for HR Manager (view all, approve own dept only).
+    if (viewerId && leaves.length > 0) {
+      const {
+        loadHrTicketViewer,
+        getEmployeeDeptChipMap,
+        canModerateTicketStatusAsync,
+        getHrEmployeeIdSet,
+      } = await import("@/lib/hr-department-tickets");
+      const viewer = await loadHrTicketViewer(viewerId);
+      const hrIds = await getHrEmployeeIdSet();
+      const empChips = await getEmployeeDeptChipMap();
+      const out = [];
+      for (const leave of leaves) {
+        const canMod = await canModerateTicketStatusAsync({
+          ticketEmployeeId: leave.employee_id,
+          viewer,
+          hrIds,
+          ticketType: "leave",
+          submitterChip: empChips.get(String(leave.employee_id)) || null,
+        });
+        out.push({ ...leave, can_moderate: canMod });
+      }
+      leaves = out;
+    }
+
     return NextResponse.json({ success: true, leaves });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : String(error) });
@@ -102,27 +132,70 @@ export async function GET(req: NextRequest) {
 // PATCH: Update leave status (approve/reject)
 export async function PATCH(req: NextRequest) {
   try {
-    const { id, status, admin_remark } = await req.json();
+    const body = await req.json();
+    const { id, status, admin_remark } = body;
     if (!id || !["approved", "rejected"].includes(status)) {
       return NextResponse.json({ success: false, error: "Invalid data" });
     }
+
+    const viewerId = String(
+      body.viewerId ||
+        body.viewer_id ||
+        req.headers.get("x-hrm-employee-id") ||
+        req.headers.get("x-employee-id") ||
+        "",
+    ).trim();
+
+    const [existingRows]: any = await query(
+      "SELECT * FROM employee_leaves WHERE id = ? LIMIT 1",
+      [id],
+    );
+    const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+    if (!existing) {
+      return NextResponse.json({ success: false, error: "Leave not found" }, { status: 404 });
+    }
+
+    if (viewerId) {
+      const {
+        loadHrTicketViewer,
+        getEmployeeDeptChipMap,
+        canModerateTicketStatusAsync,
+        getHrEmployeeIdSet,
+      } = await import("@/lib/hr-department-tickets");
+      const viewer = await loadHrTicketViewer(viewerId);
+      const hrIds = await getHrEmployeeIdSet();
+      const empChips = await getEmployeeDeptChipMap();
+      const allowed = await canModerateTicketStatusAsync({
+        ticketEmployeeId: existing.employee_id,
+        viewer,
+        hrIds,
+        ticketType: "leave",
+        submitterChip: empChips.get(String(existing.employee_id)) || null,
+      });
+      if (!allowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "View only — you can approve leave only within your own department.",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     if (status === "rejected") {
       await query("UPDATE employee_leaves SET status = ?, admin_remark = ?, updated_at = NOW() WHERE id = ?", [status, admin_remark || "", id]);
     } else {
       // On approve: force half-day rows to deduct 0.5 from balance (DECIMAL-safe).
+      const part = String(existing?.half_day_part || "").trim().toLowerCase();
+      const isHalf =
+        part === "first" ||
+        part === "second" ||
+        part === "first_half" ||
+        part === "second_half" ||
+        (Number(existing?.total_days) > 0 && Number(existing?.total_days) < 1);
       try {
-        const [rows]: any = await query(
-          "SELECT half_day_part, total_days FROM employee_leaves WHERE id = ? LIMIT 1",
-          [id],
-        );
-        const row = Array.isArray(rows) ? rows[0] : null;
-        const part = String(row?.half_day_part || "").trim().toLowerCase();
-        const isHalf =
-          part === "first" ||
-          part === "second" ||
-          part === "first_half" ||
-          part === "second_half" ||
-          (Number(row?.total_days) > 0 && Number(row?.total_days) < 1);
         if (isHalf) {
           await query(
             "UPDATE employee_leaves SET status = ?, total_days = 0.5, updated_at = NOW() WHERE id = ?",
