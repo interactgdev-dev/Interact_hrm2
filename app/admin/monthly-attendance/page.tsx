@@ -140,13 +140,25 @@ function addDaysToDateKey(dateKey: string, daysToAdd: number) {
   return `${utc.getUTCFullYear()}-${String(utc.getUTCMonth() + 1).padStart(2, "0")}-${String(utc.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** Empty working-day cell: full Leave / 1st-Half / 2nd-Half / Absent. */
+function isFutureAttendanceDay(dateKey: string): boolean {
+  if (!dateKey) return false;
+  const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
+  return Boolean(todayKey && dateKey > todayKey);
+}
+
+function parseDeductionPercent(deduction: string | number | null | undefined): number {
+  if (deduction == null || deduction === "") return 0;
+  return parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
+}
+
+/** Empty working-day cell: future --- / full Leave / 1st-Half / 2nd-Half / Absent. */
 function emptyWorkingDayStatus(
-  _dateKey: string,
+  dateKey: string,
   workingDay: boolean,
   leaveKind: ReturnType<typeof approvedLeaveOnDay>,
 ): { statusLabel: string; deduction: string } {
   if (!workingDay) return { statusLabel: "Off", deduction: "" };
+  if (isFutureAttendanceDay(dateKey)) return { statusLabel: "---", deduction: "" };
   if (leaveKind) return attendanceFromApprovedLeaveDay(leaveKind);
   return { statusLabel: "Absent", deduction: "100%" };
 }
@@ -964,55 +976,121 @@ export default function MonthlyAttendancePage() {
     return getDateKey(record.clock_in || record.clock_out || record.date || "");
   }
 
+  /**
+   * Same status/deduction the table cell shows (manual override → leave → auto/empty).
+   * Footer totals and exports must use this so Half Day / Absent never disagree with the grid.
+   */
+  function resolveDayAttendanceDisplay(
+    employee: any,
+    dateKey: string,
+  ): { statusLabel: string; deduction: string } {
+    const meta = employee.dateMeta?.[dateKey];
+    const dayRecords = employee.byDate?.[dateKey] || [];
+    const workingDay = isWorkingDay(dateKey);
+    const override = overrideStatusFor(employee.employeeId, dateKey);
+    if (override) {
+      return {
+        statusLabel: override,
+        deduction: deductionForAttendanceStatus(override, meta?.runningLate),
+      };
+    }
+    const leaveKind = approvedLeaveOnDay(
+      approvedLeavesMap,
+      employee.employeeId,
+      dateKey,
+    );
+    if (leaveKind) {
+      return attendanceFromApprovedLeaveDay(leaveKind);
+    }
+    if (!dayRecords.length) {
+      return emptyWorkingDayStatus(dateKey, workingDay, null);
+    }
+    return {
+      statusLabel: normalizeAttendanceStatus(meta?.statusLabel || "-"),
+      deduction: meta?.deduction || "",
+    };
+  }
+
   function calculateTotalDeduction(employee: any) {
     if (employee.isImported) {
       if (employee.importedDays?.length && importedEmployeeUsesFiveHourShift(employee.importedDays)) {
         let total = 0;
         (employee.importedDays as ImportedMonthlyDay[]).forEach((day) => {
           const { deduction } = getImportedDayDisplayFields(day, { fiveHourShift: true });
-          if (deduction) total += parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
+          if (deduction) total += parseDeductionPercent(deduction);
         });
         return total;
       }
       const fromFooter = employee.importedFooter?.totalDeduction;
       if (fromFooter != null && String(fromFooter).trim() !== "") {
-        return parseInt(String(fromFooter).replace(/%/g, ""), 10) || 0;
+        return parseDeductionPercent(fromFooter);
       }
       let total = 0;
       (employee.importedDays || []).forEach((day: ImportedMonthlyDay) => {
         const ded = day.sheetDeduction ?? day.deduction ?? employee.dateMeta?.[day.dateKey]?.deduction;
-        if (ded) total += parseInt(String(ded).replace(/%/g, ""), 10) || 0;
+        if (ded) total += parseDeductionPercent(ded);
       });
       return total;
     }
 
     let totalDeduction = 0;
     monthInfo.days.forEach((day) => {
-      const dayRecords = employee.byDate[day.dateKey] || [];
-      const meta = employee.dateMeta[day.dateKey];
-      const workingDay = isWorkingDay(day.dateKey);
-      
-      let dayDeduction = 0;
-      const leaveKind = approvedLeaveOnDay(
-        approvedLeavesMap,
-        employee.employeeId,
-        day.dateKey,
+      totalDeduction += parseDeductionPercent(
+        resolveDayAttendanceDisplay(employee, day.dateKey).deduction,
       );
-      if (leaveKind) {
-        dayDeduction =
-          parseInt(
-            String(attendanceFromApprovedLeaveDay(leaveKind).deduction).replace(/%/g, ""),
-            10,
-          ) || 0;
-      } else if (dayRecords.length === 0) {
-        const { deduction } = emptyWorkingDayStatus(day.dateKey, workingDay, null);
-        dayDeduction = parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
-      } else if (meta?.deduction) {
-        dayDeduction = parseInt(meta.deduction) || 0;
-      }
-      totalDeduction += dayDeduction;
     });
     return totalDeduction;
+  }
+
+  function getEmployeeAbsenceHalfDayStats(employee: any): {
+    absences: number;
+    halfDays: number;
+    absenceDeduction: number;
+    halfDayDeduction: number;
+  } {
+    let absences = 0;
+    let halfDays = 0;
+    let absenceDeduction = 0;
+    let halfDayDeduction = 0;
+    if (employee.isImported) {
+      (employee.importedDays || []).forEach((day: ImportedMonthlyDay) => {
+        const fields = getImportedDayDisplayFields(day, {
+          fiveHourShift: importedEmployeeUsesFiveHourShift(employee.importedDays || []),
+        });
+        const status = normalizeAttendanceStatus(fields.status || "");
+        const pct = parseDeductionPercent(fields.deduction);
+        if (status === "Absent") {
+          absences += 1;
+          absenceDeduction += pct;
+        } else if (
+          status === STATUS_FIRST_HALF_DAY ||
+          status === STATUS_SECOND_HALF_DAY
+        ) {
+          halfDays += 1;
+          halfDayDeduction += pct;
+        }
+      });
+      return { absences, halfDays, absenceDeduction, halfDayDeduction };
+    }
+    monthInfo.days.forEach((day) => {
+      const { statusLabel, deduction } = resolveDayAttendanceDisplay(
+        employee,
+        day.dateKey,
+      );
+      const status = normalizeAttendanceStatus(statusLabel);
+      const pct = parseDeductionPercent(deduction);
+      if (status === "Absent") {
+        absences += 1;
+        absenceDeduction += pct;
+      } else if (
+        status === STATUS_FIRST_HALF_DAY ||
+        status === STATUS_SECOND_HALF_DAY
+      ) {
+        halfDays += 1;
+        halfDayDeduction += pct;
+      }
+    });
+    return { absences, halfDays, absenceDeduction, halfDayDeduction };
   }
 
   function tardyNoteForCell(
@@ -1195,19 +1273,12 @@ export default function MonthlyAttendancePage() {
     monthInfo.days.forEach((day) => {
       const dayRecords = employee.byDate[day.dateKey] || [];
       const meta = employee.dateMeta[day.dateKey];
-      const workingDay = isWorkingDay(day.dateKey);
       const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
 
       if (daySessions.length === 0 && dayRecords.length === 0) {
-        const leaveKind = approvedLeaveOnDay(
-          approvedLeavesMap,
-          employee.employeeId,
+        const { statusLabel, deduction } = resolveDayAttendanceDisplay(
+          employee,
           day.dateKey,
-        );
-        const { statusLabel, deduction } = emptyWorkingDayStatus(
-          day.dateKey,
-          workingDay,
-          leaveKind,
         );
         dataRows.push({
           cells: [
@@ -1231,13 +1302,10 @@ export default function MonthlyAttendancePage() {
       }
 
       const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
-
-      if (sessionsToExport.length === 0) {
-        // handled above when no sessions and no records
-      }
+      const resolved = resolveDayAttendanceDisplay(employee, day.dateKey);
 
       sessionsToExport.forEach(({ session, record }, sessionIndex) => {
-        const statusLabel = normalizeAttendanceStatus(meta?.statusLabel || "");
+        const statusLabel = resolved.statusLabel;
         dataRows.push({
           cells: [
             day.weekday,
@@ -1254,7 +1322,7 @@ export default function MonthlyAttendancePage() {
               ? statusCellText(statusLabel, meta?.lateMinutes)
               : statusLabel,
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, record?.id, dayRecords),
-            meta?.deduction || "",
+            resolved.deduction,
           ],
           status: statusLabel,
         });
@@ -1495,44 +1563,26 @@ export default function MonthlyAttendancePage() {
         const meta = employee.dateMeta[day.dateKey];
         const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
 
+        const { statusLabel, deduction } = resolveDayAttendanceDisplay(
+          employee,
+          day.dateKey,
+        );
+        if (!shouldIncludeInDeductionSummary(statusLabel)) return;
+
+        const tardyCount = meta?.runningLate ?? "";
         if (dayRecords.length === 0 && daySessions.length === 0) {
-          const leaveKind = approvedLeaveOnDay(
-            approvedLeavesMap,
-            employee.employeeId,
-            day.dateKey,
-          );
-          const { statusLabel, deduction } = emptyWorkingDayStatus(
-            day.dateKey,
-            true,
-            leaveKind,
-          );
-          if (!shouldIncludeInDeductionSummary(statusLabel)) return;
           pushDeductionSummaryRow(
             rows,
             employee,
             day.dateKey,
             statusLabel,
             deduction,
-            meta?.runningLate ?? "",
+            tardyCount,
           );
           return;
         }
 
-        const leaveKindDay = approvedLeaveOnDay(
-          approvedLeavesMap,
-          employee.employeeId,
-          day.dateKey,
-        );
-        const leaveAtt = leaveKindDay
-          ? attendanceFromApprovedLeaveDay(leaveKindDay)
-          : null;
-        const statusLabel = leaveAtt?.statusLabel || meta?.statusLabel || "On Time";
-        if (!shouldIncludeInDeductionSummary(statusLabel)) return;
-
-        const deduction = leaveAtt?.deduction || meta?.deduction || "";
-        const tardyCount = meta?.runningLate ?? "";
         const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
-
         sessionsToExport.forEach(({ session, record }) => {
           pushDeductionSummaryRow(rows, employee, day.dateKey, statusLabel, deduction, tardyCount, {
             session,
@@ -2210,7 +2260,27 @@ export default function MonthlyAttendancePage() {
                         })}
                       </tbody>
                       <tfoot>
+                        {(() => {
+                          const absenceHalf = getEmployeeAbsenceHalfDayStats(employee);
+                          return (
+                            <>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC", borderTop: "2px solid #E2E8F0" }}>
+                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
+                            Absences:
+                          </td>
+                          <td>
+                            {absenceHalf.absences} ({absenceHalf.absenceDeduction}%)
+                          </td>
+                        </tr>
+                        <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
+                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
+                            Half Days:
+                          </td>
+                          <td>
+                            {absenceHalf.halfDays} ({absenceHalf.halfDayDeduction}%)
+                          </td>
+                        </tr>
+                        <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
                           <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
                             Total Deduction:
                           </td>
@@ -2246,6 +2316,9 @@ export default function MonthlyAttendancePage() {
                               : getTotalWorkingDays(employee, monthInfo, approvedLeavesMap)}
                           </td>
                         </tr>
+                            </>
+                          );
+                        })()}
                       </tfoot>
 
                     </table>
