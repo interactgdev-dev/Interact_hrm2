@@ -313,17 +313,28 @@ export default function EmployeeListStyledPage() {
 
   const getText = (value: unknown) => String(value || "").toLowerCase();
 
+  /** Guard against API join duplicates (same id repeated → ghost rows / React key clashes). */
+  const employeesUnique = useMemo(() => {
+    const byId = new Map<string, any>();
+    for (const employee of employees) {
+      const id = String(employee?.id ?? "");
+      if (!id || byId.has(id)) continue;
+      byId.set(id, employee);
+    }
+    return Array.from(byId.values());
+  }, [employees]);
+
   const uniqueDepartments = useMemo(() => {
-    const depts = employees
+    const depts = employeesUnique
       .map((e) => e.department_name)
       .filter((d): d is string => Boolean(d));
     return Array.from(new Set(depts)).sort();
-  }, [employees]);
+  }, [employeesUnique]);
 
   const filtered = useMemo(() => {
     const searchLower = search.toLowerCase();
 
-    const searchFiltered = employees.filter((employee) => {
+    const searchFiltered = employeesUnique.filter((employee) => {
       if (!search) return true;
       const empId = (employee.employee_code || employee.id || "").toString();
       const fullName = getEmployeeFullName(employee).toLowerCase();
@@ -398,7 +409,7 @@ export default function EmployeeListStyledPage() {
     });
 
     return sorted;
-  }, [employees, search, statusFilter, departmentFilter, sortConfig]);
+  }, [employeesUnique, search, statusFilter, departmentFilter, sortConfig]);
 
   const filteredIds = useMemo(
     () => filtered.map((employee) => Number(employee.id)).filter((id) => Number.isFinite(id) && id > 0),
@@ -488,8 +499,8 @@ export default function EmployeeListStyledPage() {
 
   const listStats = useMemo(() => {
     const scoped = departmentFilter
-      ? employees.filter((e) => (e.department_name || "") === departmentFilter)
-      : employees;
+      ? employeesUnique.filter((e) => (e.department_name || "") === departmentFilter)
+      : employeesUnique;
     const total = scoped.length;
     const active = scoped.filter((e) => getNormalizedStatus(e.status) === "active").length;
     const inactive = total - active;
@@ -500,7 +511,7 @@ export default function EmployeeListStyledPage() {
       activePct: total ? Math.round((active / total) * 100) : 0,
       inactivePct: total ? Math.round((inactive / total) * 100) : 0,
     };
-  }, [employees, departmentFilter]);
+  }, [employeesUnique, departmentFilter]);
 
   const visibleExtraCols = EXTRA_COLUMNS.filter((col) => visibleExtras[col.key]);
   const extraColsVisible = visibleExtraCols.length > 0;
@@ -797,7 +808,7 @@ export default function EmployeeListStyledPage() {
                 </tr>
               ) : (
                 filtered.map((employee) => (
-                  <tr key={employee.id}>
+                  <tr key={`emp-${employee.id}`}>
                     <td style={{ textAlign: "center" }}>
                       <input
                         type="checkbox"

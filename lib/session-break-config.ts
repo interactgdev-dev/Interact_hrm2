@@ -36,7 +36,8 @@ export const REFRESHMENT_BREAK_CONFIG: SessionBreakConfig = {
   endAction: "refreshment_end",
   lockPrefix: "refreshment_break_start_emp_",
   label: "Restroom Break",
-  shortLabel: "Restroom Break",
+  /** Button text uses shortLabel (`Start Restroom`) so pill height matches Prayer/Meeting. */
+  shortLabel: "Restroom",
   cardClass: "cardRefreshment",
   titleClass: "titleRefreshment",
   btnClass: "btnRefreshment",

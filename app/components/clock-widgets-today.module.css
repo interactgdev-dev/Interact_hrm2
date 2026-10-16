@@ -41,9 +41,12 @@
   width: 100%;
   border: none;
   border-radius: 999px;
-  padding: 11px 18px;
-  font-size: 16px;
+  padding: 11px 14px;
+  min-height: 44px;
+  font-size: 15px;
   font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
   font-family: inherit;
   color: #fff;

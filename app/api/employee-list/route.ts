@@ -107,9 +107,12 @@ export async function GET(req: NextRequest) {
       /* emergency table optional */
     }
 
-    const employees = (rows || []).map((row: any) => {
+    // JOIN on jobs/contacts can multiply one employee into many rows — keep one per id.
+    const byId = new Map<string, any>();
+    for (const row of rows || []) {
       const id = String(row.id ?? "");
-      return {
+      if (!id) continue;
+      const mapped = {
         ...row,
         dob: toDateOnly(row.dob),
         cnic_issuance_date: toDateOnly(row.cnic_issuance_date),
@@ -135,7 +138,19 @@ export async function GET(req: NextRequest) {
         fuel_allowance: fuelAllowanceMap[id] || 0,
         emergency_phone: emergencyMap[id] || "",
       };
-    });
+      const prev = byId.get(id);
+      if (!prev) {
+        byId.set(id, mapped);
+        continue;
+      }
+      // Prefer the row that has a department / job title filled in.
+      const prevScore =
+        (prev.department_name ? 2 : 0) + (prev.job_title ? 1 : 0);
+      const nextScore =
+        (mapped.department_name ? 2 : 0) + (mapped.job_title ? 1 : 0);
+      if (nextScore > prevScore) byId.set(id, mapped);
+    }
+    const employees = Array.from(byId.values());
 
     return NextResponse.json({ success: true, employees });
   } catch (err) {
