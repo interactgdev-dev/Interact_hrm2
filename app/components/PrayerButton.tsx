@@ -226,12 +226,12 @@ export function PrayerButton({
         disabled={disabled || prayerActionPending || bioStatusLoading}
         className={isSlack ? `${slackStyles.btn} ${isPrayerOn ? slackStyles.btnPrayerEnd : slackStyles.btnPrayer}` : undefined}
         style={isSlack ? undefined : {
-          background: isPrayerOn ? "#e74c3c" : "#8e44ad",
+          background: isPrayerOn ? "#e74c3c" : "#16a34a",
           color: "#fff",
           border: "none",
           borderRadius: 8,
           padding: "8px 18px",
-          fontSize: "1rem",
+          fontSize: "1.1rem",
           fontWeight: 600,
           cursor: disabled || prayerActionPending || bioStatusLoading ? "not-allowed" : "pointer",
           opacity: disabled || prayerActionPending || bioStatusLoading ? 0.6 : 1,

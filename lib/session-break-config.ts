@@ -35,14 +35,14 @@ export const REFRESHMENT_BREAK_CONFIG: SessionBreakConfig = {
   startAction: "refreshment_start",
   endAction: "refreshment_end",
   lockPrefix: "refreshment_break_start_emp_",
-  label: "Refreshment",
-  shortLabel: "Refreshment",
+  label: "Restroom Break",
+  shortLabel: "Restroom Break",
   cardClass: "cardRefreshment",
   titleClass: "titleRefreshment",
   btnClass: "btnRefreshment",
   btnEndClass: "btnRefreshmentEnd",
-  accentColor: "#d97706",
-  badgeLiveColor: "#b45309",
+  accentColor: "#16a34a",
+  badgeLiveColor: "#15803d",
   dataChangedEvent: "hrm:refreshment-data-changed",
   summaryViewKey: "refreshment",
   breakTypeKey: "refreshment_break",
@@ -64,8 +64,8 @@ export const MEETING_BREAK_CONFIG: SessionBreakConfig = {
   titleClass: "titleMeeting",
   btnClass: "btnMeeting",
   btnEndClass: "btnMeetingEnd",
-  accentColor: "#2563eb",
-  badgeLiveColor: "#1d4ed8",
+  accentColor: "#16a34a",
+  badgeLiveColor: "#15803d",
   dataChangedEvent: "hrm:meeting-data-changed",
   summaryViewKey: "meeting",
   breakTypeKey: "meeting_break",
@@ -78,7 +78,7 @@ export const SESSION_BREAK_CONFIGS: Record<SessionBreakKind, SessionBreakConfig>
 
 export function breakTypeLabel(breakType: string | null | undefined): string {
   if (breakType === "prayer_break") return "Prayer Break";
-  if (breakType === "refreshment_break") return "Refreshment";
+  if (breakType === "refreshment_break") return "Restroom Break";
   if (breakType === "meeting_break") return "Meeting";
   return "Break";
 }

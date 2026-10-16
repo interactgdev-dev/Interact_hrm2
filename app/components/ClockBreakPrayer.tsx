@@ -843,7 +843,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
                 border: "none",
                 borderRadius: 8,
                 padding: "8px 18px",
-                fontSize: "1rem",
+                fontSize: "1.1rem",
                 fontWeight: 600,
                 cursor: clockActionPending || verifyPreparing ? "not-allowed" : "pointer",
                 opacity: clockActionPending || verifyPreparing ? 0.6 : 1,
@@ -903,12 +903,12 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
             disabled={isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing}
             className={isSlack ? `${slackStyles.btn} ${isOnBreak ? slackStyles.btnBreakEnd : slackStyles.btnBreak}` : undefined}
             style={isSlack ? undefined : {
-              background: isOnBreak ? "#e74c3c" : "#e67e22",
+              background: isOnBreak ? "#e74c3c" : "#16a34a",
               color: "#fff",
               border: "none",
               borderRadius: 8,
               padding: "8px 18px",
-              fontSize: "1rem",
+              fontSize: "1.1rem",
               fontWeight: 600,
               cursor: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing ? "not-allowed" : "pointer",
               opacity: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing ? 0.6 : 1,

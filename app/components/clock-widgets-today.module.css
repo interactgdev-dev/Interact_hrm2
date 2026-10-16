@@ -42,7 +42,7 @@
   border: none;
   border-radius: 999px;
   padding: 11px 18px;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
@@ -71,37 +71,18 @@
   box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
 }
 
-.btnBreak {
-  background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
-}
-
-.btnBreakEnd {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
-}
-
-.btnPrayer {
-  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-}
-
-.btnPrayerEnd {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
-}
-
-.btnRefreshment {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-}
-
-.btnRefreshmentEnd {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
-}
-
+/* Idle = green; active/end = red (same for break / prayer / restroom / meeting) */
+.btnBreak,
+.btnPrayer,
+.btnRefreshment,
 .btnMeeting {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  box-shadow: 0 8px 20px rgba(22, 163, 74, 0.28);
 }
 
+.btnBreakEnd,
+.btnPrayerEnd,
+.btnRefreshmentEnd,
 .btnMeetingEnd {
   background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);

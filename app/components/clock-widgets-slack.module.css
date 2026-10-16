@@ -194,7 +194,7 @@
   border: none;
   border-radius: 999px;
   padding: 10px 22px;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
@@ -218,41 +218,17 @@
   box-shadow: 0 3px 10px rgba(216, 0, 1, 0.35);
 }
 
-.btnBreak {
-  background: #fff;
-  color: #6b2d55;
-}
-
-.btnBreakEnd {
-  background: #d80001;
-  color: #fff;
-}
-
-.btnPrayer {
-  background: #fff;
-  color: #017a59;
-}
-
-.btnPrayerEnd {
-  background: #d80001;
-  color: #fff;
-}
-
-.btnRefreshment {
-  background: #fff;
-  color: #d97706;
-}
-
-.btnRefreshmentEnd {
-  background: #d80001;
-  color: #fff;
-}
-
+.btnBreak,
+.btnPrayer,
+.btnRefreshment,
 .btnMeeting {
-  background: #fff;
-  color: #2563eb;
+  background: #16a34a;
+  color: #fff;
 }
 
+.btnBreakEnd,
+.btnPrayerEnd,
+.btnRefreshmentEnd,
 .btnMeetingEnd {
   background: #d80001;
   color: #fff;
