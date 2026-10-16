@@ -977,8 +977,9 @@ export default function MonthlyAttendancePage() {
   }
 
   /**
-   * Same status/deduction the table cell shows (manual override → leave → auto/empty).
-   * Footer totals and exports must use this so Half Day / Absent never disagree with the grid.
+   * Same status/deduction the table cell shows.
+   * Order: manual override → (empty: Off/future/leave/Absent) → leave on working days → meta.
+   * Must not count half-day leave on Off/future days (grid shows Off/--- there).
    */
   function resolveDayAttendanceDisplay(
     employee: any,
@@ -999,11 +1000,13 @@ export default function MonthlyAttendancePage() {
       employee.employeeId,
       dateKey,
     );
-    if (leaveKind) {
-      return attendanceFromApprovedLeaveDay(leaveKind);
-    }
+    // Empty day: Off / --- / leave / Absent (leave only after Off & future checks).
     if (!dayRecords.length) {
-      return emptyWorkingDayStatus(dateKey, workingDay, null);
+      return emptyWorkingDayStatus(dateKey, workingDay, leaveKind);
+    }
+    // Punches present: approved leave wins only on real working days (not Off/future).
+    if (leaveKind && workingDay && !isFutureAttendanceDay(dateKey)) {
+      return attendanceFromApprovedLeaveDay(leaveKind);
     }
     return {
       statusLabel: normalizeAttendanceStatus(meta?.statusLabel || "-"),
@@ -2111,31 +2114,22 @@ export default function MonthlyAttendancePage() {
                           const day = rowCtx.day;
                           const dayRecords = employee.byDate[day.dateKey] || [];
                           const meta = rowCtx.meta;
-                          const workingDay = isWorkingDay(day.dateKey);
                           const employeeSessions = sessionsByEmployeeId.get(employee.employeeId) || [];
                           const daySessions = employeeSessions.filter(
                             (s) => s.sessionDate === day.dateKey,
                           );
 
                           if (daySessions.length === 0 && dayRecords.length === 0) {
-                            const leaveKind = approvedLeaveOnDay(
-                              approvedLeavesMap,
-                              employee.employeeId,
+                            const resolvedEmpty = resolveDayAttendanceDisplay(
+                              employee,
                               day.dateKey,
                             );
-                            const emptyAuto = emptyWorkingDayStatus(
-                              day.dateKey,
-                              workingDay,
-                              leaveKind,
-                            );
+                            const statusLabel = resolvedEmpty.statusLabel;
+                            const deduction = resolvedEmpty.deduction;
                             const emptyOverride = overrideStatusFor(
                               employee.employeeId,
                               day.dateKey,
                             );
-                            const statusLabel = emptyOverride || emptyAuto.statusLabel;
-                            const deduction = emptyOverride
-                              ? deductionForAttendanceStatus(emptyOverride, meta?.runningLate)
-                              : emptyAuto.deduction;
                             return (
                               <tr key={`${employee.employeeId}-${day.dateKey}-empty`}>
                                 <td>{day.weekday}</td>
@@ -2164,26 +2158,16 @@ export default function MonthlyAttendancePage() {
                             );
                           }
 
-                          const leaveKindDay = approvedLeaveOnDay(
-                            approvedLeavesMap,
-                            employee.employeeId,
+                          const resolvedDay = resolveDayAttendanceDisplay(
+                            employee,
                             day.dateKey,
                           );
-                          const leaveAttDay = leaveKindDay
-                            ? attendanceFromApprovedLeaveDay(leaveKindDay)
-                            : null;
+                          const recordStatus = resolvedDay.statusLabel;
+                          const rowDeductionLeave = resolvedDay.deduction;
                           const manualOverride = overrideStatusFor(
                             employee.employeeId,
                             day.dateKey,
                           );
-                          const recordStatus = manualOverride
-                            ? manualOverride
-                            : leaveAttDay
-                              ? leaveAttDay.statusLabel
-                              : normalizeAttendanceStatus(meta?.statusLabel || "-");
-                          const rowDeductionLeave = manualOverride
-                            ? deductionForAttendanceStatus(manualOverride, meta?.runningLate)
-                            : leaveAttDay?.deduction || meta?.deduction || "";
                           const statusIsManual =
                             Boolean(manualOverride) || Boolean(meta?.isManual);
                           const sessionsToShow = getDaySessionRows(
