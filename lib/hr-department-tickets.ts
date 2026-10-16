@@ -4,7 +4,7 @@
  * - HR Manager / HR staff inbox: ALL leave tickets (any dept) + HR-dept non-leave.
  *   Approve only within own department / hierarchy; otherwise view-only.
  * - Dept heads (Joe / Max / Mubeen): leave tickets for their owned depts in Ticket Inbox.
- * - Non-HR Team Leads: leave approve on Leaves page (not Ticket Inbox).
+ * - Non-HR Team Leads: leave approve for hierarchy team on Leaves page (not Ticket Inbox).
  * - Admin inbox: non-HR submitter tickets (plus CEO dept leave when viewer is dept head).
  */
 
@@ -295,7 +295,7 @@ function isLeaveApproverRole(orgRole: string | null | undefined): boolean {
 /**
  * May change status (approve/reject/resolve) on this ticket?
  * Leave: Manager / Team Lead / dept head CEO in scope — not own ticket.
- * Non-HR Team Lead: Leaves page only (not Ticket Inbox).
+ * Non-HR Team Lead / Manager: approve on Leaves page (Ticket Inbox menu hidden).
  * HR officers: view only.
  */
 export function canModerateTicketStatus(opts: {
@@ -330,17 +330,7 @@ export function canModerateTicketStatus(opts: {
   if (isLeave) {
     if (!viewer) return true; // classic admin inbox without viewer
 
-    // Non-HR Team Lead (not Manager, not dept head) → Leaves page only.
-    if (
-      isTeamLeadOrgRole(viewer.orgRole) &&
-      !viewer.isHrStaff &&
-      !isManagerOrgRole(viewer.orgRole) &&
-      !viewer.deptHead?.headHint
-    ) {
-      return false;
-    }
-
-    // Dept head: owned department leave, or anyone who reports to them.
+    // Dept head (Joe / Max / Mubeen): owned department leave, or direct reports (e.g. TL).
     if (viewer.deptHead?.headHint) {
       if (typeof inScope === "boolean") return inScope;
       if (submitterChip) {
@@ -351,7 +341,7 @@ export function canModerateTicketStatus(opts: {
       return true;
     }
 
-    // HR Manager / Manager: must be in department scope when provided.
+    // Team Lead / Manager / HR Manager / CEO: approve only when inScope says so.
     if (typeof inScope === "boolean") {
       return inScope && isLeaveApproverRole(viewer.orgRole);
     }
@@ -424,14 +414,7 @@ export async function canModerateTicketStatusAsync(opts: {
         }
       }
     } else if (viewer.isHrStaff && isManagerOrgRole(viewer.orgRole)) {
-      // HR Manager: approve only within hierarchy/scope (not company-wide approve).
-      const scope = await resolveViewerDataScope(viewer.employeeId);
-      // HR dept is company-wide in data-scope — for leave approve, still allow
-      // HR Manager to approve HR-dept leave; other depts = view only unless TL/Manager scope.
-      // User: "agar uski hierarchy nahi to na karay lekin view kar skay"
-      // So HR Manager company-wide view, approve only if in scope.
-      // But HR staff get mode=all in resolveViewerDataScope — that would allow all.
-      // Override: for HR Manager leave approve, only same org family OR reports_to chain.
+      // HR Manager: company-wide view; approve only own dept (same org chip).
       const chips = await getEmployeeDeptChipMap();
       const submitterChipResolved =
         submitterChip || chips.get(String(ticketEmployeeId)) || null;
@@ -443,10 +426,20 @@ export async function canModerateTicketStatusAsync(opts: {
       ) {
         inScope = true;
       } else {
-        // Not same dept — view only (unless CEO/dept head).
         inScope = false;
       }
+    } else if (
+      isTeamLeadOrgRole(viewer.orgRole) &&
+      !isManagerOrgRole(viewer.orgRole)
+    ) {
+      // Team Lead: approve only own hierarchy team (direct reports + team members).
+      const { listHierarchyVisibleEmployeeIds } = await import(
+        "@/lib/employee-hierarchy-table"
+      );
+      const teamIds = await listHierarchyVisibleEmployeeIds(viewer.employeeId);
+      inScope = teamIds.includes(String(ticketEmployeeId));
     } else {
+      // Manager / other leave approvers: department / data-scope.
       const scope = await resolveViewerDataScope(viewer.employeeId);
       inScope = rowInViewerScope(scope, { employeeId: ticketEmployeeId });
     }

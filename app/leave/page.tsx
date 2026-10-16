@@ -348,8 +348,9 @@ export default function LeavePage() {
         <div className={styles.inner}>
           <h1 className={styles.title}>Leave requests</h1>
           <p className={styles.subtitle}>
-            Review leave requests. HR can view all — approve only within your own
-            department.
+            Review leave requests. Team Leads approve their team; Managers /
+            CEOs approve their reports. HR can view all — approve only within
+            your own department.
           </p>
 
           <div className={styles.statRow}>
@@ -574,7 +575,8 @@ export default function LeavePage() {
                 ) : selectedStatus === "pending" &&
                   selectedLeave.can_moderate === false ? (
                   <p style={{ marginTop: 14, color: "#64748b", fontSize: "0.9rem" }}>
-                    View only — approve is limited to your own department.
+                    View only — you can approve leave only for your own team /
+                    department.
                   </p>
                 ) : null}
                 <button type="button" className={styles.modalClose} onClick={closeModal}>
