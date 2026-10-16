@@ -9,7 +9,11 @@ import { formatTicketStatusLabel, isTicketClosed } from "../../../lib/ticket-sta
 import { previewTicketToastOnPage } from "../../../lib/ticket-toast-demo";
 import type { TicketThreadMessage } from "../../../lib/ticket-thread";
 import { toastError, toastInfo } from "@/lib/app-toast";
-import { formatDateTimeInServerTz } from "@/lib/timezone";
+import {
+  formatDateTimeInServerTz,
+  getDateStringInTimeZone,
+  SERVER_TIMEZONE,
+} from "@/lib/timezone";
 import { sortTicketsNewestFirst } from "@/lib/ticket-sort";
 
 type Ticket = {
@@ -17,6 +21,8 @@ type Ticket = {
   ticket_number: string;
   employee_id: string;
   employee_name: string;
+  employee_pseudonym?: string | null;
+  department_name?: string | null;
   category: TicketCategory;
   ticket_type: string;
   subject: string | null;
@@ -57,6 +63,10 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
     bereavementBalance: number;
     employment_status?: string;
   } | null>(null);
+  const [searchText, setSearchText] = React.useState("");
+  const [filterDate, setFilterDate] = React.useState("");
+  const [departmentFilter, setDepartmentFilter] = React.useState("");
+  const [departments, setDepartments] = React.useState<string[]>([]);
 
   /** Never show Approve/Reject on your own ticket (esp. leave). */
   const isOwnSelectedTicket = Boolean(
@@ -117,6 +127,65 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
   React.useEffect(() => {
     void fetchTickets();
   }, [fetchTickets]);
+
+  React.useEffect(() => {
+    fetch("/api/departments", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data?.success || !Array.isArray(data.departments)) return;
+        const names = data.departments
+          .map((d: { name?: string }) => String(d.name || "").trim())
+          .filter(Boolean)
+          .sort((a: string, b: string) => a.localeCompare(b));
+        setDepartments([...new Set(names)] as string[]);
+      })
+      .catch(() => setDepartments([]));
+  }, []);
+
+  // Merge departments seen on tickets (in case HRM name differs slightly).
+  React.useEffect(() => {
+    const fromTickets = tickets
+      .map((t) => String(t.department_name || "").trim())
+      .filter(Boolean);
+    if (!fromTickets.length) return;
+    setDepartments((prev) =>
+      [...new Set([...prev, ...fromTickets])].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    );
+  }, [tickets]);
+
+  const filteredTickets = React.useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    return tickets.filter((t) => {
+      if (q) {
+        const hay = [
+          t.employee_name,
+          t.employee_pseudonym,
+          t.ticket_number,
+          t.subject,
+          t.employee_id,
+          t.department_name,
+        ]
+          .map((v) => String(v || "").toLowerCase())
+          .join(" ");
+        if (!hay.includes(q)) return false;
+      }
+      if (departmentFilter) {
+        const dept = String(t.department_name || "").trim();
+        if (dept.toLowerCase() !== departmentFilter.toLowerCase()) return false;
+      }
+      if (filterDate) {
+        const day = getDateStringInTimeZone(t.requested_at, SERVER_TIMEZONE);
+        if (day !== filterDate) return false;
+      }
+      return true;
+    });
+  }, [tickets, searchText, departmentFilter, filterDate]);
+
+  const hasActiveFilters = Boolean(
+    searchText.trim() || departmentFilter || filterDate,
+  );
 
   React.useEffect(() => {
     if (!selected || selected.ticket_type !== "leave") {
@@ -489,15 +558,81 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
             </button>
           </div>
 
+          <div className={adminStyles.ticketFilterBar}>
+            <div className={adminStyles.ticketSearchWide}>
+              <label htmlFor="ticket-inbox-search">Search</label>
+              <input
+                id="ticket-inbox-search"
+                type="search"
+                className={adminStyles.input}
+                placeholder="Search by name, pseudo name, ticket #…"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            <div className={adminStyles.ticketFilterField}>
+              <label htmlFor="ticket-inbox-date">Date</label>
+              <input
+                id="ticket-inbox-date"
+                type="date"
+                className={adminStyles.input}
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+              />
+            </div>
+            <div className={adminStyles.ticketFilterField}>
+              <label htmlFor="ticket-inbox-dept">Department</label>
+              <select
+                id="ticket-inbox-dept"
+                className={adminStyles.select}
+                value={departmentFilter}
+                onChange={(e) => setDepartmentFilter(e.target.value)}
+              >
+                <option value="">All departments</option>
+                {departments.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                className={adminStyles.ticketFilterClear}
+                onClick={() => {
+                  setSearchText("");
+                  setFilterDate("");
+                  setDepartmentFilter("");
+                }}
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+
+          {!loading && tickets.length > 0 ? (
+            <p className={adminStyles.ticketFilterMeta}>
+              Showing {filteredTickets.length}
+              {hasActiveFilters ? ` of ${tickets.length}` : ""} ticket
+              {filteredTickets.length === 1 ? "" : "s"}
+            </p>
+          ) : null}
+
           {loading ? (
             <p className={adminStyles.muted}>Loading…</p>
           ) : tickets.length === 0 ? (
             <div className={adminStyles.empty}>
               No {filter === "pending" ? "open " : ""}tickets.
             </div>
+          ) : filteredTickets.length === 0 ? (
+            <div className={adminStyles.empty}>
+              No tickets match your search filters.
+            </div>
           ) : (
             <div className={adminStyles.requestList}>
-              {tickets.map((t) => (
+              {filteredTickets.map((t) => (
                 <div
                   key={t.id}
                   className={`${adminStyles.requestCard} ${adminStyles.requestCardClickable}`}
@@ -527,7 +662,13 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
                       {t.subject}
                     </div>
                     <div className={adminStyles.muted}>
-                      {t.employee_name} · {categoryLabel(t.category)} ·{" "}
+                      {t.employee_name}
+                      {t.employee_pseudonym
+                        ? ` (${t.employee_pseudonym})`
+                        : ""}
+                      {t.department_name ? ` · ${t.department_name}` : ""}
+                      {" · "}
+                      {categoryLabel(t.category)} ·{" "}
                       {ticketTypeLabel(t.category, t.ticket_type)}
                     </div>
                     {t.approved_by_name &&

@@ -58,7 +58,66 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ticketFilterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
   margin-bottom: 20px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+
+.ticketSearchWide {
+  flex: 1 1 280px;
+  min-width: min(100%, 240px);
+}
+
+.ticketFilterField {
+  flex: 0 1 180px;
+  min-width: 140px;
+}
+
+.ticketFilterField label,
+.ticketSearchWide label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ticketFilterClear {
+  align-self: flex-end;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.ticketFilterClear:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.ticketFilterMeta {
+  width: 100%;
+  margin: -8px 0 16px;
+  font-size: 13px;
+  color: #64748b;
 }
 
 .previewToastBtn {
