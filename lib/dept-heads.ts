@@ -20,10 +20,10 @@ export const DEPT_HEAD_NAME_HINT: Record<string, string> = {
   DM: "joe",
 };
 
-/** Chips owned by each head hint. Marketing folds to IT in orgDeptChipLabel; keep both. */
+/** Chips owned by each head hint. */
 export const HEAD_OWNED_CHIPS: Record<string, string[]> = {
   max: ["HIT", "HR", "Medical Billing", "Finance"],
-  mubeen: ["IT", "CEst.", "Marketing"],
+  mubeen: ["IT", "CEst."],
   joe: ["DM"],
 };
 

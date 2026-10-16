@@ -220,29 +220,7 @@ export async function GET(req: NextRequest) {
       hierarchyTeamIds,
     });
 
-    // Joe / Max / Mubeen: TL-resolved leave for owned depts → back to Pending for CEO.
-    // Runs even when status=open (SQL already excluded resolved) — merges reopened rows.
-    try {
-      if (viewer?.deptHead?.headHint && viewer.deptHead.ownedChips?.length) {
-        const { reopenDeptHeadLeaveTicketsClosedByTeamLead } = await import(
-          "@/lib/leave-ticket-sync"
-        );
-        const reopened = await reopenDeptHeadLeaveTicketsClosedByTeamLead({
-          ownedChips: viewer.deptHead.ownedChips,
-          headHint: viewer.deptHead.headHint,
-        });
-        if (reopened.length) {
-          const seen = new Set(filtered.map((t) => Number(t.id)));
-          for (const t of reopened) {
-            if (!seen.has(Number(t.id))) filtered.push(t);
-          }
-        }
-      }
-    } catch {
-      /* optional reopen */
-    }
-
-    // Leaves page approve → Ticket Inbox (skip dept-head chips until CEO approves).
+    // Leaves page approve must show on Ticket Inbox (not stuck in Pending).
     try {
       const { repairPendingTicketsFromLeaves } = await import(
         "@/lib/leave-ticket-sync"

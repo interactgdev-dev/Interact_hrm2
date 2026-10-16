@@ -786,20 +786,9 @@ export function orgDeptChipLabel(departmentName: string | undefined | null): str
   ) {
     return "DM";
   }
-  // Marketing (standalone / IT Marketing) → IT. Digital Marketing already returned DM above.
-  if (
-    t === "marketing" ||
-    t === "it marketing" ||
-    t.startsWith("marketing ") ||
-    (t.includes("marketing") && t.includes("it") && !t.includes("digital"))
-  ) {
-    return "IT";
-  }
-  if (t === "it" || t === "tech" || t.includes("technology") || t.startsWith("it ")) {
-    return "IT";
-  }
-  // CEst. / CEST / C Est — any token containing cest
-  if (t === "cest" || t === "c est" || t.includes("cest")) return "CEst.";
+  if (t === "marketing") return "IT";
+  if (t === "it" || t === "tech" || t.includes("technology")) return "IT";
+  if (t === "cest" || t === "c est") return "CEst.";
   if (t === "hit") return "HIT";
   if (t === "hr" || t === "human resources") return "HR";
   if (
