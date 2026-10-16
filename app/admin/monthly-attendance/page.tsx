@@ -571,6 +571,14 @@ export default function MonthlyAttendancePage() {
       params.append("employees", employeeIds.join(","));
       params.append("fromDate", from);
       params.append("toDate", to);
+      // Include all statuses; map builder keeps approved only. Prefer calendar
+      // YYYY-MM-DD from ISO so TL-approved future leave (e.g. 10/29) maps correctly.
+      const leaveDateKey = (raw: string) => {
+        const s = String(raw || "").trim();
+        const iso = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+        if (iso) return iso[1];
+        return normalizeToDateKey(s);
+      };
 
       const response = await fetch(`/api/leaves?${params.toString()}`, { cache: "no-store" });
       const data = await response.json();
@@ -578,7 +586,7 @@ export default function MonthlyAttendancePage() {
       if (data.success && data.leaves) {
         setApprovedLeavesMap(
           buildApprovedLeavesMap(data.leaves as Array<Record<string, unknown>>, {
-            normalizeDateKey: normalizeToDateKey,
+            normalizeDateKey: leaveDateKey,
             addDays: addDaysToDateKey,
           }),
         );
