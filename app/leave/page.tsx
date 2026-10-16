@@ -61,6 +61,22 @@ function statusBadgeClass(status: string) {
   return styles.badgePending;
 }
 
+/** Prefer "Approved by Name (Team Lead)" when approver was stored. */
+function formatLeaveStatusLabel(leave: {
+  status?: string;
+  step1_by?: string | null;
+  step2_by?: string | null;
+  approved_by_name?: string | null;
+}): string {
+  const status = String(leave?.status || "pending").toLowerCase();
+  const by = String(
+    leave?.step2_by || leave?.step1_by || leave?.approved_by_name || "",
+  ).trim();
+  if (status === "approved") return by ? `Approved by ${by}` : "Approved";
+  if (status === "rejected") return by ? `Rejected by ${by}` : "Rejected";
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
 export default function LeavePage() {
   const [leaves, setLeaves] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -347,11 +363,6 @@ export default function LeavePage() {
       <div className={styles.page}>
         <div className={styles.inner}>
           <h1 className={styles.title}>Leave requests</h1>
-          <p className={styles.subtitle}>
-            Review leave requests. Team Leads approve their team; Managers /
-            CEOs approve their reports. HR can view all — approve only within
-            your own department.
-          </p>
 
           <div className={styles.statRow}>
             <div className={`${styles.statCard} ${styles.statCardGold}`}>
@@ -400,6 +411,7 @@ export default function LeavePage() {
                     ) : (
                       sortedLeaves.map((l, idx) => {
                         const status = String(l?.status || "pending").toLowerCase();
+                        const statusLabel = formatLeaveStatusLabel(l);
                         return (
                           <tr
                             key={
@@ -425,7 +437,7 @@ export default function LeavePage() {
                             <td>{l.total_days}</td>
                             <td>
                               <span className={`${styles.badge} ${statusBadgeClass(status)}`}>
-                                {status}
+                                {statusLabel}
                               </span>
                             </td>
                             <td>{l.requested_at ? formatDateTime(l.requested_at) : "—"}</td>
@@ -497,7 +509,7 @@ export default function LeavePage() {
                 <div className={styles.modalRow}>
                   <b>Status:</b>{" "}
                   <span className={`${styles.badge} ${statusBadgeClass(selectedStatus)}`}>
-                    {selectedStatus}
+                    {formatLeaveStatusLabel(selectedLeave)}
                   </span>
                 </div>
                 <div className={styles.modalRow}>

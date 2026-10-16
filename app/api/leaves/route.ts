@@ -184,8 +184,54 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    // Who approved/rejected — shown on Leaves + Ticket Inbox (e.g. "Name (Team Lead)").
+    let actorName: string | null = null;
+    if (viewerId) {
+      try {
+        const { orgRoleLabel } = await import("@/lib/org-role");
+        const [actorRows]: any = await query(
+          "SELECT first_name, last_name, role FROM hrm_employees WHERE id = ? LIMIT 1",
+          [viewerId],
+        );
+        const actor = Array.isArray(actorRows) ? actorRows[0] : null;
+        if (actor) {
+          const name = [actor.first_name, actor.last_name]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+          const role = orgRoleLabel(actor.role);
+          actorName = name ? `${name} (${role})` : role;
+        }
+      } catch {
+        /* optional */
+      }
+    }
+
+    const nowIso = new Date().toISOString().slice(0, 19).replace("T", " ");
     if (status === "rejected") {
-      await query("UPDATE employee_leaves SET status = ?, admin_remark = ?, updated_at = NOW() WHERE id = ?", [status, admin_remark || "", id]);
+      try {
+        await query(
+          `UPDATE employee_leaves
+           SET status = ?, admin_remark = ?, step1_status = ?, step2_status = ?,
+               step1_by = ?, step2_by = ?, updated_at = ?
+           WHERE id = ?`,
+          [
+            status,
+            admin_remark || "",
+            "rejected",
+            "rejected",
+            actorName,
+            actorName,
+            nowIso,
+            id,
+          ],
+        );
+      } catch {
+        await query(
+          "UPDATE employee_leaves SET status = ?, admin_remark = ?, updated_at = ? WHERE id = ?",
+          [status, admin_remark || "", nowIso, id],
+        );
+      }
     } else {
       // On approve: force half-day rows to deduct 0.5 from balance (DECIMAL-safe).
       const part = String(existing?.half_day_part || "").trim().toLowerCase();
@@ -195,29 +241,71 @@ export async function PATCH(req: NextRequest) {
         part === "first_half" ||
         part === "second_half" ||
         (Number(existing?.total_days) > 0 && Number(existing?.total_days) < 1);
+      const totalDays = isHalf ? 0.5 : existing?.total_days;
       try {
-        if (isHalf) {
-          await query(
-            "UPDATE employee_leaves SET status = ?, total_days = 0.5, updated_at = NOW() WHERE id = ?",
-            [status, id],
-          );
-        } else {
+        await query(
+          `UPDATE employee_leaves
+           SET status = ?, total_days = ?, step1_status = ?, step2_status = ?,
+               step1_by = ?, step2_by = ?, step1_at = ?, step2_at = ?, updated_at = ?
+           WHERE id = ?`,
+          [
+            status,
+            totalDays,
+            "approved",
+            "approved",
+            actorName,
+            actorName,
+            nowIso,
+            nowIso,
+            nowIso,
+            id,
+          ],
+        );
+      } catch {
+        try {
+          if (isHalf) {
+            await query(
+              "UPDATE employee_leaves SET status = ?, total_days = 0.5, updated_at = ? WHERE id = ?",
+              [status, nowIso, id],
+            );
+          } else {
+            await query(
+              "UPDATE employee_leaves SET status = ?, updated_at = ? WHERE id = ?",
+              [status, nowIso, id],
+            );
+          }
+        } catch {
           await query(
             "UPDATE employee_leaves SET status = ?, updated_at = NOW() WHERE id = ?",
             [status, id],
           );
         }
-      } catch {
-        await query(
-          "UPDATE employee_leaves SET status = ?, updated_at = NOW() WHERE id = ?",
-          [status, id],
-        );
       }
     }
+
+    // Mirror onto linked leave ticket so HR Ticket Inbox leaves Pending → Approved by TL/Manager/CEO.
+    try {
+      const { syncTicketFromLeaveDecision } = await import(
+        "@/lib/leave-ticket-sync"
+      );
+      await syncTicketFromLeaveDecision({
+        leaveReason: existing.reason,
+        status: status as "approved" | "rejected",
+        actorId: viewerId || null,
+        actorName,
+        employeeId: existing.employee_id,
+        startDate: existing.start_date,
+        endDate: existing.end_date,
+      });
+    } catch {
+      /* ticket mirror optional */
+    }
+
     // WebSocket broadcast (if available)
     try {
       const { broadcastWsEvent } = await import("@/lib/ws-broadcast");
       broadcastWsEvent({ type: "leave_update" });
+      broadcastWsEvent({ type: "ticket_update" });
     } catch {
       try {
         const wsApi = globalThis as any;
@@ -225,6 +313,7 @@ export async function PATCH(req: NextRequest) {
           wsApi.wss.clients.forEach((client: any) => {
             if (client.readyState === 1) {
               client.send(JSON.stringify({ type: "leave_update" }));
+              client.send(JSON.stringify({ type: "ticket_update" }));
             }
           });
         }

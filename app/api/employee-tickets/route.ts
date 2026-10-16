@@ -211,7 +211,7 @@ export async function GET(req: NextRequest) {
         await listHierarchyVisibleEmployeeIds(viewer.employeeId),
       );
     }
-    const filtered = filterTicketsForInbox(tickets, {
+    let filtered = filterTicketsForInbox(tickets, {
       inbox,
       viewer,
       hrIds,
@@ -219,6 +219,23 @@ export async function GET(req: NextRequest) {
       directReportIds,
       hierarchyTeamIds,
     });
+
+    // Leaves page approve must show on Ticket Inbox (not stuck in Pending).
+    try {
+      const { repairPendingTicketsFromLeaves } = await import(
+        "@/lib/leave-ticket-sync"
+      );
+      filtered = await repairPendingTicketsFromLeaves(filtered);
+      if (status === "open") {
+        filtered = filtered.filter((t) =>
+          ["pending", "in_progress"].includes(
+            String(t.status || "").toLowerCase(),
+          ),
+        );
+      }
+    } catch {
+      /* optional repair */
+    }
 
     // Per-ticket moderation flags (approve only in hierarchy/scope).
     const ticketsOut = [];

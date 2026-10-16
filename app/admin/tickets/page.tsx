@@ -451,11 +451,6 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
           <h1 className={adminStyles.title}>
             Ticket Inbox
           </h1>
-          <p className={adminStyles.subtitle}>
-            {inboxMode === "hr"
-              ? "All leave tickets (company-wide) plus HR department tickets. View all — approve only within your own department."
-              : "Employee tickets. Department leave for CEOs (Joe / Max / Mubeen) appears here for their owned depts."}
-          </p>
 
           <div className={adminStyles.ticketToolbar}>
             <div className={adminStyles.tabRow}>
@@ -530,7 +525,12 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
                       t.status === "closed") ? (
                       <div
                         className={adminStyles.muted}
-                        style={{ marginTop: 6, fontSize: 13, color: "#0f766e", fontWeight: 600 }}
+                        style={{
+                          marginTop: 6,
+                          fontSize: 13,
+                          color: t.status === "rejected" ? "#b91c1c" : "#0f766e",
+                          fontWeight: 600,
+                        }}
                       >
                         {t.status === "rejected" ? "Rejected by" : "Approved by"}{" "}
                         {t.approved_by_name}
