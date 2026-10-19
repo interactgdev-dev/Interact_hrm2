@@ -158,6 +158,11 @@ export default function LoginPage() {
             } else {
               localStorage.removeItem("employeeId");
             }
+            try {
+              window.dispatchEvent(new Event("hrm-auth-changed"));
+            } catch {
+              /* ignore */
+            }
           }
           await persistCredentials(rawLoginId, rawPassword);
           router.push("/employee-dashboard");

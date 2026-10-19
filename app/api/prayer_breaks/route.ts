@@ -11,6 +11,7 @@ import {
   mongoStartPrayerBreak,
   mongoUpdatePrayerBreak,
 } from "@/lib/mongo-breaks";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 const ATTENDANCE_TABLE = "employee_attendance";
 
@@ -182,6 +183,15 @@ export async function POST(req: NextRequest) {
       } else {
         return NextResponse.json({ success: false, error: "Invalid prayer break action." }, { status: 400 });
       }
+      void logServerEmployeeActivity(req, {
+        type: prayer_break_start ? "prayer_start" : "prayer_end",
+        employeeId: String(employee_id),
+        employeeName: employee_name,
+        detail: prayer_break_start ? "Started Prayer Break" : "Ended Prayer Break",
+        page: "/employee-dashboard",
+        method: "POST",
+        url: "/api/prayer_breaks",
+      });
       return NextResponse.json({ success: true });
     }
     conn = await pool.getConnection();
@@ -259,6 +269,15 @@ export async function POST(req: NextRequest) {
     } else {
       return NextResponse.json({ success: false, error: "Invalid prayer break action." }, { status: 400 });
     }
+    void logServerEmployeeActivity(req, {
+      type: prayer_break_start ? "prayer_start" : "prayer_end",
+      employeeId: canonicalEmployeeId,
+      employeeName: employee_name,
+      detail: prayer_break_start ? "Started Prayer Break" : "Ended Prayer Break",
+      page: "/employee-dashboard",
+      method: "POST",
+      url: "/api/prayer_breaks",
+    });
     return NextResponse.json({ success: true });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

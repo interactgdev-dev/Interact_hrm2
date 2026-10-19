@@ -12,8 +12,11 @@ import {
   saveOrgChartPhoto,
 } from "./org-chart-photo-api";
 import RolesPermissionsPanel from "./RolesPermissionsPanel";
+import BacklogTrackerPanel from "./BacklogTrackerPanel";
 import styles from "./system-control-demo.module.css";
 import { ModalPortal } from "@/app/components/ModalPortal";
+import SecretPasswordModal from "@/app/components/SecretPasswordModal";
+import { toastError } from "@/lib/app-toast";
 import { effectiveAccessSlugs } from "@/lib/access-control/effective-slugs";
 import {
   BASE_ROLES,
@@ -77,6 +80,9 @@ function accessApiHeaders(extra?: Record<string, string>): HeadersInit {
 
 export default function SystemControlPage() {
   const [activeTab, setActiveTab] = useState<TabId>("roles");
+  const [backlogVisible, setBacklogVisible] = useState(false);
+  const [backlogPwOpen, setBacklogPwOpen] = useState(false);
+  const [backlogUnlocking, setBacklogUnlocking] = useState(false);
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
   const [accessLoading, setAccessLoading] = useState(true);
   const [accessSaving, setAccessSaving] = useState(false);
@@ -1153,10 +1159,57 @@ export default function SystemControlPage() {
     }
   }
 
+  function revealBacklogTracker() {
+    setBacklogVisible(true);
+    setActiveTab("backlog");
+    setBacklogPwOpen(false);
+  }
+
+  function openBacklogGate() {
+    if (backlogVisible) {
+      setActiveTab("backlog");
+      return;
+    }
+    setBacklogPwOpen(true);
+  }
+
+  async function unlockBacklogTracker(password: string) {
+    if (!password || backlogUnlocking) return;
+    setBacklogUnlocking(true);
+    try {
+      const res = await fetch("/api/admin/guard-screenshots/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        toastError(data.error || "Invalid password");
+        return;
+      }
+      revealBacklogTracker();
+    } catch {
+      toastError("Network error");
+    } finally {
+      setBacklogUnlocking(false);
+    }
+  }
+
+  function hideBacklogTracker() {
+    setBacklogVisible(false);
+    if (activeTab === "backlog") setActiveTab("roles");
+    void fetch("/api/admin/guard-screenshots/unlock", { method: "DELETE" }).catch(
+      () => {},
+    );
+  }
+
   const tabs: { id: TabId; label: string }[] = [
     { id: "roles", label: "Org Chart" },
     { id: "permissions", label: "Permissions" },
     { id: "features", label: "Features" },
+    ...(backlogVisible
+      ? [{ id: "backlog" as TabId, label: "Backlog Tracker" }]
+      : []),
   ];
 
   return (
@@ -1165,7 +1218,13 @@ export default function SystemControlPage() {
         <header className={styles.scHero}>
           <div className={styles.scHeroMain}>
             <p className={styles.scEyebrow}>Administration</p>
-            <h1 className={styles.scTitle}>System Control</h1>
+            <h1
+              className={styles.scTitle}
+              onDoubleClick={() => openBacklogGate()}
+              style={{ cursor: "default", userSelect: "none" }}
+            >
+              System Control
+            </h1>
             <p className={styles.scSubtitle}>
               Roles, permissions, org chart, and feature flags — one control center for HRM access.
             </p>
@@ -1290,6 +1349,10 @@ export default function SystemControlPage() {
               readOnly={!viewerCaps.systemFeaturesEdit}
             />
           )}
+
+          {activeTab === "backlog" && backlogVisible && (
+            <BacklogTrackerPanel onBack={hideBacklogTracker} />
+          )}
         </div>
 
         <p className={styles.scDemoNote}>
@@ -1367,6 +1430,16 @@ export default function SystemControlPage() {
           </div>
           </ModalPortal>
         )}
+
+        <SecretPasswordModal
+          open={backlogPwOpen}
+          unlocking={backlogUnlocking}
+          onClose={() => {
+            if (backlogUnlocking) return;
+            setBacklogPwOpen(false);
+          }}
+          onSubmit={unlockBacklogTracker}
+        />
       </div>
     </OptionalAdminShell>
   );

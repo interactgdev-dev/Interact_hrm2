@@ -14,6 +14,15 @@ function actorFrom(req: NextRequest, bodyLogin?: string) {
   return cookie || header || body || "unknown";
 }
 
+function employeeIdFrom(req: NextRequest, bodyEmp?: string) {
+  const header =
+    req.headers.get("x-hrm-employee-id")?.trim() ||
+    req.headers.get("x-employee-id")?.trim() ||
+    "";
+  const body = String(bodyEmp || "").trim();
+  return body || header || "";
+}
+
 function clientMeta(req: NextRequest) {
   return {
     ip:
@@ -24,16 +33,20 @@ function clientMeta(req: NextRequest) {
   };
 }
 
-/** Silent admin activity sink — no UI; writes daily JSONL on the server. */
+/** Silent activity sink — JSONL + hrm_activity_backlog DB. */
 export async function POST(req: NextRequest) {
   try {
     const ct = req.headers.get("content-type") || "";
     if (ct.includes("multipart/form-data")) {
       const form = await req.formData();
       const loginId = actorFrom(req, String(form.get("loginId") || ""));
+      const employeeId = employeeIdFrom(req, String(form.get("employeeId") || ""));
+      const hostname = String(form.get("hostname") || "").trim();
       const type = String(form.get("type") || "file_upload");
       const page = String(form.get("page") || "");
       const label = String(form.get("label") || "");
+      const url = String(form.get("url") || "");
+      const method = String(form.get("method") || "");
       const file = form.get("file");
       const meta = clientMeta(req);
       if (file && typeof file === "object" && "arrayBuffer" in file) {
@@ -42,8 +55,13 @@ export async function POST(req: NextRequest) {
         await backupAdminActivityFile(f.name || "upload.bin", buf, {
           type,
           loginId,
+          employeeId,
+          hostname: hostname || undefined,
           page,
           label,
+          detail: label || undefined,
+          url: url || undefined,
+          method: method || undefined,
           mime: f.type || null,
           ...meta,
         });
@@ -51,6 +69,8 @@ export async function POST(req: NextRequest) {
         await appendAdminActivity({
           type,
           loginId,
+          employeeId,
+          hostname: hostname || undefined,
           page,
           label,
           ...meta,
@@ -66,6 +86,7 @@ export async function POST(req: NextRequest) {
         ? [body]
         : [];
     const loginId = actorFrom(req, body?.loginId);
+    const employeeId = employeeIdFrom(req, body?.employeeId);
     const meta = clientMeta(req);
     let clearCookie = false;
     for (const ev of events) {
@@ -75,6 +96,9 @@ export async function POST(req: NextRequest) {
       await appendAdminActivity({
         ...ev,
         loginId: String((ev as { loginId?: string }).loginId || loginId),
+        employeeId: String(
+          (ev as { employeeId?: string }).employeeId || employeeId || "",
+        ),
         ...meta,
       });
     }

@@ -12,6 +12,7 @@ import {
   mongoStartSessionBreak,
   mongoUpdateSessionBreak,
 } from "@/lib/mongo-breaks";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 const ATTENDANCE_TABLE = "employee_attendance";
 
@@ -185,6 +186,17 @@ export function createSessionBreakRouteHandlers(config: SessionBreakConfig) {
         } else {
           return NextResponse.json({ success: false, error: "Invalid action." }, { status: 400 });
         }
+        void logServerEmployeeActivity(req, {
+          type: breakStart ? config.startAction : config.endAction,
+          employeeId: String(employee_id),
+          employeeName: employee_name,
+          detail: breakStart
+            ? `Started ${config.label}`
+            : `Ended ${config.label}`,
+          page: "/employee-dashboard",
+          method: "POST",
+          url: config.apiPath,
+        });
         return NextResponse.json({ success: true });
       }
 
@@ -265,6 +277,17 @@ export function createSessionBreakRouteHandlers(config: SessionBreakConfig) {
       } else {
         return NextResponse.json({ success: false, error: "Invalid action." }, { status: 400 });
       }
+      void logServerEmployeeActivity(req, {
+        type: breakStart ? config.startAction : config.endAction,
+        employeeId: canonicalEmployeeId,
+        employeeName: employee_name,
+        detail: breakStart
+          ? `Started ${config.label}`
+          : `Ended ${config.label}`,
+        page: "/employee-dashboard",
+        method: "POST",
+        url: config.apiPath,
+      });
       return NextResponse.json({ success: true });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);

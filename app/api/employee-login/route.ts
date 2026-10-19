@@ -6,6 +6,7 @@ import {
   normalizeEmployeeLoginId,
   parseHrmEmployeeId,
 } from "@/lib/employee-login-lookup";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 export async function POST(req: NextRequest) {
   try {
@@ -59,6 +60,21 @@ export async function POST(req: NextRequest) {
     if (employee.status !== "active" && employee.status !== "enabled") {
       return NextResponse.json({ success: false, error: "Account is inactive. Please contact admin." }, { status: 403 });
     }
+
+    const empId = String(employee.id ?? "").trim();
+    const displayName =
+      `${employee.first_name || ""} ${employee.last_name || ""}`.trim() ||
+      String(employee.username || loginId);
+    void logServerEmployeeActivity(req, {
+      type: "employee_login",
+      employeeId: empId,
+      employeeName: displayName,
+      loginId,
+      detail: `Logged in to HRM (${displayName || loginId})`,
+      page: "/auth",
+      method: "POST",
+      url: "/api/employee-login",
+    });
 
     return NextResponse.json({
       success: true,

@@ -23,6 +23,7 @@ import {
 } from "../../../lib/timezone";
 import { computeClockInLateStatus } from "../../../lib/monthly-attendance-status";
 import { getRequestClientIp } from "../../../lib/client-ip";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 import { breakTypeLabel } from "@/lib/session-break-config";
 
 // GET: Fetch all attendance records or by employeeId, now with department name
@@ -371,6 +372,15 @@ export async function POST(req: NextRequest) {
           clock_in_ip: clockInIp,
           driver: "mongo",
         });
+        void logServerEmployeeActivity(req, {
+          type: "clock_in",
+          employeeId: String(employee_id),
+          employeeName: employee_name,
+          detail: "Clocked In",
+          page: "/employee-dashboard",
+          method: "POST",
+          url: "/api/attendance",
+        });
         return NextResponse.json({ success: true, message: "inserted" });
       }
       if (clock_out !== undefined && clock_out !== null) {
@@ -435,6 +445,15 @@ export async function POST(req: NextRequest) {
           employee_id,
           clock_out_ip: clockOutIp,
           driver: "mongo",
+        });
+        void logServerEmployeeActivity(req, {
+          type: isAutoClockOut ? "auto_clock_out" : "clock_out",
+          employeeId: String(employee_id),
+          employeeName: employee_name,
+          detail: isAutoClockOut ? "Auto Clocked Out" : "Clocked Out",
+          page: "/employee-dashboard",
+          method: "POST",
+          url: "/api/attendance",
         });
         return NextResponse.json({ success: true, message: "updated" });
       }
@@ -613,6 +632,28 @@ export async function POST(req: NextRequest) {
       } else {
         console.warn("No pending clock-in found for clock-out");
       }
+    }
+
+    if (clock_in !== undefined && clock_in !== null) {
+      void logServerEmployeeActivity(req, {
+        type: "clock_in",
+        employeeId: String(employee_id),
+        employeeName: employee_name,
+        detail: "Clocked In",
+        page: "/employee-dashboard",
+        method: "POST",
+        url: "/api/attendance",
+      });
+    } else if (clock_out !== undefined && clock_out !== null) {
+      void logServerEmployeeActivity(req, {
+        type: Boolean(auto_clock_out) ? "auto_clock_out" : "clock_out",
+        employeeId: String(employee_id),
+        employeeName: employee_name,
+        detail: Boolean(auto_clock_out) ? "Auto Clocked Out" : "Clocked Out",
+        page: "/employee-dashboard",
+        method: "POST",
+        url: "/api/attendance",
+      });
     }
 
     return NextResponse.json({ success: true, message: clock_in ? 'inserted' : 'updated' });

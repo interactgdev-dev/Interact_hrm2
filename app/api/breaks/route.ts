@@ -11,6 +11,7 @@ import {
   mongoStartBreak,
   mongoUpdateBreak,
 } from "@/lib/mongo-breaks";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 const ATTENDANCE_TABLE = "employee_attendance";
 
@@ -175,6 +176,15 @@ export async function POST(req: NextRequest) {
       } else {
         return NextResponse.json({ success: false, error: "Invalid break action." }, { status: 400 });
       }
+      void logServerEmployeeActivity(req, {
+        type: break_start ? "break_start" : "break_end",
+        employeeId: String(employee_id),
+        employeeName: employee_name,
+        detail: break_start ? "Started Break" : "Ended Break",
+        page: "/employee-dashboard",
+        method: "POST",
+        url: "/api/breaks",
+      });
       return NextResponse.json({ success: true });
     }
 
@@ -255,6 +265,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Invalid break action." }, { status: 400 });
     }
 
+    void logServerEmployeeActivity(req, {
+      type: break_start ? "break_start" : "break_end",
+      employeeId: canonicalEmployeeId,
+      employeeName: employee_name,
+      detail: break_start ? "Started Break" : "Ended Break",
+      page: "/employee-dashboard",
+      method: "POST",
+      url: "/api/breaks",
+    });
     return NextResponse.json({ success: true });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

@@ -6,6 +6,7 @@ import {
 } from "@/lib/face-verify";
 import { isValidDescriptor } from "@/lib/face-matching";
 import { resolveEmployeeDbId } from "@/lib/resolve-employee-id";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 export const runtime = "nodejs";
 
@@ -94,6 +95,17 @@ export async function POST(req: NextRequest) {
       result.subject,
       result.similarity
     );
+
+    const actionLabel = String(action || "verify").replace(/_/g, " ");
+    void logServerEmployeeActivity(req, {
+      type: "face_verify",
+      employeeId: resolvedId,
+      employeeName: employeeName || result.subject || null,
+      detail: `Face verified for ${actionLabel}`,
+      page: "/employee-dashboard",
+      method: "POST",
+      url: "/api/biometric/verify",
+    });
 
     return NextResponse.json({
       success: true,
