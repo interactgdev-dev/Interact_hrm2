@@ -2,7 +2,7 @@
 
 import React from "react";
 import adminStyles from "../admin-page.module.css";
-import styles from "../presence-idle/presence-idle.module.css";
+import styles from "./backlog-tracker.module.css";
 import { toastError } from "@/lib/app-toast";
 import { formatDateTimeInServerTz } from "@/lib/timezone";
 
@@ -117,8 +117,8 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
   }, [load]);
 
   return (
-    <div className={styles.galleryWrap}>
-      <div className={styles.detailHeader}>
+    <div className={styles.wrap}>
+      <div className={styles.header}>
         {onBack ? (
           <button
             type="button"
@@ -143,20 +143,20 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
         </button>
       </div>
 
-      <p className={styles.tip} style={{ marginTop: 8 }}>
+      <p className={styles.tip}>
         Company-wide: every employee who logs into HRM is tracked — login,
         clock in/out, break/prayer/refreshment/meeting, face verify, clicks,
         page views, uploads and downloads (with file copies). Search by any
         name, code, or PC — not limited to one person.
       </p>
 
-      <div className={styles.profileFilterBar} style={{ marginTop: 12 }}>
-        <div className={`${styles.field} ${styles.profileSearchField}`}>
+      <div className={styles.filterBar}>
+        <div className={`${styles.field} ${styles.searchField}`}>
           <label htmlFor="bl-search">Search</label>
           <input
             id="bl-search"
             type="search"
-            className={styles.profileSearchInput}
+            className={styles.searchInput}
             value={search}
             placeholder="Name, pseudo, code, PC name, detail…"
             onChange={(e) => {
@@ -165,7 +165,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
             }}
           />
         </div>
-        <div className={`${styles.field} ${styles.profileDeptField}`}>
+        <div className={`${styles.field} ${styles.eventField}`}>
           <label htmlFor="bl-type">Event</label>
           <select
             id="bl-type"
@@ -183,7 +183,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
             ))}
           </select>
         </div>
-        <div className={styles.field}>
+        <div className={`${styles.field} ${styles.dateField}`}>
           <label htmlFor="bl-from">From</label>
           <input
             id="bl-from"
@@ -195,7 +195,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
             }}
           />
         </div>
-        <div className={styles.field}>
+        <div className={`${styles.field} ${styles.dateField}`}>
           <label htmlFor="bl-to">To</label>
           <input
             id="bl-to"
@@ -214,7 +214,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
         {totalPages > 1 ? ` · page ${page}/${totalPages}` : ""}
       </p>
 
-      <div style={{ overflowX: "auto", marginTop: 8 }}>
+      <div style={{ overflowX: "auto" }}>
         <table className={adminStyles.table || undefined} style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #e2e8f0" }}>
@@ -254,7 +254,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
                     <strong>{r.event_type}</strong>
                     {r.method ? ` · ${r.method}` : ""}
                     {r.file_name ? (
-                      <div className={styles.tip} style={{ margin: 0 }}>
+                      <div className={styles.tip}>
                         {r.file_name}
                         {r.file_bytes != null ? ` (${r.file_bytes} B)` : ""}
                       </div>
@@ -262,7 +262,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
                   </td>
                   <td style={{ padding: "8px 6px" }}>
                     <div>{r.employee_name || r.login_id || "—"}</div>
-                    <div className={styles.tip} style={{ margin: 0 }}>
+                    <div className={styles.tip}>
                       {[
                         r.employee_id ? `ID ${r.employee_id}` : null,
                         r.pseudonym ? `P: ${r.pseudonym}` : null,
@@ -274,11 +274,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
                   </td>
                   <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                     {r.hostname || "—"}
-                    {r.ip ? (
-                      <div className={styles.tip} style={{ margin: 0 }}>
-                        IP {r.ip}
-                      </div>
-                    ) : null}
+                    {r.ip ? <div className={styles.tip}>IP {r.ip}</div> : null}
                   </td>
                   <td style={{ padding: "8px 6px", maxWidth: 360 }}>
                     {r.detail || "—"}
@@ -286,9 +282,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
                   <td style={{ padding: "8px 6px", maxWidth: 280, wordBreak: "break-all" }}>
                     {r.page_path || "—"}
                     {r.url && r.url !== r.page_path ? (
-                      <div className={styles.tip} style={{ margin: 0 }}>
-                        {r.url}
-                      </div>
+                      <div className={styles.tip}>{r.url}</div>
                     ) : null}
                   </td>
                   <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
@@ -317,7 +311,7 @@ export default function BacklogTrackerPanel({ onBack }: Props) {
       </div>
 
       {totalPages > 1 ? (
-        <div className={styles.durationRow} style={{ marginTop: 12 }}>
+        <div className={styles.pager}>
           <button
             type="button"
             className={adminStyles.btnSecondary}
