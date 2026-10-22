@@ -29,6 +29,9 @@ type Ticket = {
   requested_at: string;
   approved_by?: string | null;
   approved_by_name?: string | null;
+  acknowledged_by?: string | null;
+  acknowledged_by_name?: string | null;
+  acknowledged_at?: string | null;
   /** Per-ticket: viewer may approve/reject (HR Manager may view all leave but only moderate in-scope). */
   can_moderate?: boolean;
 };
@@ -186,7 +189,10 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
     return () => ws.close();
   }, [fetchTickets, selected?.id]);
 
-  const patchTicket = async (id: number, status?: string) => {
+  const patchTicket = async (
+    id: number,
+    opts?: { status?: string; acknowledge?: boolean },
+  ) => {
     setProcessing(true);
     try {
       const res = await fetch("/api/employee-tickets", {
@@ -199,7 +205,8 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
         },
         body: JSON.stringify({
           id,
-          status,
+          status: opts?.status,
+          acknowledge: opts?.acknowledge || undefined,
           reply: reply.trim() || undefined,
           author_name: viewerName || (inboxMode === "hr" ? "HR" : "Admin"),
           viewerId: viewerId || undefined,
@@ -210,7 +217,7 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
         setReply("");
         if (data.ticket) {
           setSelected(data.ticket);
-        } else if (!status) {
+        } else if (!opts?.status && !opts?.acknowledge) {
           setSelected(null);
         }
         void fetchTickets();
@@ -225,7 +232,11 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
   };
 
   const handleStatus = (id: number, status: string) => {
-    void patchTicket(id, status);
+    void patchTicket(id, { status });
+  };
+
+  const handleAcknowledge = (id: number) => {
+    void patchTicket(id, { acknowledge: true });
   };
 
   const handleSendReply = (id: number) => {
@@ -722,6 +733,23 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
 
             {!ticketClosed && canModerateSelected ? (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {selected.ticket_type !== "leave" ? (
+                <button
+                  type="button"
+                  className={adminStyles.btnSecondary}
+                  disabled={processing || Boolean(selected.acknowledged_by)}
+                  onClick={() => handleAcknowledge(selected.id)}
+                  title={
+                    selected.acknowledged_by_name
+                      ? `Already acknowledged by ${selected.acknowledged_by_name}`
+                      : "Mark as acknowledged by you"
+                  }
+                >
+                  {selected.acknowledged_by_name
+                    ? `Acknowledged by ${selected.acknowledged_by_name}`
+                    : "Acknowledge"}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={adminStyles.btnPrimary}
@@ -758,8 +786,9 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
             ) : null}
             {!ticketClosed && !canModerateSelected && !isOwnSelectedTicket ? (
               <p className={adminStyles.muted} style={{ marginTop: 8 }}>
-                View only — you can see this leave, but approve is limited to the
-                department hierarchy (Team Lead / Manager / dept head CEO).
+                {selected.ticket_type === "leave"
+                  ? "View only — you can see this leave, but approve is limited to the department hierarchy (Team Lead / Manager / dept head CEO)."
+                  : "View only — HR staff can acknowledge or resolve this ticket."}
               </p>
             ) : null}
           </div>

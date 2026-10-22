@@ -40,6 +40,9 @@ type TicketRow = {
   updated_at: string;
   approved_by?: string | null;
   approved_by_name?: string | null;
+  acknowledged_by?: string | null;
+  acknowledged_by_name?: string | null;
+  acknowledged_at?: string | null;
 };
 
 function ticketDecidedByLabel(t: TicketRow): string | null {
@@ -50,6 +53,13 @@ function ticketDecidedByLabel(t: TicketRow): string | null {
     return t.ticket_type === "leave" ? `Approved by ${name}` : `Resolved by ${name}`;
   }
   return null;
+}
+
+function ticketAcknowledgedByLabel(t: TicketRow): string | null {
+  if (String(t.ticket_type || "").toLowerCase() === "leave") return null;
+  const name = String(t.acknowledged_by_name || "").trim();
+  if (!name) return null;
+  return `Acknowledged by ${name}`;
 }
 
 const LEAVE_CATEGORIES = [
@@ -944,6 +954,14 @@ function GenerateTicketPageInner() {
                     {categoryLabel(t.category)} · {ticketTypeLabel(t.category, t.ticket_type)} ·{" "}
                     {new Date(t.requested_at).toLocaleString()}
                   </div>
+                  {ticketAcknowledgedByLabel(t) ? (
+                    <div
+                      className={styles.historyMeta}
+                      style={{ marginTop: 4, fontWeight: 600, color: "#1d4ed8" }}
+                    >
+                      {ticketAcknowledgedByLabel(t)}
+                    </div>
+                  ) : null}
                   {ticketDecidedByLabel(t) ? (
                     <div
                       className={styles.historyMeta}
@@ -982,6 +1000,14 @@ function GenerateTicketPageInner() {
                 {categoryLabel(selectedTicket.category)} ·{" "}
                 {ticketTypeLabel(selectedTicket.category, selectedTicket.ticket_type)}
               </span>
+              {ticketAcknowledgedByLabel(selectedTicket) ? (
+                <span
+                  className={`${styles.badge} ${statusBadgeClass(selectedTicket.status)}`}
+                  style={{ background: "#eff6ff", color: "#1d4ed8" }}
+                >
+                  {ticketAcknowledgedByLabel(selectedTicket)}
+                </span>
+              ) : null}
               {ticketDecidedByLabel(selectedTicket) ? (
                 <span
                   className={`${styles.badge} ${statusBadgeClass(selectedTicket.status)}`}
@@ -1021,6 +1047,14 @@ function GenerateTicketPageInner() {
             ) : (
               <div className={styles.modalThread}>
                 <span className={styles.historyBodyLabel}>Conversation</span>
+                {ticketAcknowledgedByLabel(selectedTicket) ? (
+                  <p
+                    className={styles.historyBodyText}
+                    style={{ marginBottom: 10, fontWeight: 700, color: "#1d4ed8" }}
+                  >
+                    {ticketAcknowledgedByLabel(selectedTicket)}
+                  </p>
+                ) : null}
                 {selectedTicket.messages && selectedTicket.messages.length > 0 ? (
                   <TicketThread messages={selectedTicket.messages} />
                 ) : selectedTicket.description ? (

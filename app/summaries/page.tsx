@@ -70,26 +70,58 @@ function parseView(raw: string | null | undefined): SummaryViewKey {
   return "attendance";
 }
 
+/** Prefer path segment (/summaries/break) over legacy ?view=break. */
+function viewFromLocation(
+  pathname: string | null | undefined,
+  searchView: string | null | undefined,
+): SummaryViewKey {
+  const p = String(pathname || "");
+  const seg = p.match(/\/summaries\/(break|prayer|refreshment|meeting|attendance)\/?$/i);
+  if (seg) return parseView(seg[1].toLowerCase());
+  return parseView(searchView);
+}
+
+function hrefForSummaryView(
+  pathname: string | null | undefined,
+  next: SummaryViewKey,
+): string {
+  const p = String(pathname || "");
+  const underEmployee = p.includes("/employee-dashboard");
+  const root = underEmployee ? "/employee-dashboard/summaries" : "/summaries";
+  if (next === "attendance") return root;
+  if (underEmployee) return `${root}/${next}`;
+  return `${root}?view=${next}`;
+}
+
 function SummariesHubInner() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const viewFromUrl = parseView(searchParams?.get("view"));
+  const viewFromUrl = viewFromLocation(pathname, searchParams?.get("view"));
   const [view, setView] = useState<SummaryViewKey>(viewFromUrl);
 
-  // Keep local state in sync if user lands via redirect (?view=break)
   React.useEffect(() => {
     setView(viewFromUrl);
   }, [viewFromUrl]);
 
+  // Migrate legacy ?view= on employee hub → path segments (sidebar highlight).
+  React.useEffect(() => {
+    const p = String(pathname || "");
+    if (!p.endsWith("/summaries")) return;
+    const q = searchParams?.get("view");
+    if (!q || q === "attendance") return;
+    const next = parseView(q);
+    if (next === "attendance") return;
+    if (p.includes("/employee-dashboard")) {
+      router.replace(`/employee-dashboard/summaries/${next}`, { scroll: false });
+    }
+  }, [pathname, searchParams, router]);
+
   const onViewChange = useCallback(
     (next: SummaryViewKey) => {
-      // Defer heavy panel mount so the select stays snappy
       startTransition(() => {
         setView(next);
-        const base = pathname || "/summaries";
-        const qs = next === "attendance" ? "" : `?view=${next}`;
-        router.replace(`${base}${qs}`, { scroll: false });
+        router.replace(hrefForSummaryView(pathname, next), { scroll: false });
       });
     },
     [pathname, router],

@@ -87,7 +87,8 @@ function HeroSearch() {
 type NavTab = { name: string; path: string; icon: React.ReactNode };
 type MenuItem = { name?: string; path?: string };
 
-const ACCESS_MENU_CACHE_KEY = "employeeAccessMenuCache";
+/** Bump when summary menu paths change (?view= → /summaries/break). */
+const ACCESS_MENU_CACHE_KEY = "employeeAccessMenuCache_v2";
 
 const BASE_EMPLOYEE_TABS: NavTab[] = [
   { name: "Employee Dashboard", path: "/employee-dashboard", icon: <FaTachometerAlt /> },
@@ -498,10 +499,15 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
 
         <nav className={`${styles.nav} ${styles.navEmployee} ${empStyles.sidebarNav}`}>
           {employeeTabs.map((tab, idx) => {
+            const [tabBase] = String(tab.path || "").split("?");
             const isActive =
-              tab.path === "/employee-dashboard"
-                ? pathname === tab.path
-                : pathname === tab.path || (pathname?.startsWith(tab.path + "/") ?? false);
+              tabBase === "/employee-dashboard"
+                ? pathname === tabBase
+                : tabBase === "/employee-dashboard/summaries"
+                  ? pathname === tabBase
+                  : pathname === tabBase ||
+                    pathname === tab.path ||
+                    (pathname?.startsWith(`${tabBase}/`) ?? false);
             return (
               <Link
                 key={tab.path || idx}

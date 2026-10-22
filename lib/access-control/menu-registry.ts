@@ -33,13 +33,13 @@ export const ACCESS_MENU_REGISTRY: AccessMenuItem[] = [
   {
     permission: "team.breaks.view",
     name: "Break Summary",
-    path: "/employee-dashboard/summaries?view=break",
+    path: "/employee-dashboard/summaries/break",
     group: "attendance",
   },
   {
     permission: "team.breaks.view",
     name: "Prayer Break Summary",
-    path: "/employee-dashboard/summaries?view=prayer",
+    path: "/employee-dashboard/summaries/prayer",
     group: "attendance",
   },
   {
@@ -59,13 +59,13 @@ export const ACCESS_MENU_REGISTRY: AccessMenuItem[] = [
   {
     permission: "department.breaks.view",
     name: "Break Summary",
-    path: "/employee-dashboard/summaries?view=break",
+    path: "/employee-dashboard/summaries/break",
     group: "attendance",
   },
   {
     permission: "department.breaks.view",
     name: "Prayer Break Summary",
-    path: "/employee-dashboard/summaries?view=prayer",
+    path: "/employee-dashboard/summaries/prayer",
     group: "attendance",
   },
   {
