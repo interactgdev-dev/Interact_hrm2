@@ -112,8 +112,11 @@ export default function EmployeeListStyledPage() {
   const [visibleExtras, setVisibleExtras] = useState<Record<string, boolean>>(() => emptyExtraVisibility());
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [salaryTplBusy, setSalaryTplBusy] = useState(false);
+  const [salaryUploading, setSalaryUploading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const salaryUploadInputRef = useRef<HTMLInputElement | null>(null);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
@@ -214,6 +217,100 @@ export default function EmployeeListStyledPage() {
       toastError("Import failed: " + String(err));
     } finally {
       setImporting(false);
+    }
+  };
+
+  const viewerHeaders = (): HeadersInit => {
+    const viewerId =
+      typeof window !== "undefined"
+        ? String(localStorage.getItem("employeeId") || "").trim()
+        : "";
+    if (!viewerId) return {};
+    return {
+      "x-hrm-employee-id": viewerId,
+      "x-employee-id": viewerId,
+    };
+  };
+
+  const handleDownloadSalaryTemplate = async () => {
+    try {
+      setSalaryTplBusy(true);
+      const viewerId =
+        typeof window !== "undefined"
+          ? String(localStorage.getItem("employeeId") || "").trim()
+          : "";
+      const qs = viewerId ? `?viewerId=${encodeURIComponent(viewerId)}` : "";
+      const res = await fetch(`/api/employee_salaries/download-template${qs}`, {
+        headers: viewerHeaders(),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toastError(data.error || "Could not download salary template");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "employee-salary-template.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toastSuccess("Salary template downloaded. Existing salaries are filled in.");
+    } catch (err) {
+      toastError("Salary template download failed: " + String(err));
+    } finally {
+      setSalaryTplBusy(false);
+    }
+  };
+
+  const handleUploadSalaryTemplate = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setSalaryUploading(true);
+    try {
+      const viewerId =
+        typeof window !== "undefined"
+          ? String(localStorage.getItem("employeeId") || "").trim()
+          : "";
+      const body = new FormData();
+      body.append("file", file);
+      if (viewerId) body.append("viewerId", viewerId);
+      const res = await fetch("/api/employee_salaries/upload-template", {
+        method: "POST",
+        headers: viewerHeaders(),
+        body,
+      });
+      const data = await res.json();
+      if (!data.success) {
+        toastError(data.error || "Salary upload failed");
+        return;
+      }
+      const s = data.summary || { inserted: 0, updated: 0, skipped: 0, failed: 0 };
+      const errPreview = (data.errors || []).slice(0, 5).join(" · ");
+      if (s.updated || s.inserted) {
+        toastSuccess(
+          `Salaries: updated ${s.updated || 0}, added ${s.inserted || 0}. Skipped ${s.skipped || 0}, failed ${s.failed || 0}.`,
+        );
+        refreshEmployees();
+      } else {
+        toastInfo(
+          `No salaries changed. Skipped ${s.skipped || 0}, failed ${s.failed || 0}.${
+            errPreview ? ` ${errPreview}` : ""
+          }`,
+        );
+      }
+      if ((s.failed || 0) > 0 && (s.updated || s.inserted) && errPreview) {
+        toastInfo(errPreview);
+      }
+    } catch (err) {
+      toastError("Salary upload failed: " + String(err));
+    } finally {
+      setSalaryUploading(false);
     }
   };
 
@@ -692,16 +789,34 @@ export default function EmployeeListStyledPage() {
             <button
               style={{ height: 38, background: '#0052CC', color: '#fff', border: 'none', borderRadius: 8, padding: '0 18px', fontWeight: 600, fontSize: '0.95rem', cursor: exporting ? 'wait' : 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
               onClick={handleExportList}
-              disabled={exporting || importing}
+              disabled={exporting || importing || salaryTplBusy || salaryUploading}
             >
               {exporting ? "Exporting…" : selectedIds.size ? `Export XLS (${selectedIds.size})` : "Export XLS"}
             </button>
             <button
               style={{ height: 38, background: '#007a5a', color: '#fff', border: 'none', borderRadius: 8, padding: '0 18px', fontWeight: 600, fontSize: '0.95rem', cursor: importing ? 'wait' : 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
               onClick={() => importInputRef.current?.click()}
-              disabled={exporting || importing}
+              disabled={exporting || importing || salaryTplBusy || salaryUploading}
             >
               {importing ? "Importing…" : "Import XLS"}
+            </button>
+            <button
+              type="button"
+              title="Download Excel with Employee ID, Name, Pseudo Name, and current Basic Salary"
+              style={{ height: 38, background: '#5b21b6', color: '#fff', border: 'none', borderRadius: 8, padding: '0 14px', fontWeight: 600, fontSize: '0.9rem', cursor: salaryTplBusy ? 'wait' : 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+              onClick={handleDownloadSalaryTemplate}
+              disabled={exporting || importing || salaryTplBusy || salaryUploading}
+            >
+              {salaryTplBusy ? "Preparing…" : "Salary Template"}
+            </button>
+            <button
+              type="button"
+              title="Upload filled salary template to add or update basic salaries"
+              style={{ height: 38, background: '#0f766e', color: '#fff', border: 'none', borderRadius: 8, padding: '0 14px', fontWeight: 600, fontSize: '0.9rem', cursor: salaryUploading ? 'wait' : 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+              onClick={() => salaryUploadInputRef.current?.click()}
+              disabled={exporting || importing || salaryTplBusy || salaryUploading}
+            >
+              {salaryUploading ? "Uploading…" : "Upload Salaries"}
             </button>
             <input
               ref={importInputRef}
@@ -709,6 +824,13 @@ export default function EmployeeListStyledPage() {
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               style={{ display: "none" }}
               onChange={handleImportList}
+            />
+            <input
+              ref={salaryUploadInputRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              style={{ display: "none" }}
+              onChange={handleUploadSalaryTemplate}
             />
           </div>
         </div>
