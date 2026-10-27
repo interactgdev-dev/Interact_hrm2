@@ -109,6 +109,7 @@ export default function EmployeeListStyledPage() {
   const [selectedEmployee, setSelectedEmployee] = useState<any | null>(null);
   // Dropdown state
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [columnsMenuPos, setColumnsMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [visibleExtras, setVisibleExtras] = useState<Record<string, boolean>>(() => emptyExtraVisibility());
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -118,7 +119,36 @@ export default function EmployeeListStyledPage() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const salaryUploadInputRef = useRef<HTMLInputElement | null>(null);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
+  const columnsBtnRef = useRef<HTMLButtonElement | null>(null);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  const placeColumnsMenu = () => {
+    const btn = columnsBtnRef.current;
+    if (!btn || typeof window === "undefined") return;
+    const rect = btn.getBoundingClientRect();
+    const menuWidth = 260;
+    const gap = 8;
+    const pad = 12;
+    let left = rect.left;
+    // Keep full menu inside viewport (no left/right clip)
+    left = Math.min(left, window.innerWidth - menuWidth - pad);
+    left = Math.max(pad, left);
+    const top = rect.bottom + gap;
+    setColumnsMenuPos({ top, left });
+  };
+
+  const toggleColumnsMenu = () => {
+    setDropdownOpen((open) => {
+      const next = !open;
+      if (next) {
+        // Defer measure so button ref is painted with open state
+        requestAnimationFrame(() => placeColumnsMenu());
+      } else {
+        setColumnsMenuPos(null);
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     Modal.setAppElement("body");
@@ -580,7 +610,7 @@ export default function EmployeeListStyledPage() {
     </div>
   );
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click; keep fixed menu under the Columns button on resize/scroll
   useEffect(() => {
     if (!dropdownOpen) return;
     const handleClick = (e: MouseEvent) => {
@@ -588,10 +618,19 @@ export default function EmployeeListStyledPage() {
       const dots = document.getElementById("dropdown-menu-dots");
       if (menu && !menu.contains(e.target as Node) && dots && !dots.contains(e.target as Node)) {
         setDropdownOpen(false);
+        setColumnsMenuPos(null);
       }
     };
+    const reposition = () => placeColumnsMenu();
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    placeColumnsMenu();
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
   }, [dropdownOpen]);
 
   const listStats = useMemo(() => {
@@ -683,15 +722,26 @@ export default function EmployeeListStyledPage() {
           <div style={{ marginLeft: 'auto', fontSize: '0.85rem', fontWeight: 600, color: statusFilter === 'active' ? '#38A169' : statusFilter === 'inactive' ? '#E53E3E' : '#0052CC', background: 'rgba(255,255,255,0.18)', borderRadius: 4, padding: '2px 10px', minWidth: 60, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
             {`Showing: ${filtered.length}`}
           </div>
-          <div style={{ marginLeft: 16, display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
-            <div style={{ position: "relative" }}>
+          <div
+            style={{
+              marginLeft: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              position: "relative",
+              flexWrap: "wrap",
+              zIndex: 40,
+            }}
+          >
+            <div style={{ position: "relative", zIndex: 50 }}>
               <button
+                ref={columnsBtnRef}
                 id="dropdown-menu-dots"
                 type="button"
                 title="Show or hide columns"
                 aria-label="Show or hide columns"
                 aria-expanded={dropdownOpen}
-                onClick={() => setDropdownOpen((open) => !open)}
+                onClick={toggleColumnsMenu}
                 style={{
                   height: 38,
                   minWidth: 38,
@@ -736,22 +786,23 @@ export default function EmployeeListStyledPage() {
                   </span>
                 )}
               </button>
-              {dropdownOpen && (
+              {dropdownOpen && columnsMenuPos && (
                 <div
                   id="dropdown-menu-actions"
                   style={{
-                    position: "absolute",
-                    top: "calc(100% + 8px)",
-                    right: 0,
+                    position: "fixed",
+                    top: columnsMenuPos.top,
+                    left: columnsMenuPos.left,
                     background: "#fff",
                     borderRadius: 12,
                     boxShadow: "0 10px 28px rgba(15,23,42,0.14)",
                     border: "1px solid #e2e8f0",
                     padding: "10px 8px 8px",
-                    zIndex: 300,
-                    minWidth: 248,
+                    zIndex: 5000,
+                    width: 260,
                     maxHeight: 360,
                     overflowY: "auto",
+                    overflowX: "hidden",
                     display: "flex",
                     flexDirection: "column",
                     gap: 2,
