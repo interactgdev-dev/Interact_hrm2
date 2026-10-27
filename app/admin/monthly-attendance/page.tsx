@@ -883,6 +883,39 @@ export default function MonthlyAttendancePage() {
     return v ? normalizeAttendanceStatus(v) : null;
   }
 
+  /** Session-level manual statuses for a day (same-day multi-record). */
+  function sessionOverrideStatusesForDay(
+    employeeId: string,
+    dateKey: string,
+    dayRecords: Array<{ id?: number | null }> | undefined,
+  ): string[] {
+    const out: string[] = [];
+    for (const rec of dayRecords || []) {
+      const attId = normalizeOverrideAttendanceId(rec?.id);
+      if (attId <= 0) continue;
+      const s = overrideStatusFor(employeeId, dateKey, attId);
+      if (s) out.push(s);
+    }
+    return out;
+  }
+
+  /**
+   * Day-level effective manual override for meta / totals.
+   * Day override wins; else any session Tardy; else first session override.
+   */
+  function resolveEffectiveDayOverride(
+    employeeId: string,
+    dateKey: string,
+    dayRecords?: Array<{ id?: number | null }>,
+  ): string | null {
+    const dayOverride = overrideStatusFor(employeeId, dateKey);
+    if (dayOverride) return dayOverride;
+    const sessionStatuses = sessionOverrideStatusesForDay(employeeId, dateKey, dayRecords);
+    if (!sessionStatuses.length) return null;
+    if (sessionStatuses.includes("Tardy")) return "Tardy";
+    return sessionStatuses[0];
+  }
+
   async function saveManualStatus(
     employeeId: string,
     dateKey: string,
@@ -1143,7 +1176,13 @@ export default function MonthlyAttendancePage() {
     const meta = employee.dateMeta?.[dateKey];
     const dayRecords = employee.byDate?.[dateKey] || [];
     const workingDay = isWorkingDay(dateKey);
-    const override = overrideStatusFor(employee.employeeId, dateKey);
+    // Day + any-session manual override (for empty-day / monthly totals).
+    // Per-session rows must NOT use this alone — they resolve session override first.
+    const override = resolveEffectiveDayOverride(
+      employee.employeeId,
+      dateKey,
+      dayRecords,
+    );
     if (override) {
       return {
         statusLabel: override,
@@ -1161,9 +1200,16 @@ export default function MonthlyAttendancePage() {
     if (!dayRecords.length) {
       return emptyWorkingDayStatus(dateKey, workingDay, null);
     }
+    // Prefer auto status so a sibling session's manual override does not bleed here.
+    const auto = normalizeAttendanceStatus(
+      meta?.autoStatusLabel || meta?.statusLabel || "-",
+    );
     return {
-      statusLabel: normalizeAttendanceStatus(meta?.statusLabel || "-"),
-      deduction: meta?.deduction || "",
+      statusLabel: auto,
+      deduction:
+        meta?.autoStatusLabel != null
+          ? deductionForAttendanceStatus(auto, meta?.runningLate)
+          : meta?.deduction || "",
     };
   }
 
@@ -1465,10 +1511,31 @@ export default function MonthlyAttendancePage() {
       }
 
       const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
-      const resolved = resolveDayAttendanceDisplay(employee, day.dateKey);
+      const dayLevelOverride = overrideStatusFor(employee.employeeId, day.dateKey);
+      const leaveKind = approvedLeaveOnDay(
+        approvedLeavesMap,
+        employee.employeeId,
+        day.dateKey,
+      );
+      const leaveDisplay = leaveKind
+        ? attendanceFromApprovedLeaveDay(leaveKind)
+        : null;
+      const dayAutoStatus = normalizeAttendanceStatus(meta?.autoStatusLabel || "-");
 
       sessionsToExport.forEach(({ session, record }, sessionIndex) => {
-        const statusLabel = resolved.statusLabel;
+        // Match on-screen row: session override → day override → leave/auto.
+        const attId = normalizeOverrideAttendanceId(record?.id);
+        const sessionOverride =
+          attId > 0
+            ? overrideStatusFor(employee.employeeId, day.dateKey, attId)
+            : null;
+        const effectiveOverride = sessionOverride || dayLevelOverride;
+        const statusLabel =
+          effectiveOverride || leaveDisplay?.statusLabel || dayAutoStatus;
+        const deduction = effectiveOverride
+          ? deductionForAttendanceStatus(effectiveOverride, meta?.runningLate)
+          : leaveDisplay?.deduction ||
+            deductionForAttendanceStatus(dayAutoStatus, meta?.runningLate);
         dataRows.push({
           cells: [
             day.weekday,
@@ -1480,12 +1547,13 @@ export default function MonthlyAttendancePage() {
             record ? excelTotalHoursForExport(record) : "---",
             record ? excelAssignedWHForExport(record) : "---",
             record ? excelOvertimeForExport(record) : "---",
+            // Same as UI: day running tardy count (includes manual Tardy).
             meta?.runningLate ?? "",
             sessionIndex === 0
               ? statusCellText(statusLabel, meta?.lateMinutes)
               : statusLabel,
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, record?.id, dayRecords),
-            resolved.deduction,
+            deduction,
           ],
           status: statusLabel,
         });
@@ -1726,20 +1794,26 @@ export default function MonthlyAttendancePage() {
         const meta = employee.dateMeta[day.dateKey];
         const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
 
-        const { statusLabel, deduction } = resolveDayAttendanceDisplay(
-          employee,
+        const resolvedDay = resolveDayAttendanceDisplay(employee, day.dateKey);
+        const dayLevelOverride = overrideStatusFor(employee.employeeId, day.dateKey);
+        const leaveKind = approvedLeaveOnDay(
+          approvedLeavesMap,
+          employee.employeeId,
           day.dateKey,
         );
-        if (!shouldIncludeInDeductionSummary(statusLabel)) return;
-
+        const leaveDisplay = leaveKind
+          ? attendanceFromApprovedLeaveDay(leaveKind)
+          : null;
+        const dayAutoStatus = normalizeAttendanceStatus(meta?.autoStatusLabel || "-");
         const tardyCount = meta?.runningLate ?? "";
         if (dayRecords.length === 0 && daySessions.length === 0) {
+          if (!shouldIncludeInDeductionSummary(resolvedDay.statusLabel)) return;
           pushDeductionSummaryRow(
             rows,
             employee,
             day.dateKey,
-            statusLabel,
-            deduction,
+            resolvedDay.statusLabel,
+            resolvedDay.deduction,
             tardyCount,
           );
           return;
@@ -1747,6 +1821,19 @@ export default function MonthlyAttendancePage() {
 
         const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
         sessionsToExport.forEach(({ session, record }) => {
+          const attId = normalizeOverrideAttendanceId(record?.id);
+          const sessionOverride =
+            attId > 0
+              ? overrideStatusFor(employee.employeeId, day.dateKey, attId)
+              : null;
+          const effectiveOverride = sessionOverride || dayLevelOverride;
+          const statusLabel =
+            effectiveOverride || leaveDisplay?.statusLabel || dayAutoStatus;
+          if (!shouldIncludeInDeductionSummary(statusLabel)) return;
+          const deduction = effectiveOverride
+            ? deductionForAttendanceStatus(effectiveOverride, meta?.runningLate)
+            : leaveDisplay?.deduction ||
+              deductionForAttendanceStatus(dayAutoStatus, meta?.runningLate);
           pushDeductionSummaryRow(rows, employee, day.dateKey, statusLabel, deduction, tardyCount, {
             session,
             record,
@@ -1860,7 +1947,12 @@ export default function MonthlyAttendancePage() {
         });
 
         const autoStatusLabel = normalizeAttendanceStatus(dayStatus.statusLabel);
-        const override = overrideStatusFor(employee.employeeId, dateKey);
+        // Include per-session manual overrides (same-day multi-record), not only day-level.
+        const override = resolveEffectiveDayOverride(
+          employee.employeeId,
+          dateKey,
+          dayRecords,
+        );
         const isManual = Boolean(override);
         const statusLabel = override || autoStatusLabel;
         const statusColor = uiStatusTextColor(statusLabel);
@@ -2327,16 +2419,21 @@ export default function MonthlyAttendancePage() {
                             );
                           }
 
-                          const resolvedDay = resolveDayAttendanceDisplay(
-                            employee,
-                            day.dateKey,
-                          );
                           const dayLevelOverride = overrideStatusFor(
                             employee.employeeId,
                             day.dateKey,
                           );
+                          const leaveKind = approvedLeaveOnDay(
+                            approvedLeavesMap,
+                            employee.employeeId,
+                            day.dateKey,
+                          );
+                          const leaveDisplay = leaveKind
+                            ? attendanceFromApprovedLeaveDay(leaveKind)
+                            : null;
+                          // Auto only — never meta.statusLabel (may include another session's manual).
                           const dayAutoStatus = normalizeAttendanceStatus(
-                            meta?.autoStatusLabel || meta?.statusLabel || resolvedDay.statusLabel || "-",
+                            meta?.autoStatusLabel || "-",
                           );
                           const sessionsToShow = getDaySessionRows(
                             day.dateKey,
@@ -2346,7 +2443,7 @@ export default function MonthlyAttendancePage() {
 
                           return sessionsToShow.map(({ session, record }, index) => {
                             const attId = normalizeOverrideAttendanceId(record?.id);
-                            // Session-specific override wins; else legacy day-level; else auto/leave.
+                            // Session-specific override wins; else legacy day-level; else leave/auto.
                             const sessionOverride =
                               attId > 0
                                 ? overrideStatusFor(
@@ -2358,14 +2455,18 @@ export default function MonthlyAttendancePage() {
                             const effectiveOverride = sessionOverride || dayLevelOverride;
                             const rowStatus =
                               effectiveOverride ||
-                              resolvedDay.statusLabel ||
+                              leaveDisplay?.statusLabel ||
                               dayAutoStatus;
                             const rowDeduction = effectiveOverride
                               ? deductionForAttendanceStatus(
                                   effectiveOverride,
                                   meta?.runningLate,
                                 )
-                              : resolvedDay.deduction || meta?.deduction || "";
+                              : leaveDisplay?.deduction ||
+                                deductionForAttendanceStatus(
+                                  dayAutoStatus,
+                                  meta?.runningLate,
+                                );
                             const statusIsManual = Boolean(effectiveOverride);
                             return (
                               <tr
