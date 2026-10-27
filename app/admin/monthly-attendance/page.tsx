@@ -2240,15 +2240,14 @@ export default function MonthlyAttendancePage() {
                                     fontWeight: 600,
                                   }}
                                 >
-                                  {index === 0
-                                    ? renderEditableStatusCell({
-                                        employeeId: employee.employeeId,
-                                        dateKey: day.dateKey,
-                                        displayStatus: recordStatus,
-                                        lateMinutes: meta?.lateMinutes,
-                                        isManual: statusIsManual,
-                                      })
-                                    : recordStatus}
+                                  {/* Same-day status is shared; every session row stays editable. */}
+                                  {renderEditableStatusCell({
+                                    employeeId: employee.employeeId,
+                                    dateKey: day.dateKey,
+                                    displayStatus: recordStatus,
+                                    lateMinutes: index === 0 ? meta?.lateMinutes : null,
+                                    isManual: statusIsManual,
+                                  })}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>
                                   {tardyNoteForCell(
