@@ -8,6 +8,8 @@ export type StatusChangeReasonDraft = {
   dateKey: string;
   fromStatus: string;
   nextStatus: string;
+  /** When set, only this attendance session/record status is updated. */
+  attendanceId?: number | null;
 };
 
 type Props = {

@@ -44,6 +44,11 @@ export async function PUT(req: NextRequest) {
     const statusLabel = String(body.statusLabel ?? body.status_label ?? body.status ?? "").trim();
     const reason = String(body.reason ?? body.note ?? "").trim();
     const updatedBy = String(body.updatedBy ?? body.updated_by ?? "admin").trim() || "admin";
+    const attendanceIdRaw = body.attendanceId ?? body.attendance_id;
+    const attendanceId =
+      attendanceIdRaw === null || attendanceIdRaw === undefined || attendanceIdRaw === ""
+        ? 0
+        : Number(attendanceIdRaw);
 
     if (!employeeId || !attendanceDate) {
       return NextResponse.json(
@@ -70,6 +75,7 @@ export async function PUT(req: NextRequest) {
       statusLabel,
       reason,
       updatedBy,
+      attendanceId: Number.isFinite(attendanceId) && attendanceId > 0 ? attendanceId : 0,
     });
     return NextResponse.json({ success: true, override: row });
   } catch (err) {
@@ -87,6 +93,10 @@ export async function DELETE(req: NextRequest) {
     let attendanceDate = searchParams.get("attendanceDate")?.trim()
       || searchParams.get("date")?.trim()
       || "";
+    let attendanceIdRaw =
+      searchParams.get("attendanceId")?.trim() ||
+      searchParams.get("attendance_id")?.trim() ||
+      "";
 
     if (!employeeId || !attendanceDate) {
       try {
@@ -95,6 +105,9 @@ export async function DELETE(req: NextRequest) {
         attendanceDate =
           attendanceDate ||
           String(body.attendanceDate ?? body.attendance_date ?? body.date ?? "").trim();
+        if (!attendanceIdRaw) {
+          attendanceIdRaw = String(body.attendanceId ?? body.attendance_id ?? "").trim();
+        }
       } catch {
         /* no body */
       }
@@ -107,7 +120,12 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    const deleted = await deleteMonthlyStatusOverride(employeeId, attendanceDate);
+    const attendanceIdNum = Number(attendanceIdRaw);
+    const deleted = await deleteMonthlyStatusOverride(
+      employeeId,
+      attendanceDate,
+      Number.isFinite(attendanceIdNum) && attendanceIdNum > 0 ? attendanceIdNum : 0,
+    );
     return NextResponse.json({ success: true, deleted });
   } catch (err) {
     return NextResponse.json(
