@@ -838,6 +838,16 @@ export default function MonthlyAttendancePage() {
     return `${statusLabel} (${formatLateTime(lateMinutes)})`;
   }
 
+  /** Same-day multi-session: show running tardy count only on Tardy rows. */
+  function tardyCountCell(
+    statusLabel: string,
+    runningLate: number | string | null | undefined,
+  ): string | number {
+    if (normalizeAttendanceStatus(statusLabel) !== "Tardy") return "";
+    if (runningLate == null || runningLate === "") return "";
+    return runningLate;
+  }
+
   function renderStatusWithExcessLate(
     statusLabel: string,
     lateMinutes?: number | null,
@@ -1500,7 +1510,7 @@ export default function MonthlyAttendancePage() {
             "---",
             "---",
             "---",
-            meta?.runningLate ?? "",
+            tardyCountCell(statusLabel, meta?.runningLate),
             statusLabel,
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, undefined, dayRecords),
             deduction,
@@ -1547,8 +1557,8 @@ export default function MonthlyAttendancePage() {
             record ? excelTotalHoursForExport(record) : "---",
             record ? excelAssignedWHForExport(record) : "---",
             record ? excelOvertimeForExport(record) : "---",
-            // Same as UI: day running tardy count (includes manual Tardy).
-            meta?.runningLate ?? "",
+            // Only on Tardy rows when same day has multiple sessions.
+            tardyCountCell(statusLabel, meta?.runningLate),
             sessionIndex === 0
               ? statusCellText(statusLabel, meta?.lateMinutes)
               : statusLabel,
@@ -1805,7 +1815,6 @@ export default function MonthlyAttendancePage() {
           ? attendanceFromApprovedLeaveDay(leaveKind)
           : null;
         const dayAutoStatus = normalizeAttendanceStatus(meta?.autoStatusLabel || "-");
-        const tardyCount = meta?.runningLate ?? "";
         if (dayRecords.length === 0 && daySessions.length === 0) {
           if (!shouldIncludeInDeductionSummary(resolvedDay.statusLabel)) return;
           pushDeductionSummaryRow(
@@ -1814,7 +1823,7 @@ export default function MonthlyAttendancePage() {
             day.dateKey,
             resolvedDay.statusLabel,
             resolvedDay.deduction,
-            tardyCount,
+            tardyCountCell(resolvedDay.statusLabel, meta?.runningLate),
           );
           return;
         }
@@ -1834,10 +1843,18 @@ export default function MonthlyAttendancePage() {
             ? deductionForAttendanceStatus(effectiveOverride, meta?.runningLate)
             : leaveDisplay?.deduction ||
               deductionForAttendanceStatus(dayAutoStatus, meta?.runningLate);
-          pushDeductionSummaryRow(rows, employee, day.dateKey, statusLabel, deduction, tardyCount, {
-            session,
-            record,
-          });
+          pushDeductionSummaryRow(
+            rows,
+            employee,
+            day.dateKey,
+            statusLabel,
+            deduction,
+            tardyCountCell(statusLabel, meta?.runningLate),
+            {
+              session,
+              record,
+            },
+          );
         });
       });
     }
@@ -2402,7 +2419,7 @@ export default function MonthlyAttendancePage() {
                                 <td>---</td>
                                 <td style={{ display: "none" }}>---</td>
                                 <td>---</td>
-                                <td>{meta?.runningLate ? meta.runningLate : ""}</td>
+                                <td>{tardyCountCell(statusLabel, meta?.runningLate)}</td>
                                 <td style={{ color: uiStatusTextColor(statusLabel), fontWeight: 600 }}>
                                   {renderEditableStatusCell({
                                     employeeId: employee.employeeId,
@@ -2502,7 +2519,7 @@ export default function MonthlyAttendancePage() {
                                 <td>
                                   {record ? formatDurationHM(record.overtime) : "---"}
                                 </td>
-                                <td>{meta?.runningLate ? meta.runningLate : ""}</td>
+                                <td>{tardyCountCell(rowStatus, meta?.runningLate)}</td>
                                 <td
                                   style={{
                                     color: uiStatusTextColor(rowStatus),
