@@ -14,6 +14,30 @@ import {
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
+import { resolveBillableOvertimeSeconds, isOvertimeAllowed } from "../../../lib/attendance-overtime";
+import {
+  deductionForAttendanceStatus,
+  normalizeAttendanceStatus,
+} from "../../../lib/attendance-status";
+import {
+  approvedLeaveOnDay,
+  attendanceFromApprovedLeaveDay,
+  buildApprovedLeavesMap,
+  type ApprovedLeavesMap,
+} from "../../../lib/leave-duration";
+import {
+  aggregateDayPunches,
+  classifyDayAttendance,
+  STATUS_FIRST_HALF_DAY,
+  STATUS_SECOND_HALF_DAY,
+} from "../../../lib/monthly-attendance-status";
+import { compareAttendanceRows } from "../../../lib/attendance-sort";
+import {
+  medicalDeductionForPackage,
+  normalizeMedicalPackage,
+  type MedicalPackageId,
+} from "@/lib/medical-package";
+import { monthlySalaryTaxFromGross } from "@/lib/pakistan-salary-tax";
 
 // ...existing code...
 
@@ -64,7 +88,6 @@ type CommissionAmountField =
 const OVERTIME_MIN_SECONDS = 60 * 60;
 
 export default function MonthlyAttendancePage() {
-    // Calculate total working days for the month (excluding leaves and off days)
     // Month working days: Mon–Fri (or calendar "working"), minus calendar "off" only.
     // Full-day leave does NOT reduce this — leave stays paid against the month base.
     function getTotalWorkingDays(monthInfo: any) {
@@ -105,28 +128,42 @@ export default function MonthlyAttendancePage() {
     return shiftSeconds;
   }
 
-  /** Paid hours for OT rate: ~5h shift → 5; normal shift → 9. */
-  function getPaidHoursPerDayFromShift(
-    shiftStart: string | null | undefined,
-    shiftEnd: string | null | undefined
-  ): number {
-    const secs = getAssignedShiftSeconds(shiftStart, shiftEnd);
-    if (secs == null || secs <= 0) return 9;
-    const hours = secs / 3600;
-    // Short shifts (e.g. developer) are ~5h
-    if (hours <= 5.5) return 5;
+  /**
+   * Paid hours/day for per-hour rate (Basic ÷ W.Days ÷ hours).
+   * From employee profile Working Hours; default 9 when missing/invalid.
+   */
+  function getPaidHoursPerDayFromProfile(workingHours: unknown): number {
+    const n = Number(workingHours);
+    if (Number.isFinite(n) && n > 0) return n;
     return 9;
   }
 
-  // Calculate overtime — ≥1h past assigned shift (match production Monthly Attendance)
+  /**
+   * Per-hour rate: Basic ÷ Working Days ÷ Hours/day.
+   * Drop decimals (no round-off) — e.g. 47.619… → 47; full day = 47 × 5 = 235.
+   */
+  function truncPerHourRate(basic: number, workingDays: number, hoursPerDay: number): number {
+    if (!(basic > 0) || !(workingDays > 0) || !(hoursPerDay > 0)) return 0;
+    return Math.floor(basic / workingDays / hoursPerDay);
+  }
+
+  // Same OT rule as Monthly Attendance: allow_overtime + ≥1h past shift (worked hours).
   function calculateOvertime(
     totalSeconds: number,
     assignedShiftSeconds: number | null,
+    opts?: {
+      allowOvertime?: boolean | number | string | null;
+      autoClockOut?: boolean | number | string | null;
+    },
   ): number | null {
-    if (!assignedShiftSeconds || assignedShiftSeconds <= 0) return null;
-    const overtime = totalSeconds - assignedShiftSeconds;
-    if (overtime >= OVERTIME_MIN_SECONDS) return overtime;
-    return null;
+    return resolveBillableOvertimeSeconds({
+      totalSeconds,
+      assignedShiftSeconds,
+      allowOvertime: opts?.allowOvertime,
+      // Match Monthly Attendance Extra Hours — do not blank OT on auto clock-out.
+      autoClockOut: false,
+      minSeconds: OVERTIME_MIN_SECONDS,
+    });
   }
 
   /** Sum OT the same way Monthly Attendance Extra Hours does: floor each day to h/m then add minutes */
@@ -161,9 +198,9 @@ export default function MonthlyAttendancePage() {
     // After attendanceByEmployee is defined (around line 660):
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [allowOvertimeMap, setAllowOvertimeMap] = useState<Record<string, boolean>>({});
-  /** employee_id → paid hours/day for OT (5 or 8) from shift assignment */
+  /** employee_id → paid hours/day from profile Working Hours (default 9) */
   const [paidHoursPerDayMap, setPaidHoursPerDayMap] = useState<Record<string, number>>({});
-  
+ 
   // Set default dates - start of current month to today
   const today = new Date();
   const todayStr = getDateStringInTimeZone(today, SERVER_TIMEZONE);
@@ -176,18 +213,32 @@ export default function MonthlyAttendancePage() {
     `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`
   );
   const [calendarOverrides, setCalendarOverrides] = useState<Record<string, CalendarDayOverride>>({});
-  const [approvedLeavesMap, setApprovedLeavesMap] = useState<Record<string, Record<string, boolean>>>({});
+  const [approvedLeavesMap, setApprovedLeavesMap] = useState<ApprovedLeavesMap>({});
   const [commissionsMap, setCommissionsMap] = useState<Record<string, EmployeeCommissionRow>>({});
   /** Editable tax + manual deductions per employee — Final updates live when changed */
   const [taxByEmployee, setTaxByEmployee] = useState<Record<string, number>>({});
   const [breakExceedDedByEmployee, setBreakExceedDedByEmployee] = useState<Record<string, number>>({});
   const [kpisDedByEmployee, setKpisDedByEmployee] = useState<Record<string, number>>({});
   const [otherDedByEmployee, setOtherDedByEmployee] = useState<Record<string, number>>({});
-  /** CTD + Fuel + Unpaid days — persisted in monthly_payroll_adjustments */
+  /** CTD + Fuel + Unpaid + Claims — persisted in monthly_payroll_adjustments */
   const [ctdByEmployee, setCtdByEmployee] = useState<Record<string, number>>({});
   const [fuelByEmployee, setFuelByEmployee] = useState<Record<string, number>>({});
-  /** Override map; missing key = use system-calculated unpaid days */
+  const [claimsByEmployee, setClaimsByEmployee] = useState<Record<string, number>>({});
+  /** Package from Allowances → drives Medical Dedc column */
+  const [medicalPackageByEmployee, setMedicalPackageByEmployee] = useState<
+    Record<string, MedicalPackageId>
+  >({});
+  /** Session-only unpaid override (after HR edits). Default = live Monthly Attendance calc. */
   const [unpaidDaysByEmployee, setUnpaidDaysByEmployee] = useState<Record<string, number>>({});
+  /** Only persist unpaid override after the user edits the field (avoid locking system value on blur). */
+  const unpaidEditedRef = React.useRef<Set<string>>(new Set());
+  /** Only persist fuel/CTD after the user edits (avoid blur-saving 0 over Allowances default). */
+  const fuelEditedRef = React.useRef<Set<string>>(new Set());
+  const ctdEditedRef = React.useRef<Set<string>>(new Set());
+  /** Tax defaults from PK slabs on Gross; only lock after HR edits the Tax cell. */
+  const taxEditedRef = React.useRef<Set<string>>(new Set());
+  /** Same manual status map as Monthly Attendance (drives live T.Unpaid Days). */
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, Record<string, string>>>({});
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
   function setManualAmount(
@@ -212,41 +263,72 @@ export default function MonthlyAttendancePage() {
     return Number.isFinite(n) && n >= 0 ? n : 0;
   }
 
-  /** Monthly override if saved; otherwise employee default fuel from Allowances. */
+  /** Normalize "097" / 97 / "97" so Allowances defaults match payroll rows. */
+  function payrollIdKeys(raw: string | number | undefined | null): string[] {
+    const s = String(raw ?? "").trim();
+    if (!s) return [];
+    const keys = [s];
+    if (/^\d+$/.test(s)) {
+      const n = String(Number(s));
+      if (n !== s) keys.push(n);
+    }
+    return keys;
+  }
+
+  function lookupMoneyMap(
+    map: Record<string, number>,
+    empId: string,
+  ): number | undefined {
+    for (const k of payrollIdKeys(empId)) {
+      if (Object.prototype.hasOwnProperty.call(map, k)) return map[k] ?? 0;
+    }
+    return undefined;
+  }
+
+  /**
+   * Monthly override (positive) wins; otherwise Allowances default.
+   * Monthly 0 is ignored so accidental blur-saves don't wipe the default.
+   */
   function getFuelAllowanceForEmployee(employee: { employeeId?: string }) {
     const empId = String(employee.employeeId ?? "");
-    if (Object.prototype.hasOwnProperty.call(fuelByEmployee, empId)) {
-      return fuelByEmployee[empId] ?? 0;
-    }
-    return defaultFuelByEmployee[empId] ?? 0;
+    const monthly = lookupMoneyMap(fuelByEmployee, empId);
+    if (monthly != null && monthly > 0) return monthly;
+    const def = lookupMoneyMap(defaultFuelByEmployee, empId);
+    return def != null && def > 0 ? def : 0;
   }
 
-  /** Monthly override if saved; otherwise employee default CTD from Allowances. */
+  /** Monthly override if saved (>0); otherwise employee default CTD from Allowances. */
   function getCtdForEmployee(employee: { employeeId?: string }) {
     const empId = String(employee.employeeId ?? "");
-    if (Object.prototype.hasOwnProperty.call(ctdByEmployee, empId)) {
-      return ctdByEmployee[empId] ?? 0;
-    }
-    return defaultCtdByEmployee[empId] ?? 0;
+    const monthly = lookupMoneyMap(ctdByEmployee, empId);
+    if (monthly != null && monthly > 0) return monthly;
+    const def = lookupMoneyMap(defaultCtdByEmployee, empId);
+    return def != null && def > 0 ? def : 0;
   }
 
-  /** System unpaid days from attendance deduction % (e.g. 400% → 4 days). */
+  /** Live unpaid days from Monthly Attendance deduction % (e.g. 400% → 4 days). */
   function getSystemUnpaidDays(employee: any): number {
-    const hasAttendance = Object.keys(employee.byDate || {}).length > 0;
-    if (!hasAttendance) return 0;
     return calculateTotalDeduction(employee) / 100;
   }
 
-  /** HR override if saved; otherwise system-calculated value. */
+  /**
+   * Default: live from attendance (+ status overrides).
+   * Saved DB unpaid_days are ignored so Payroll stays in sync with Monthly Attendance.
+   * Only a same-session edit (unpaidEditedRef) can temporarily override.
+   */
   function getUnpaidDaysForEmployee(employee: any): number {
     const empId = String(employee.employeeId ?? "");
-    if (Object.prototype.hasOwnProperty.call(unpaidDaysByEmployee, empId)) {
+    if (
+      unpaidEditedRef.current.has(empId) &&
+      Object.prototype.hasOwnProperty.call(unpaidDaysByEmployee, empId)
+    ) {
       return unpaidDaysByEmployee[empId] ?? 0;
     }
     return getSystemUnpaidDays(employee);
   }
 
   function setUnpaidDaysAmount(employeeId: string, raw: string) {
+    unpaidEditedRef.current.add(String(employeeId));
     setUnpaidDaysByEmployee((prev) => ({
       ...prev,
       [employeeId]: parseUnpaidDaysValue(raw),
@@ -255,6 +337,7 @@ export default function MonthlyAttendancePage() {
 
   function saveUnpaidDaysAmount(employeeId: string, raw?: string) {
     if (!selectedMonth) return;
+    if (!unpaidEditedRef.current.has(String(employeeId))) return;
     const unpaid_days =
       raw !== undefined
         ? parseUnpaidDaysValue(raw)
@@ -267,11 +350,18 @@ export default function MonthlyAttendancePage() {
   }
 
   function setFuelAmount(employeeId: string, raw: string) {
-    setFuelByEmployee((prev) => ({ ...prev, [employeeId]: parsePositiveMoney(raw) }));
+    fuelEditedRef.current.add(String(employeeId));
+    const v = parsePositiveMoney(raw);
+    setFuelByEmployee((prev) => {
+      const next = { ...prev };
+      for (const k of payrollIdKeys(employeeId)) next[k] = v;
+      return next;
+    });
   }
 
   function saveFuelAmount(employeeId: string, raw?: string) {
     if (!selectedMonth) return;
+    if (!fuelEditedRef.current.has(String(employeeId))) return;
     const fuel_allowance =
       raw !== undefined ? parsePositiveMoney(raw) : (fuelByEmployee[employeeId] ?? 0);
     void fetch("/api/monthly-payroll-adjustments", {
@@ -282,11 +372,18 @@ export default function MonthlyAttendancePage() {
   }
 
   function setCtdAmount(employeeId: string, raw: string) {
-    setCtdByEmployee((prev) => ({ ...prev, [employeeId]: parsePositiveMoney(raw) }));
+    ctdEditedRef.current.add(String(employeeId));
+    const v = parsePositiveMoney(raw);
+    setCtdByEmployee((prev) => {
+      const next = { ...prev };
+      for (const k of payrollIdKeys(employeeId)) next[k] = v;
+      return next;
+    });
   }
 
   function saveCtdAmount(employeeId: string, raw?: string) {
     if (!selectedMonth) return;
+    if (!ctdEditedRef.current.has(String(employeeId))) return;
     const ctd =
       raw !== undefined ? parsePositiveMoney(raw) : (ctdByEmployee[employeeId] ?? 0);
     void fetch("/api/monthly-payroll-adjustments", {
@@ -294,6 +391,42 @@ export default function MonthlyAttendancePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ employee_id: employeeId, month: selectedMonth, ctd }),
     }).catch((err) => console.error("CTD save failed", err));
+  }
+
+  function getClaimsForEmployee(employee: { employeeId?: string }) {
+    const empId = String(employee.employeeId ?? "");
+    return claimsByEmployee[empId] ?? 0;
+  }
+
+  function getMedicalDedcForEmployee(employee: { employeeId?: string }) {
+    const empId = String(employee.employeeId ?? "");
+    let pkg: MedicalPackageId | null = null;
+    for (const k of payrollIdKeys(empId)) {
+      if (medicalPackageByEmployee[k]) {
+        pkg = medicalPackageByEmployee[k];
+        break;
+      }
+    }
+    return medicalDeductionForPackage(pkg);
+  }
+
+  function setClaimsAmount(employeeId: string, raw: string) {
+    setClaimsByEmployee((prev) => ({ ...prev, [employeeId]: parsePositiveMoney(raw) }));
+  }
+
+  function saveClaimsAmount(employeeId: string, raw?: string) {
+    if (!selectedMonth) return;
+    const medical_claims =
+      raw !== undefined ? parsePositiveMoney(raw) : (claimsByEmployee[employeeId] ?? 0);
+    void fetch("/api/monthly-payroll-adjustments", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        employee_id: employeeId,
+        month: selectedMonth,
+        medical_claims,
+      }),
+    }).catch((err) => console.error("Claims save failed", err));
   }
 
   const manualInputStyle: React.CSSProperties = {
@@ -339,46 +472,89 @@ export default function MonthlyAttendancePage() {
       url += "?" + params.toString();
     }
 
-    fetch(url, { cache: "no-store" })
-      .then(res => res.json())
-      .then(data => {
+    Promise.all([
+      fetch(url, { cache: "no-store" }).then((res) => res.json()),
+      fetch("/api/hrm-shifts-assignments", { cache: "no-store" })
+        .then((res) => res.json())
+        .catch(() => null),
+    ])
+      .then(([data, shiftData]) => {
         if (data.success) {
-          // First, build a map of employee_id -> most recent valid shift timings
-          const empShiftMap: Record<string, {start: string, end: string, seconds: number}> = {};
+          const otFromShifts: Record<string, boolean> = { ...allowOvertimeMap };
+          const empShiftMap: Record<
+            string,
+            { start: string; end: string; seconds: number }
+          > = {};
+          if (shiftData?.success && Array.isArray(shiftData.employees)) {
+            const nextOt: Record<string, boolean> = {};
+            shiftData.employees.forEach((emp: any) => {
+              const empId = String(emp.id);
+              if (emp.allow_overtime !== undefined && emp.allow_overtime !== null) {
+                nextOt[empId] = emp.allow_overtime === 1 || emp.allow_overtime === true;
+                otFromShifts[empId] = nextOt[empId];
+              }
+              const secs = getAssignedShiftSeconds(emp.start_time, emp.end_time);
+              if (secs && secs > 0) {
+                empShiftMap[empId] = {
+                  start: emp.start_time,
+                  end: emp.end_time,
+                  seconds: secs,
+                };
+              }
+            });
+            setAllowOvertimeMap((prev) => ({ ...prev, ...nextOt }));
+          }
+
           (data.attendance || []).forEach((record: any) => {
-            const assignedShiftSeconds = getAssignedShiftSeconds(record.shift_start_time, record.shift_end_time);
+            const assignedShiftSeconds = getAssignedShiftSeconds(
+              record.shift_start_time,
+              record.shift_end_time,
+            );
             if (
               record.employee_id &&
-              record.shift_start_time && record.shift_end_time &&
-              assignedShiftSeconds && assignedShiftSeconds > 0
+              record.shift_start_time &&
+              record.shift_end_time &&
+              assignedShiftSeconds &&
+              assignedShiftSeconds > 0
             ) {
-              empShiftMap[record.employee_id] = {
+              empShiftMap[String(record.employee_id)] = {
                 start: record.shift_start_time,
                 end: record.shift_end_time,
-                seconds: assignedShiftSeconds
+                seconds: assignedShiftSeconds,
               };
             }
           });
 
           let records = (data.attendance || []).map((record: any) => {
-            // Calculate total seconds from clock_in and clock_out
-            const totalSeconds = record.total_seconds && record.total_seconds > 0 
-              ? record.total_seconds 
-              : calculateTotalSeconds(record.clock_in, record.clock_out);
-            // Use record's shift timings, or fallback to most recent for this employee
-            let assignedShiftSeconds = getAssignedShiftSeconds(record.shift_start_time, record.shift_end_time);
-            if ((!assignedShiftSeconds || assignedShiftSeconds <= 0) && empShiftMap[record.employee_id]) {
-              assignedShiftSeconds = empShiftMap[record.employee_id].seconds;
+            const empId = String(record.employee_id ?? "");
+            const totalSeconds =
+              record.total_seconds && record.total_seconds > 0
+                ? record.total_seconds
+                : calculateTotalSeconds(record.clock_in, record.clock_out);
+            let assignedShiftSeconds = getAssignedShiftSeconds(
+              record.shift_start_time,
+              record.shift_end_time,
+            );
+            if ((!assignedShiftSeconds || assignedShiftSeconds <= 0) && empShiftMap[empId]) {
+              assignedShiftSeconds = empShiftMap[empId].seconds;
             }
-            // Calculate overtime using assigned shift seconds (same as Monthly Attendance / 10.40)
-            const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds);
+            const allowFromRecord = record.allow_overtime;
+            const allowFromMap = otFromShifts[empId];
+            const allowOT =
+              allowFromRecord != null && allowFromRecord !== ""
+                ? isOvertimeAllowed(allowFromRecord)
+                : allowFromMap === true;
+            const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds, {
+              allowOvertime: allowOT ? 1 : 0,
+            });
             return {
               ...record,
+              allow_overtime: allowOT ? 1 : 0,
               total_hours: formatDuration(totalSeconds),
               assigned_shift_seconds: assignedShiftSeconds,
               overtime: overtimeSeconds,
               is_late: record.is_late,
-              late_minutes: record.late_minutes || 0
+              late_minutes: record.late_minutes || 0,
             };
           });
           // Client-side filter for department and name (in case API doesn't filter)
@@ -390,10 +566,8 @@ export default function MonthlyAttendancePage() {
           }
           setAttendance(records);
 
-          // Fetch approved leaves for employees in the date range
-          const uniqueEmployees = [...new Set(records.map((r: any) => String(r.employee_id)))] as string[];
-          if (uniqueEmployees.length > 0) {
-            fetchApprovedLeaves(uniqueEmployees, fromDate, toDate);
+          if (fromDate && toDate) {
+            fetchApprovedLeaves(fromDate, toDate);
           }
         }
       })
@@ -401,11 +575,11 @@ export default function MonthlyAttendancePage() {
       .finally(() => setLoading(false));
   };
 
-  // Fetch approved leaves for given employees and date range
-  const fetchApprovedLeaves = async (employeeIds: string[], from: string, to: string) => {
+  // Month-wide approved leaves (includes employees with no clock-in rows).
+  const fetchApprovedLeaves = async (from: string, to: string) => {
     try {
       const params = new URLSearchParams();
-      params.append("employees", employeeIds.join(","));
+      params.append("status", "approved");
       params.append("fromDate", from);
       params.append("toDate", to);
 
@@ -413,42 +587,26 @@ export default function MonthlyAttendancePage() {
       const data = await response.json();
 
       if (data.success && data.leaves) {
-        // console.log('leaves from backend:', data.leaves);
-        // Build map of employee_id -> date -> true (for approved leaves)
-        const leavesMap: Record<string, Record<string, boolean>> = {};
-
-        data.leaves.forEach((leave: any) => {
-          if (leave.status === "approved") {
-            const empId = String(leave.employee_id);
-            if (!leavesMap[empId]) {
-              leavesMap[empId] = {};
-            }
-
-            // Parse dates and mark all dates within the range
-            const startDate = new Date(leave.start_date);
-            const endDate = new Date(leave.end_date);
-            let currentDate = new Date(startDate);
-
-            while (currentDate <= endDate) {
-              // Use local date string (not UTC) for correct mapping
-              const dateKey = currentDate.getFullYear() + '-' +
-                String(currentDate.getMonth() + 1).padStart(2, '0') + '-' +
-                String(currentDate.getDate()).padStart(2, '0');
-              leavesMap[empId][dateKey] = true;
-              currentDate.setDate(currentDate.getDate() + 1);
-            }
-          }
-        });
-
-        // console.log('approvedLeavesMap:', leavesMap);
-        setApprovedLeavesMap(leavesMap);
+        setApprovedLeavesMap(
+          buildApprovedLeavesMap(data.leaves as Array<Record<string, unknown>>, {
+            normalizeDateKey: (raw: string) => {
+              const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(raw || ""));
+              return m ? m[1] : "";
+            },
+            addDays: (dateKey: string, days: number) => {
+              const [y, m, d] = dateKey.split("-").map(Number);
+              const next = new Date(Date.UTC(y, m - 1, d + days));
+              return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+            },
+          }),
+        );
       }
     } catch (err) {
       console.error("Error fetching approved leaves:", err);
     }
   };
 
-  // Fetch shift assignment allow_overtime + paid hours/day from shift timings
+  // Fetch shift assignment allow_overtime (paid hours/day come from profile Working Hours)
   const fetchOverTimeSettings = async () => {
     try {
       const response = await fetch("/api/hrm-shifts-assignments", { cache: "no-store" });
@@ -456,17 +614,14 @@ export default function MonthlyAttendancePage() {
 
       if (data.success && data.employees) {
         const otMap: Record<string, boolean> = {};
-        const hoursMap: Record<string, number> = {};
         data.employees.forEach((emp: any) => {
           const empId = String(emp.id);
           // Latest assignment (returned by API) determines OT allowance
           if (emp.allow_overtime !== undefined && emp.allow_overtime !== null) {
             otMap[empId] = emp.allow_overtime === 1 || emp.allow_overtime === true;
           }
-          hoursMap[empId] = getPaidHoursPerDayFromShift(emp.start_time, emp.end_time);
         });
         setAllowOvertimeMap(otMap);
-        setPaidHoursPerDayMap(hoursMap);
       }
     } catch (err) {
       console.error("Error fetching overtime settings:", err);
@@ -537,9 +692,16 @@ export default function MonthlyAttendancePage() {
     if (!selectedMonth) {
       setCtdByEmployee({});
       setFuelByEmployee({});
+      setClaimsByEmployee({});
       setUnpaidDaysByEmployee({});
+      unpaidEditedRef.current = new Set();
       return;
     }
+    unpaidEditedRef.current = new Set();
+    fuelEditedRef.current = new Set();
+    ctdEditedRef.current = new Set();
+    taxEditedRef.current = new Set();
+    setTaxByEmployee({});
     let cancelled = false;
     fetch(`/api/monthly-payroll-adjustments?month=${encodeURIComponent(selectedMonth)}`, {
       cache: "no-store",
@@ -549,38 +711,52 @@ export default function MonthlyAttendancePage() {
         if (cancelled) return;
         const ctdMap: Record<string, number> = {};
         const fuelMap: Record<string, number> = {};
-        const unpaidMap: Record<string, number> = {};
+        const claimsMap: Record<string, number> = {};
         if (data.success && Array.isArray(data.adjustments)) {
           data.adjustments.forEach(
             (row: {
               employee_id?: string | number;
               ctd?: number | null;
               fuel_allowance?: number | null;
-              unpaid_days?: number | null;
+              medical_claims?: number | null;
             }) => {
               const id = String(row.employee_id ?? "").trim();
               if (!id) return;
+              // Only positive monthly overrides — 0 means “use Allowances default”.
               if (row.ctd !== null && row.ctd !== undefined) {
-                ctdMap[id] = parsePositiveMoney(row.ctd);
+                const ctd = parsePositiveMoney(row.ctd);
+                if (ctd > 0) {
+                  for (const k of payrollIdKeys(id)) ctdMap[k] = ctd;
+                }
               }
               if (row.fuel_allowance !== null && row.fuel_allowance !== undefined) {
-                fuelMap[id] = parsePositiveMoney(row.fuel_allowance);
+                const fuel = parsePositiveMoney(row.fuel_allowance);
+                if (fuel > 0) {
+                  for (const k of payrollIdKeys(id)) fuelMap[k] = fuel;
+                }
               }
-              if (row.unpaid_days !== null && row.unpaid_days !== undefined) {
-                unpaidMap[id] = parseUnpaidDaysValue(row.unpaid_days);
+              if (row.medical_claims !== null && row.medical_claims !== undefined) {
+                const claims = parsePositiveMoney(row.medical_claims);
+                if (claims > 0) {
+                  for (const k of payrollIdKeys(id)) claimsMap[k] = claims;
+                }
               }
+              // unpaid_days from DB intentionally ignored — T.Unpaid Days is live from attendance.
             }
           );
         }
         setCtdByEmployee(ctdMap);
         setFuelByEmployee(fuelMap);
-        setUnpaidDaysByEmployee(unpaidMap);
+        setClaimsByEmployee(claimsMap);
+        setUnpaidDaysByEmployee({});
+        unpaidEditedRef.current = new Set();
       })
       .catch((err) => {
         console.error("Payroll adjustments fetch failed", err);
         if (!cancelled) {
           setCtdByEmployee({});
           setFuelByEmployee({});
+          setClaimsByEmployee({});
           setUnpaidDaysByEmployee({});
         }
       });
@@ -588,6 +764,60 @@ export default function MonthlyAttendancePage() {
       cancelled = true;
     };
   }, [selectedMonth]);
+
+  // Live status overrides from Monthly Attendance (manual On Time / Absent / Half Day, …)
+  useEffect(() => {
+    if (!fromDate || !toDate) {
+      setStatusOverrides({});
+      return;
+    }
+    let cancelled = false;
+    fetch(
+      `/api/monthly-attendance-status-overrides?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`,
+      { cache: "no-store" },
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const map: Record<string, Record<string, string>> = {};
+        if (data.success && Array.isArray(data.overrides)) {
+          // Day-level (attendance_id=0) wins for payroll unpaid calc.
+          // Session-only overrides fill a day only when no day-level row exists.
+          const sessionFill: Array<{ eid: string; dk: string; status: string }> = [];
+          data.overrides.forEach(
+            (o: {
+              employee_id?: string;
+              attendance_date?: string;
+              status_label?: string;
+              attendance_id?: number | null;
+            }) => {
+              const eid = String(o.employee_id ?? "").trim();
+              const dk = String(o.attendance_date ?? "").trim().slice(0, 10);
+              if (!eid || !dk) return;
+              const status = normalizeAttendanceStatus(String(o.status_label || ""));
+              const attId = Number(o.attendance_id || 0);
+              if (Number.isFinite(attId) && attId > 0) {
+                sessionFill.push({ eid, dk, status });
+                return;
+              }
+              if (!map[eid]) map[eid] = {};
+              map[eid][dk] = status;
+            },
+          );
+          sessionFill.forEach(({ eid, dk, status }) => {
+            if (!map[eid]) map[eid] = {};
+            if (!map[eid][dk]) map[eid][dk] = status;
+          });
+        }
+        setStatusOverrides(map);
+      })
+      .catch(() => {
+        if (!cancelled) setStatusOverrides({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fromDate, toDate]);
 
   useEffect(() => {
     if (!selectedMonth) return;
@@ -657,42 +887,62 @@ export default function MonthlyAttendancePage() {
     if (dateOnlyMatch) return dateValue;
     const parsed = new Date(dateValue);
     if (Number.isNaN(parsed.getTime())) return dateValue.split("T")[0] || "";
-    const year = parsed.getFullYear();
-    const month = String(parsed.getMonth() + 1).padStart(2, "0");
-    const day = String(parsed.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+    // Asia/Karachi — matches Monthly Attendance / Mongo BSON midnight dates
+    return getDateStringInTimeZone(parsed, SERVER_TIMEZONE);
   }
 
   function getRecordDateKey(record: any) {
-    return getDateKey(record.clock_in || record.clock_out || record.date || "");
+    // Prefer stored attendance date (calendar day) over clock_in (UTC shift risk)
+    const rawDate = record?.date != null ? String(record.date) : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return rawDate;
+    if (rawDate) {
+      const fromDate = getDateKey(rawDate);
+      if (fromDate) return fromDate;
+    }
+    return getDateKey(record.clock_in || record.clock_out || "");
   }
 
+  /** Same rule as Monthly Attendance: future days (after today PKT) are not Absent yet. */
+  function isFutureAttendanceDay(dateKey: string) {
+    if (!dateKey) return false;
+    const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
+    return dateKey > todayKey;
+  }
+
+  /**
+   * Sum day deduction % for T.Unpaid Days (= total / 100).
+   * Same rules as Monthly Attendance Total Deduction (incl. status overrides).
+   */
   function calculateTotalDeduction(employee: any) {
     let totalDeduction = 0;
+    const empId = String(employee.employeeId ?? "");
     monthInfo.days.forEach((day) => {
-      const dayRecords = employee.byDate[day.dateKey] || [];
-      const meta = employee.dateMeta[day.dateKey];
+      const dayRecords = employee.byDate?.[day.dateKey] || [];
+      const meta = employee.dateMeta?.[day.dateKey];
       const workingDay = isWorkingDay(day.dateKey);
-      
+      const leaveKind = approvedLeaveOnDay(approvedLeavesMap, empId, day.dateKey);
+      const override = statusOverrides[empId]?.[day.dateKey];
+
       let dayDeduction = 0;
-      if (dayRecords.length === 0) {
-        // No records for this day
-        if (workingDay) {
-          // Check for approved leave
-          if (
-            approvedLeavesMap[employee.employeeId] &&
-            approvedLeavesMap[employee.employeeId][day.dateKey]
-          ) {
-            dayDeduction = 0; // Approved leave, no deduction
-          } else {
-            dayDeduction = 100; // Absent on working day
-          }
+      if (leaveKind || override === "Leave") {
+        dayDeduction = leaveKind
+          ? parseInt(
+              String(attendanceFromApprovedLeaveDay(leaveKind).deduction).replace(/%/g, ""),
+              10,
+            ) || 0
+          : 0;
+      } else if (dayRecords.length === 0) {
+        if (override) {
+          dayDeduction =
+            parseInt(
+              String(deductionForAttendanceStatus(override, 0)).replace(/%/g, ""),
+              10,
+            ) || 0;
+        } else if (workingDay && !isFutureAttendanceDay(day.dateKey)) {
+          dayDeduction = 100;
         }
-      } else {
-        // Has records, use meta deduction
-        if (meta?.deduction) {
-          dayDeduction = parseInt(meta.deduction) || 0;
-        }
+      } else if (meta?.deduction) {
+        dayDeduction = parseInt(String(meta.deduction).replace(/%/g, ""), 10) || 0;
       }
       totalDeduction += dayDeduction;
     });
@@ -717,14 +967,19 @@ export default function MonthlyAttendancePage() {
     // Export the same data as shown in the table (filteredEmployees)
     // Export the same data as shown in the table (filteredEmployees)
     const dataToExport = filteredEmployees.map(emp => {
+      const empId = String(emp.employeeId);
+      const taxManual = taxEditedRef.current.has(empId);
       const row = getPayrollBreakdown(emp, {
-        taxAmount: taxByEmployee[emp.employeeId] ?? 0,
-        breakExceedDed: breakExceedDedByEmployee[emp.employeeId] ?? 0,
-        kpisDed: kpisDedByEmployee[emp.employeeId] ?? 0,
-        otherDed: otherDedByEmployee[emp.employeeId] ?? 0,
+        taxAmount: taxByEmployee[empId] ?? 0,
+        taxManual,
+        breakExceedDed: breakExceedDedByEmployee[empId] ?? 0,
+        kpisDed: kpisDedByEmployee[empId] ?? 0,
+        otherDed: otherDedByEmployee[empId] ?? 0,
         ctd: getCtdForEmployee(emp),
         fuelAllowance: getFuelAllowanceForEmployee(emp),
         unpaidDays: getUnpaidDaysForEmployee(emp),
+        medicalClaims: getClaimsForEmployee(emp),
+        medicalDedc: getMedicalDedcForEmployee(emp),
       });
       return {
       "ID": emp.employeeId,
@@ -744,12 +999,14 @@ export default function MonthlyAttendancePage() {
       "Existing Client Incentive": getCommissionDisplay(emp.employeeId, "existing_client_incentive"),
       "Trainer Incentive": getCommissionDisplay(emp.employeeId, "trainer_incentive"),
       "Floor Incentive": getCommissionDisplay(emp.employeeId, "floor_incentive"),
+      "Claims": row.medicalClaims,
       "Gross Salary": row.grossSalary,
       "Unpaid Days Salary": row.unpaidDaysSalary,
       "Break Exceed Ded.": row.breakExceedDed,
       "KPIs Ded.": row.kpisDed,
       "Other Ded": row.otherDed,
       "CTD": row.ctd,
+      "Medical Dedc": row.medicalDedc,
       "Loan/Advance": row.loanAdvance,
       "Total Deductions": row.totalDeductions,
       "Net before Tax": row.netBeforeTax,
@@ -798,13 +1055,15 @@ export default function MonthlyAttendancePage() {
         // Check for approved leave
         let statusLabel = workingDay ? "Absent" : "Off";
         let deduction = workingDay ? "100%" : "";
-        if (
-          workingDay &&
-          approvedLeavesMap[employee.employeeId] &&
-          approvedLeavesMap[employee.employeeId][day.dateKey]
-        ) {
-          statusLabel = "Leave";
-          deduction = "0%";
+        const leaveKind = approvedLeaveOnDay(
+          approvedLeavesMap,
+          employee.employeeId,
+          day.dateKey,
+        );
+        if (workingDay && leaveKind) {
+          const att = attendanceFromApprovedLeaveDay(leaveKind);
+          statusLabel = att.statusLabel;
+          deduction = att.deduction;
         }
         rows.push({
           Day: day.weekday,
@@ -965,30 +1224,49 @@ export default function MonthlyAttendancePage() {
       .then(data => {
         if (data.success && Array.isArray(data.employees)) {
           setAllEmployees(data.employees);
+          const hoursMap: Record<string, number> = {};
+          data.employees.forEach((emp: any) => {
+            const empId = String(emp.id ?? emp.employee_id ?? "").trim();
+            if (!empId) return;
+            hoursMap[empId] = getPaidHoursPerDayFromProfile(emp.working_hours);
+          });
+          setPaidHoursPerDayMap(hoursMap);
         } else {
           setAllEmployees([]);
+          setPaidHoursPerDayMap({});
         }
       })
-      .catch(() => setAllEmployees([]));
-    // Fetch all salaries (all components, show amount)
-    fetch('/api/employee_salaries/all')
+      .catch(() => {
+        setAllEmployees([]);
+        setPaidHoursPerDayMap({});
+      });
+    // Monthly Payroll is a full-sheet view (page already permission-gated).
+    // Do NOT pass viewerId here — per-row salary privacy was redacting almost
+    // every amount and making calculated rates show 0/0.
+    fetch("/api/employee_salaries/all")
       .then(res => res.json())
       .then(data => {
         if (data.success && Array.isArray(data.salaries)) {
           const map: Record<string, number> = {};
           const fuelDefaults: Record<string, number> = {};
           const ctdDefaults: Record<string, number> = {};
+          const medicalDefaults: Record<string, MedicalPackageId> = {};
           data.salaries.forEach((row: any) => {
+            if (row.salary_hidden) return;
             if (row.employee_id != null && row.amount !== undefined && row.amount !== null) {
               const amt = Number(row.amount);
               if (Number.isFinite(amt) && amt > 0) {
-                map[String(row.employee_id)] = amt;
+                for (const k of payrollIdKeys(row.employee_id)) {
+                  map[k] = amt;
+                }
               }
             }
             if (row.employee_id != null && row.fuel_allowance != null && row.fuel_allowance !== "") {
               const fuel = Number(row.fuel_allowance);
               if (Number.isFinite(fuel) && fuel > 0) {
-                fuelDefaults[String(row.employee_id)] = fuel;
+                for (const k of payrollIdKeys(row.employee_id)) {
+                  fuelDefaults[k] = fuel;
+                }
               }
             }
             if (
@@ -998,86 +1276,151 @@ export default function MonthlyAttendancePage() {
             ) {
               const ctd = Number(row.company_transport_deduction);
               if (Number.isFinite(ctd) && ctd > 0) {
-                ctdDefaults[String(row.employee_id)] = ctd;
+                for (const k of payrollIdKeys(row.employee_id)) {
+                  ctdDefaults[k] = ctd;
+                }
+              }
+            }
+            const pkg = normalizeMedicalPackage(row.medical_package);
+            if (row.employee_id != null && pkg) {
+              for (const k of payrollIdKeys(row.employee_id)) {
+                medicalDefaults[k] = pkg;
               }
             }
           });
           setSalaryMap(map);
           setDefaultFuelByEmployee(fuelDefaults);
           setDefaultCtdByEmployee(ctdDefaults);
+          setMedicalPackageByEmployee(medicalDefaults);
         }
       });
   }, []);
 
   const attendanceByEmployee = React.useMemo(() => {
-    // Build attendance map as before
-    const attMap: Record<string, {
-      byDate: Record<string, any[]>;
-      dateMeta: Record<string, { runningLate: number; statusLabel: string; statusColor: string; deduction: string }>;
-      attendanceRecord: any;
-    }> = {};
+    // Same day-status + deduction rules as Monthly Attendance (live T.Unpaid Days).
+    const attMap: Record<
+      string,
+      {
+        byDate: Record<string, any[]>;
+        dateMeta: Record<
+          string,
+          { runningLate: number | string; statusLabel: string; statusColor: string; deduction: string }
+        >;
+        gender: string;
+        attendanceRecord: any;
+      }
+    > = {};
     attendance.forEach((record: any) => {
       if (!record.employee_id) return;
-      const empId = record.employee_id;
+      const empId = String(record.employee_id);
       if (!attMap[empId]) {
-        attMap[empId] = { byDate: {}, dateMeta: {}, attendanceRecord: record };
+        attMap[empId] = {
+          byDate: {},
+          dateMeta: {},
+          gender: record.gender || "",
+          attendanceRecord: record,
+        };
+      }
+      if (!attMap[empId].gender && record.gender) {
+        attMap[empId].gender = record.gender;
       }
       const dateKey = getRecordDateKey(record);
       if (!dateKey) return;
       if (!attMap[empId].byDate[dateKey]) attMap[empId].byDate[dateKey] = [];
       attMap[empId].byDate[dateKey].push(record);
     });
-    // Calculate dateMeta as before
+
     Object.entries(attMap).forEach(([empId, employee]) => {
-      const allRecords = Object.values(employee.byDate).flat();
-      const sorted = [...allRecords].sort((a: any, b: any) => {
-        const aKey = getRecordDateKey(a);
-        const bKey = getRecordDateKey(b);
-        return aKey.localeCompare(bKey);
+      Object.keys(employee.byDate).forEach((dateKey) => {
+        employee.byDate[dateKey].sort(compareAttendanceRows);
       });
+
       let runningLate = 0;
-      const seenDates = new Set<string>();
-      sorted.forEach((record: any) => {
-        const dateKey = getRecordDateKey(record);
-        if (!dateKey || seenDates.has(dateKey)) return;
-        seenDates.add(dateKey);
-        let statusLabel = "On Time";
-        let statusColor = "#276749";
+      const dateKeys = Object.keys(employee.byDate).sort();
+      dateKeys.forEach((dateKey) => {
+        const dayRecords = employee.byDate[dateKey];
+        const { clockIn, clockOut, record } = aggregateDayPunches(dayRecords);
+        const dayStatus = classifyDayAttendance({
+          dateKey,
+          clockIn,
+          clockOut,
+          shiftStart: record?.shift_start_time ?? null,
+          shiftEnd: record?.shift_end_time ?? null,
+          gender: employee.gender,
+        });
+
+        const autoStatusLabel = normalizeAttendanceStatus(dayStatus.statusLabel);
+        const override = statusOverrides[empId]?.[dateKey];
+        const isManual = Boolean(override);
+        const statusLabel = override || autoStatusLabel;
         let deduction = "";
-        if (record.is_late) {
-          runningLate += 1;
-          statusLabel = "Tardy";
-          statusColor = "#E53E3E";
-          if (runningLate === 4) statusLabel = "Half Day";
-          else if (runningLate >= 5) statusLabel = "Full Day";
+        let tardyDisplay: number | string = "";
+
+        const inSelectedMonth =
+          (!fromDate || dateKey >= fromDate) && (!toDate || dateKey <= toDate);
+
+        if (statusLabel === "Tardy" && (dayStatus.isLate || isManual)) {
+          if (inSelectedMonth) {
+            runningLate += 1;
+            tardyDisplay = runningLate;
+            deduction = deductionForAttendanceStatus(statusLabel, runningLate);
+          }
+        } else if (statusLabel === "Absent") {
+          deduction = "100%";
+        } else if (
+          statusLabel === STATUS_FIRST_HALF_DAY ||
+          statusLabel === STATUS_SECOND_HALF_DAY
+        ) {
+          deduction = "50%";
+        } else {
+          deduction = deductionForAttendanceStatus(statusLabel, tardyDisplay);
         }
-        if (statusLabel === "Tardy") deduction = "0%";
-        else if (statusLabel === "Half Day") deduction = "50%";
-        else if (statusLabel === "Full Day") deduction = "100%";
-        employee.dateMeta[dateKey] = { runningLate, statusLabel, statusColor, deduction };
+
+        employee.dateMeta[dateKey] = {
+          runningLate: tardyDisplay,
+          statusLabel,
+          statusColor: "#4A5568",
+          deduction,
+        };
       });
     });
-    // Merge all employees with attendance
-    return allEmployees.map(emp => {
+
+    return allEmployees.map((emp) => {
       const empId = String(emp.id || emp.employee_id);
       const att = attMap[empId];
-      // Always show salary from salaryMap (amount, any component)
       const basicSalary = salaryMap[empId];
       const allowOT = allowOvertimeMap[empId] === true;
-      const paidHoursPerDay = paidHoursPerDayMap[empId] ?? 9;
+      const paidHoursPerDay =
+        paidHoursPerDayMap[empId] ??
+        getPaidHoursPerDayFromProfile(emp.working_hours);
       return {
         employeeId: empId,
-        employeeName: (emp.first_name && emp.last_name) ? `${emp.first_name} ${emp.last_name}` : (emp.employee_name || "-"),
+        employeeName:
+          emp.first_name && emp.last_name
+            ? `${emp.first_name} ${emp.last_name}`
+            : emp.employee_name || "-",
         pseudonym: emp.pseudonym || "-",
         departmentName: emp.department_name || "-",
+        gender: att?.gender || emp.gender || "",
         basicSalary,
         allowOvertime: allowOT,
         paidHoursPerDay,
+        workingHours: emp.working_hours ?? null,
+        employmentType: emp.employment_type || "",
         byDate: att ? att.byDate : {},
         dateMeta: att ? att.dateMeta : {},
       };
     });
-  }, [attendance, allEmployees, salaryMap, allowOvertimeMap, paidHoursPerDayMap]);
+  }, [
+    attendance,
+    allEmployees,
+    salaryMap,
+    allowOvertimeMap,
+    paidHoursPerDayMap,
+    statusOverrides,
+    fromDate,
+    toDate,
+  ]);
 
   // Calculate total overtime (extra hours) for the SELECTED MONTH — same rules as Monthly Attendance
   function getEmployeeTotalOvertime(emp: any) {
@@ -1137,21 +1480,25 @@ export default function MonthlyAttendancePage() {
   /**
    * Full payroll row from live system data.
    * OT: Per hour = Basic ÷ Working Days ÷ Hours/Day; OT Salary = Per hour × OT hours.
-   * Final = Gross − Total Deductions − Tax. Manual columns (Fuel, CTD, etc.) feed live.
+   * Tax: Pakistan salaried slabs on Net before Tax (annualize ÷12) unless taxManual override.
+   * Final = Net before Tax − Tax. Manual columns (Fuel, CTD, etc.) feed live.
    */
   function getPayrollBreakdown(
     employee: any,
     opts: {
       taxAmount?: number;
+      /** When true, use taxAmount even if 0 (manual override). */
+      taxManual?: boolean;
       breakExceedDed?: number;
       kpisDed?: number;
       otherDed?: number;
       ctd?: number;
       fuelAllowance?: number;
       unpaidDays?: number;
+      medicalClaims?: number;
+      medicalDedc?: number;
     } = {}
   ) {
-    const taxAmount = opts.taxAmount ?? 0;
     const hasAttendance = Object.keys(employee.byDate || {}).length > 0;
 
     const basicSalary = Number(employee.basicSalary ?? 0) || 0;
@@ -1159,12 +1506,22 @@ export default function MonthlyAttendancePage() {
       opts.fuelAllowance !== undefined
         ? parsePositiveMoney(opts.fuelAllowance)
         : 0;
+    const medicalClaims =
+      opts.medicalClaims !== undefined
+        ? parsePositiveMoney(opts.medicalClaims)
+        : getClaimsForEmployee(employee);
+    const medicalDedc =
+      opts.medicalDedc !== undefined
+        ? parsePositiveMoney(opts.medicalDedc)
+        : getMedicalDedcForEmployee(employee);
     const paidHoursPerDay =
       Number(employee.paidHoursPerDay) > 0 ? Number(employee.paidHoursPerDay) : 9;
 
-    const workingDays = hasAttendance ? getTotalWorkingDays(monthInfo) : 0;
+    // Always use calendar working days for rates (Basic÷W.Days÷hours).
+    // Gating on punches made Per Hour / day pay show 0/0 for most of the roster.
+    const workingDays = getTotalWorkingDays(monthInfo);
 
-    const systemUnpaidDays = hasAttendance ? calculateTotalDeduction(employee) / 100 : 0;
+    const systemUnpaidDays = calculateTotalDeduction(employee) / 100;
     const unpaidDays =
       opts.unpaidDays !== undefined
         ? parseUnpaidDaysValue(opts.unpaidDays)
@@ -1182,11 +1539,14 @@ export default function MonthlyAttendancePage() {
       otHoursLabel = totalMinutes > 0 ? formatOtHoursLabel(otHours) : "0h 00m";
     }
 
+    const perHourRate = truncPerHourRate(basicSalary, workingDays, paidHoursPerDay);
+    const fullDayPay = perHourRate * paidHoursPerDay;
+
     let otSalary = 0;
     if (employee.allowOvertime !== false) {
-      if (basicSalary > 0 && workingDays > 0 && otHours > 0) {
-        const perHourRate = basicSalary / workingDays / paidHoursPerDay;
-        otSalary = Math.round(perHourRate * otHours);
+      if (perHourRate > 0 && otHours > 0) {
+        // Use truncated per-hour only (no re-rounding the rate).
+        otSalary = Math.floor(perHourRate * otHours);
       }
     }
 
@@ -1208,11 +1568,13 @@ export default function MonthlyAttendancePage() {
       commission +
       existingClientIncentive +
       trainerIncentive +
-      floorIncentive;
+      floorIncentive +
+      medicalClaims;
 
+    // Unpaid cut from truncated full-day pay (e.g. 235/day), not rounded Basic÷W.Days.
     const unpaidDaysSalary =
-      basicSalary > 0 && workingDays > 0 && unpaidDays > 0
-        ? Math.round((basicSalary / workingDays) * unpaidDays)
+      fullDayPay > 0 && unpaidDays > 0
+        ? Math.floor(fullDayPay * unpaidDays)
         : 0;
 
     const breakExceedDed = Number.isFinite(opts.breakExceedDed) && (opts.breakExceedDed as number) > 0
@@ -1234,10 +1596,22 @@ export default function MonthlyAttendancePage() {
       (Number.isFinite(adv) ? adv : 0) + (Number.isFinite(loan) ? loan : 0);
 
     const totalDeductions =
-      unpaidDaysSalary + breakExceedDed + kpisDed + otherDed + ctd + loanAdvance;
+      unpaidDaysSalary +
+      breakExceedDed +
+      kpisDed +
+      otherDed +
+      ctd +
+      medicalDedc +
+      loanAdvance;
 
-    const netBeforeTax = grossSalary - totalDeductions;
-    const tax = Number.isFinite(taxAmount) && taxAmount > 0 ? taxAmount : 0;
+    const netBeforeTax = Math.max(0, grossSalary - totalDeductions);
+    // Tax base = Net. Salary before Tax (not Gross).
+    const autoTax = monthlySalaryTaxFromGross(netBeforeTax);
+    const tax = opts.taxManual
+      ? Number.isFinite(opts.taxAmount) && (opts.taxAmount as number) > 0
+        ? (opts.taxAmount as number)
+        : 0
+      : autoTax;
     const netSalary = netBeforeTax - tax;
     const finalSalary = netSalary;
 
@@ -1248,6 +1622,8 @@ export default function MonthlyAttendancePage() {
     return {
       basicSalary,
       fuelAllowance,
+      medicalClaims,
+      medicalDedc,
       workingDays,
       unpaidDays,
       unpaidDaysDisplay,
@@ -1374,12 +1750,14 @@ export default function MonthlyAttendancePage() {
                 <th>Existing Client Incentive</th>
                 <th>Trainer Incentive</th>
                 <th>Floor Incentive</th>
+                <th>Claims</th>
                 <th>Gross Salary</th>
                 <th>Unpaid Days Salary</th>
                 <th>Break Exceed Ded.</th>
                 <th>KPIs Ded.</th>
                 <th>Other Ded (fine,etc.)</th>
                 <th>CTD</th>
+                <th>Medical Dedc</th>
                 <th>Loan/Advance</th>
                 <th>Total Deductions</th>
                 <th>Net. Salary before Tax</th>
@@ -1392,22 +1770,28 @@ export default function MonthlyAttendancePage() {
               {filteredEmployees && filteredEmployees.length > 0 ? (
                 filteredEmployees.map((employee) => {
                   const empId = employee.employeeId;
-                  const taxVal = taxByEmployee[empId] ?? 0;
+                  const taxManual = taxEditedRef.current.has(String(empId));
                   const breakVal = breakExceedDedByEmployee[empId] ?? 0;
                   const kpisVal = kpisDedByEmployee[empId] ?? 0;
                   const otherVal = otherDedByEmployee[empId] ?? 0;
                   const ctdVal = getCtdForEmployee(employee);
                   const fuelVal = getFuelAllowanceForEmployee(employee);
                   const unpaidVal = getUnpaidDaysForEmployee(employee);
+                  const claimsVal = getClaimsForEmployee(employee);
+                  const medicalDedcVal = getMedicalDedcForEmployee(employee);
                   const row = getPayrollBreakdown(employee, {
-                    taxAmount: taxVal,
+                    taxAmount: taxByEmployee[empId] ?? 0,
+                    taxManual,
                     breakExceedDed: breakVal,
                     kpisDed: kpisVal,
                     otherDed: otherVal,
                     ctd: ctdVal,
                     fuelAllowance: fuelVal,
                     unpaidDays: unpaidVal,
+                    medicalClaims: claimsVal,
+                    medicalDedc: medicalDedcVal,
                   });
+                  const taxVal = row.tax;
                   return (
                     <tr key={employee.employeeId}>
                       <td className={styles.cellMuted}>{employee.employeeId}</td>
@@ -1453,7 +1837,7 @@ export default function MonthlyAttendancePage() {
                           onChange={(e) => setUnpaidDaysAmount(empId, e.target.value)}
                           onBlur={(e) => saveUnpaidDaysAmount(empId, e.target.value)}
                           style={manualInputStyle}
-                          title={`System unpaid days: ${getSystemUnpaidDays(employee)} — editable override`}
+                          title={`Live from Monthly Attendance: ${getSystemUnpaidDays(employee)} unpaid days — edit only to override this session`}
                         />
                       </td>
                       <td style={{ color: '#007a5a', fontWeight: 600 }}>{row.otHoursLabel}</td>
@@ -1465,6 +1849,18 @@ export default function MonthlyAttendancePage() {
                       <td style={{ color: '#007a5a', fontWeight: 600 }}>{formatWithCommas(getCommissionDisplay(employee.employeeId, "existing_client_incentive"))}</td>
                       <td style={{ color: '#007a5a', fontWeight: 600 }}>{formatWithCommas(getCommissionDisplay(employee.employeeId, "trainer_incentive"))}</td>
                       <td style={{ color: '#007a5a', fontWeight: 600 }}>{formatWithCommas(getCommissionDisplay(employee.employeeId, "floor_incentive"))}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={claimsVal}
+                          onChange={(e) => setClaimsAmount(empId, e.target.value)}
+                          onBlur={(e) => saveClaimsAmount(empId, e.target.value)}
+                          style={fuelInputStyle}
+                          title="Claims — added to Gross Salary; saved for this month"
+                        />
+                      </td>
                       <td style={{ color: '#007a5a', fontWeight: 700 }}>{formatWithCommas(row.grossSalary)}</td>
                       <td style={{ color: '#dc2626', fontWeight: 600 }}>{formatWithCommas(row.unpaidDaysSalary)}</td>
                       <td>
@@ -1512,6 +1908,16 @@ export default function MonthlyAttendancePage() {
                           title="CTD — editable; default from Allowances, saved for this month when changed"
                         />
                       </td>
+                      <td
+                        style={{ color: '#dc2626', fontWeight: 600 }}
+                        title={
+                          medicalPackageByEmployee[empId]
+                            ? `From ${medicalPackageByEmployee[empId]} package (Allowances)`
+                            : "No medical package on Allowances"
+                        }
+                      >
+                        {formatWithCommas(row.medicalDedc)}
+                      </td>
                       <td style={{ color: '#dc2626', fontWeight: 600 }}>{formatWithCommas(row.loanAdvance)}</td>
                       <td style={{ color: '#dc2626', fontWeight: 600 }}>{formatWithCommas(row.totalDeductions)}</td>
                       <td style={{ color: '#007a5a', fontWeight: 600 }}>{formatWithCommas(row.netBeforeTax)}</td>
@@ -1521,9 +1927,12 @@ export default function MonthlyAttendancePage() {
                           min={0}
                           step={1}
                           value={taxVal}
-                          onChange={(e) => setManualAmount(setTaxByEmployee, empId, e.target.value)}
+                          onChange={(e) => {
+                            taxEditedRef.current.add(String(empId));
+                            setManualAmount(setTaxByEmployee, empId, e.target.value);
+                          }}
                           style={manualInputStyle}
-                          title="Tax — Final updates when you change this"
+                          title="Auto from Pakistan salaried tax slabs on Net before Tax (TY 2026-27). Edit to override — Final = Net before Tax − Tax"
                         />
                       </td>
                       <td style={{ color: '#007a5a', fontWeight: 600 }}>{formatWithCommas(row.netSalary)}</td>
@@ -1532,7 +1941,7 @@ export default function MonthlyAttendancePage() {
                   );
                 })
               ) : (
-                <tr><td colSpan={29} className={styles.breakSummaryNoRecords}>No records found</td></tr>
+                <tr><td colSpan={31} className={styles.breakSummaryNoRecords}>No records found</td></tr>
               )}
             </tbody>
           </table>

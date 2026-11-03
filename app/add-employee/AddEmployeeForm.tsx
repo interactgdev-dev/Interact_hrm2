@@ -11,6 +11,11 @@ import {
   orgRoleNeedsDepartmentConfirm,
   type OrgRoleDbValue,
 } from "@/lib/org-role";
+import {
+  MEDICAL_PACKAGES,
+  normalizeMedicalPackage,
+  type MedicalPackageId,
+} from "@/lib/medical-package";
 
 const employeeTabs = [
   { name: "Personal Details" },
@@ -290,10 +295,11 @@ export default function AddEmployeeForm({
     }
   };
 
-  // Allowances — defaults used by Monthly Payroll (Fuel + CTD)
+  // Allowances — defaults used by Monthly Payroll (Fuel + CTD + Medical)
   const [fuelAllowance, setFuelAllowance] = useState("");
   const [companyTransportDeduction, setCompanyTransportDeduction] = useState("");
   const [travelAllowanceType, setTravelAllowanceType] = useState<"fuel" | "ctd" | "">("");
+  const [medicalPackage, setMedicalPackage] = useState<MedicalPackageId | "">("");
 
   const handleAllowancesSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -302,25 +308,28 @@ export default function AddEmployeeForm({
       return;
     }
     try {
+      // Only send travel fields when that type is selected — never wipe the other
+      // (or wipe fuel when only medical package is updated).
+      const payload: Record<string, unknown> = {
+        employee_id: employeeId,
+        medical_package: medicalPackage || null,
+        allowancesOnly: true,
+      };
+      if (travelAllowanceType === "fuel") {
+        payload.fuel_allowance =
+          fuelAllowance === "" ? null : Number(fuelAllowance);
+        payload.company_transport_deduction = null;
+      } else if (travelAllowanceType === "ctd") {
+        payload.company_transport_deduction =
+          companyTransportDeduction === ""
+            ? null
+            : Number(companyTransportDeduction);
+        payload.fuel_allowance = null;
+      }
       const res = await fetch('/api/employee_salaries', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employee_id: employeeId,
-          fuel_allowance:
-            travelAllowanceType === "fuel"
-              ? fuelAllowance === ""
-                ? null
-                : Number(fuelAllowance)
-              : null,
-          company_transport_deduction:
-            travelAllowanceType === "ctd"
-              ? companyTransportDeduction === ""
-                ? null
-                : Number(companyTransportDeduction)
-              : null,
-          allowancesOnly: true,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (data.success) {
@@ -780,6 +789,8 @@ export default function AddEmployeeForm({
           ) {
             setTravelAllowanceType("ctd");
           }
+          const pkg = normalizeMedicalPackage(data.salary.medical_package);
+          setMedicalPackage(pkg || "");
         }
       })
       .catch(err => console.error('Error fetching salary details:', err));
@@ -1602,6 +1613,34 @@ export default function AddEmployeeForm({
                     </div>
                   </div>
                 )}
+                <p className={styles.sectionTitle} style={{ marginTop: 20 }}>
+                  Medical Package
+                </p>
+                <p className={styles.note}>
+                  Monthly Payroll auto-deducts package amount (Silver 1,000 / Gold 2,000 /
+                  Platinum 3,000). Employee dashboard shows a matching diamond badge.
+                </p>
+                <div className={styles.row}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel}>Package</label>
+                    <select
+                      className={styles.select}
+                      value={medicalPackage}
+                      onChange={(e) =>
+                        setMedicalPackage(
+                          (e.target.value as MedicalPackageId | "") || "",
+                        )
+                      }
+                    >
+                      <option value="">-- None --</option>
+                      {MEDICAL_PACKAGES.map((pkg) => (
+                        <option key={pkg.id} value={pkg.id}>
+                          {pkg.label} (Rs {pkg.monthlyDeduction.toLocaleString("en-PK")}/mo)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <div className={styles.actionsLeft}>
                   <button type="submit" className={styles.saveBtn}>Save</button>
                 </div>
