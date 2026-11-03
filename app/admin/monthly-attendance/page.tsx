@@ -8,6 +8,7 @@ import { useEmployeeDetailPopup } from "../../components/use-employee-detail-pop
 import { FaFileExcel } from "react-icons/fa";
 import {
   downloadMonthlyAttendanceExcel,
+  excelEmployeeLabel,
   type MonthlyAttendanceExcelRow,
 } from "../../../lib/monthly-attendance-excel";
 import {
@@ -169,20 +170,13 @@ const OVERTIME_MIN_SECONDS = 60 * 60;
 
 export default function MonthlyAttendancePage() {
     // Calculate total working days for the month (excluding leaves and off days)
-    function getTotalWorkingDays(employee: any, monthInfo: any, approvedLeavesMap: ApprovedLeavesMap) {
+    // Month working days: Mon–Fri (or calendar "working"), minus calendar "off" only.
+    // Full-day leave does NOT reduce this — leave stays paid against the month base.
+    function getTotalWorkingDays(monthInfo: any) {
       let count = 0;
       if (!monthInfo || !monthInfo.days) return count;
       monthInfo.days.forEach((day: any) => {
-        const workingDay = isWorkingDay(day.dateKey);
-        // Exclude off days and full-day leaves only (half-day still counts as working day).
-        if (workingDay) {
-          const kind = approvedLeaveOnDay(
-            approvedLeavesMap,
-            employee.employeeId,
-            day.dateKey,
-          );
-          if (kind !== "full") count++;
-        }
+        if (isWorkingDay(day.dateKey)) count++;
       });
       return count;
     }
@@ -1477,7 +1471,7 @@ export default function MonthlyAttendancePage() {
             "",
             "Total Working Days:",
             "",
-            footer?.workingDays ?? `${getTotalWorkingDays(employee, monthInfo, approvedLeavesMap)}`,
+            footer?.workingDays ?? `${getTotalWorkingDays(monthInfo)}`,
           ],
           status: "",
           isSummary: true,
@@ -1615,7 +1609,7 @@ export default function MonthlyAttendancePage() {
           "",
           "Total Working Days:",
           "",
-          `${getTotalWorkingDays(employee, monthInfo, approvedLeavesMap)}`,
+          `${getTotalWorkingDays(monthInfo)}`,
         ],
         status: "",
         isSummary: true,
@@ -1633,7 +1627,7 @@ export default function MonthlyAttendancePage() {
 
     const ctx = await ensureTungstenCtx();
     const sheets = attendanceByEmployee.map((employee) => ({
-      name: employee.employeeName,
+      name: excelEmployeeLabel(employee.employeeName, employee.pseudonym),
       rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
     }));
 
@@ -1645,13 +1639,14 @@ export default function MonthlyAttendancePage() {
 
   async function downloadEmployeeExcel(employee: any) {
     const ctx = await ensureTungstenCtx();
+    const label = excelEmployeeLabel(employee.employeeName, employee.pseudonym);
     const sheets = [
       {
-        name: employee.employeeName,
+        name: label,
         rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
       },
     ];
-    const fileName = `attendance-${employee.employeeName.replace(/\s+/g, "_")}-${selectedMonth}.xlsx`;
+    const fileName = `attendance-${label.replace(/\s+/g, "_")}-${selectedMonth}.xlsx`;
     await downloadMonthlyAttendanceExcel(sheets, fileName);
   }
 
@@ -1860,7 +1855,7 @@ export default function MonthlyAttendancePage() {
     }
 
     return {
-      employeeName: employee.employeeName,
+      employeeName: excelEmployeeLabel(employee.employeeName, employee.pseudonym),
       rows,
       totalDeduction: calculateTotalDeduction(employee),
     };
@@ -2604,7 +2599,7 @@ export default function MonthlyAttendancePage() {
                           <td>
                             {employee.isImported && employee.importedFooter?.workingDays
                               ? employee.importedFooter.workingDays
-                              : getTotalWorkingDays(employee, monthInfo, approvedLeavesMap)}
+                              : getTotalWorkingDays(monthInfo)}
                           </td>
                         </tr>
                             </>

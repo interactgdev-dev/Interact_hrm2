@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { isAbsentOrHalfDayStatus, isTardyStatus, normalizeAttendanceStatus } from "./attendance-status";
+import { sanitizeSheetName } from "./monthly-attendance-excel";
 
 export const DEDUCTION_SUMMARY_HEADERS = [
   "Date",
@@ -176,28 +177,42 @@ function appendEmployeeBlock(
   });
 }
 
+function uniqueSheetName(base: string, used: Set<string>): string {
+  let candidate = sanitizeSheetName(base);
+  if (!used.has(candidate)) {
+    used.add(candidate);
+    return candidate;
+  }
+  let n = 2;
+  while (used.has(candidate)) {
+    candidate = sanitizeSheetName(`${base.slice(0, 18)} ${n}`).slice(0, 31);
+    n += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
 export async function downloadDeductionSummaryExcel(
   blocks: DeductionSummaryEmployeeBlock[],
   fileName: string,
 ) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Interact HRM";
-
-  // All employees go on a single sheet, stacked top-to-bottom with a blank
-  // spacer row between them — no more per-employee tabs to switch through.
-  const sheet = workbook.addWorksheet("Deduction Summary");
+  const usedNames = new Set<string>();
 
   const exportBlocks = blocks.length
     ? blocks
     : [{ employeeName: "No employees", rows: [], totalDeduction: 0 }];
 
-  exportBlocks.forEach((block, index) => {
-    if (index > 0) sheet.addRow([]); // spacer between employees
+  // One sheet tab per employee (pseudo name when assigned) — matches attendance export.
+  exportBlocks.forEach((block) => {
+    const sheet = workbook.addWorksheet(
+      uniqueSheetName(block.employeeName || "Employee", usedNames),
+    );
     appendEmployeeBlock(sheet, block);
-  });
-
-  COLUMN_WIDTHS.forEach((w, i) => {
-    sheet.getColumn(i + 1).width = w;
+    COLUMN_WIDTHS.forEach((w, i) => {
+      sheet.getColumn(i + 1).width = w;
+    });
   });
 
   const buffer = await workbook.xlsx.writeBuffer();

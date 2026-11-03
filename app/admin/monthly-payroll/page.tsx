@@ -65,16 +65,13 @@ const OVERTIME_MIN_SECONDS = 60 * 60;
 
 export default function MonthlyAttendancePage() {
     // Calculate total working days for the month (excluding leaves and off days)
-    function getTotalWorkingDays(employee: any, monthInfo: any, approvedLeavesMap: any) {
+    // Month working days: Mon–Fri (or calendar "working"), minus calendar "off" only.
+    // Full-day leave does NOT reduce this — leave stays paid against the month base.
+    function getTotalWorkingDays(monthInfo: any) {
       let count = 0;
       if (!monthInfo || !monthInfo.days) return count;
       monthInfo.days.forEach((day: any) => {
-        const workingDay = isWorkingDay(day.dateKey);
-        // Exclude off days and approved leaves
-        if (workingDay) {
-          const isLeave = approvedLeavesMap[employee.employeeId]?.[day.dateKey];
-          if (!isLeave) count++;
-        }
+        if (isWorkingDay(day.dateKey)) count++;
       });
       return count;
     }
@@ -884,7 +881,7 @@ export default function MonthlyAttendancePage() {
         OverTime: '',
         "Tardy Count": '',
         Status: 'Total Working Days:',
-        Deduction: `${getTotalWorkingDays(employee, monthInfo, approvedLeavesMap)}`
+        Deduction: `${getTotalWorkingDays(monthInfo)}`
       }
     );
 
@@ -1165,9 +1162,7 @@ export default function MonthlyAttendancePage() {
     const paidHoursPerDay =
       Number(employee.paidHoursPerDay) > 0 ? Number(employee.paidHoursPerDay) : 9;
 
-    const workingDays = hasAttendance
-      ? getTotalWorkingDays(employee, monthInfo, approvedLeavesMap)
-      : 0;
+    const workingDays = hasAttendance ? getTotalWorkingDays(monthInfo) : 0;
 
     const systemUnpaidDays = hasAttendance ? calculateTotalDeduction(employee) / 100 : 0;
     const unpaidDays =
