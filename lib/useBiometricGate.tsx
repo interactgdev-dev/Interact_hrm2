@@ -28,8 +28,8 @@ const ACTION_LABELS: Record<BiometricAction, string> = {
   break_end: "End Break",
   prayer_start: "Start Prayer",
   prayer_end: "End Prayer",
-  refreshment_start: "Start Restroom",
-  refreshment_end: "End Restroom",
+  refreshment_start: "Start Rest Room",
+  refreshment_end: "End Rest Room",
   meeting_start: "Start Meeting",
   meeting_end: "End Meeting",
 };

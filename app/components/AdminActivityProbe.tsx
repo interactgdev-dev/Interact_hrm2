@@ -841,7 +841,7 @@ function describeApiBody(
   if (!data) {
     if (p.includes("/api/breaks")) return "Break API call";
     if (p.includes("/api/prayer_breaks")) return "Prayer Break API call";
-    if (p.includes("/api/refreshment_breaks")) return "Refreshment API call";
+    if (p.includes("/api/refreshment_breaks")) return "Rest Room API call";
     if (p.includes("/api/meeting_breaks")) return "Meeting API call";
     if (p.includes("/api/attendance")) return "Attendance API call";
     return "";
@@ -856,9 +856,9 @@ function describeApiBody(
   }
   if (p.includes("/api/refreshment_breaks")) {
     if (data.refreshment_start || data.refreshment_break_start)
-      return "Started Refreshment";
+      return "Started Rest Room";
     if (data.refreshment_end || data.refreshment_break_end)
-      return "Ended Refreshment";
+      return "Ended Rest Room";
   }
   if (p.includes("/api/meeting_breaks")) {
     if (data.meeting_start || data.meeting_break_start) return "Started Meeting";

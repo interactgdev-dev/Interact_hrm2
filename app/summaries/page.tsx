@@ -13,7 +13,7 @@ const VIEW_OPTIONS: { key: SummaryViewKey; label: string }[] = [
   { key: "attendance", label: "Attendance" },
   { key: "break", label: "Break" },
   { key: "prayer", label: "Prayer Break" },
-  { key: "refreshment", label: "Refreshment" },
+  { key: "refreshment", label: "Rest Room" },
   { key: "meeting", label: "Meeting" },
 ];
 
@@ -36,7 +36,7 @@ const RefreshmentSummaryView = dynamic(
   })),
   {
     ssr: false,
-    loading: () => <SummaryLoading label="Refreshment" />,
+    loading: () => <SummaryLoading label="Rest Room" />,
   }
 );
 const MeetingSummaryView = dynamic(

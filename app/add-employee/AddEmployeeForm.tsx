@@ -33,10 +33,16 @@ export default function AddEmployeeForm({
   edit = false,
   employeeId: editEmployeeId = null,
   onSaved,
+  onClose,
+  onRequestNew,
 }: {
   edit?: boolean;
   employeeId?: string | null;
   onSaved?: () => void;
+  /** Leave the form (back to employee list). */
+  onClose?: () => void;
+  /** Remount a blank Add Employee form (parent should bump `key`). */
+  onRequestNew?: () => void;
 }) {
   // Departments state for dropdown
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
@@ -873,38 +879,46 @@ export default function AddEmployeeForm({
       status: createLogin ? 'active' : 'disabled',
       role: role || 'Officer'
     };
-    // Removed unused payload and reference to finalEmployeeId
-    const editIdentifier = String(employeeId || editEmployeeId || '').trim();
+    // Once Personal Details created an employee in this form session, later
+    // saves on this tab must UPDATE that row — never INSERT another ID.
+    const editIdentifier = String(employeeId || editEmployeeId || "").trim();
+    const updatingExisting = Boolean(editIdentifier);
     const editTargetPayload = /^\d+$/.test(editIdentifier)
       ? { id: Number(editIdentifier) }
-      : { employee_code: editIdentifier };
+      : editIdentifier
+        ? { employee_code: editIdentifier }
+        : {};
 
-    let hrmRes = await fetch('/api/hrm_employees', {
-      method: isEdit ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(isEdit ? { ...hrmPayload, ...editTargetPayload } : hrmPayload)
+    let hrmRes = await fetch("/api/hrm_employees", {
+      method: updatingExisting ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        updatingExisting ? { ...hrmPayload, ...editTargetPayload } : hrmPayload,
+      ),
     });
     let hrmData = await hrmRes.json();
     if (!hrmData.success) {
       if (hrmData.error) {
-        toastError('Save failed: ' + hrmData.error);
+        toastError("Save failed: " + hrmData.error);
       } else {
-        toastError('Save failed: Unknown');
+        toastError("Save failed: Unknown");
       }
       return;
     }
     const savedId = String(
-      (!isEdit && hrmData.id ? hrmData.id : employeeId || editEmployeeId) || "",
+      (hrmData.id ? hrmData.id : employeeId || editEmployeeId) || "",
     );
-    if (!isEdit && hrmData.id) {
-      setEmployeeId(hrmData.id.toString());
+    if (hrmData.id) {
+      setEmployeeId(String(hrmData.id));
+    } else if (editIdentifier && /^\d+$/.test(editIdentifier)) {
+      setEmployeeId(editIdentifier);
     }
     if (savedId && orgRoleNeedsDepartmentConfirm(role)) {
       const ok = await saveReportingManager(savedId);
       if (!ok) return;
     }
-    toastSuccess(isEdit ? 'Employee updated.' : 'Employee saved.');
-    setActiveTab('Contact Details');
+    toastSuccess(updatingExisting ? "Employee updated." : "Employee saved.");
+    setActiveTab("Contact Details");
   }
 
   return (
@@ -936,29 +950,56 @@ export default function AddEmployeeForm({
                 <p className={styles.subheading}>
                   {activeTab} — complete the fields below and save to continue onboarding.
                 </p>
+                {!isEdit && employeeId ? (
+                  <p className={styles.sessionHint}>
+                    Updating employee ID <strong>{employeeId}</strong>. Further Personal Details
+                    saves update this record. Close when done, or start a new form for another hire.
+                  </p>
+                ) : null}
               </div>
-              {!isEdit && (
-                <div className={styles.importActions}>
-                  <button type="button" className={styles.templateBtn} onClick={downloadImportTemplate}>
-                    Download Template
-                  </button>
+              <div className={styles.headerActions}>
+                {!isEdit && (
+                  <div className={styles.importActions}>
+                    <button type="button" className={styles.templateBtn} onClick={downloadImportTemplate}>
+                      Download Template
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.importBtn}
+                      disabled={importing}
+                      onClick={() => importInputRef.current?.click()}
+                    >
+                      {importing ? "Importing…" : "Import XLS"}
+                    </button>
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      style={{ display: "none" }}
+                      onChange={handleImportFile}
+                    />
+                  </div>
+                )}
+                {!isEdit && employeeId && onRequestNew ? (
                   <button
                     type="button"
-                    className={styles.importBtn}
-                    disabled={importing}
-                    onClick={() => importInputRef.current?.click()}
+                    className={styles.newEmployeeBtn}
+                    onClick={() => {
+                      if (
+                        typeof window !== "undefined" &&
+                        !window.confirm(
+                          "Start a blank form for a new employee? Unsaved tab changes on this form will be lost.",
+                        )
+                      ) {
+                        return;
+                      }
+                      onRequestNew();
+                    }}
                   >
-                    {importing ? "Importing…" : "Import XLS"}
+                    New Employee
                   </button>
-                  <input
-                    ref={importInputRef}
-                    type="file"
-                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    style={{ display: "none" }}
-                    onChange={handleImportFile}
-                  />
-                </div>
-              )}
+                ) : null}
+              </div>
             </div>
             {!isEdit && importSummary ? <pre className={styles.importResult}>{importSummary}</pre> : null}
           </header>
@@ -1240,8 +1281,23 @@ export default function AddEmployeeForm({
                 </div>
               )}
               <div className={styles.actions}>
-                <button type="button" className={styles.cancelBtn}>Cancel</button>
-                <button type="submit" className={styles.saveBtn}>Save</button>
+                {onClose ? (
+                  <button type="button" className={styles.closeBtn} onClick={onClose}>
+                    Close
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className={styles.cancelBtn}
+                  onClick={() => {
+                    if (onClose) onClose();
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className={styles.saveBtn}>
+                  Save
+                </button>
               </div>
             </form>
           )}

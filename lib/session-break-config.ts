@@ -35,9 +35,9 @@ export const REFRESHMENT_BREAK_CONFIG: SessionBreakConfig = {
   startAction: "refreshment_start",
   endAction: "refreshment_end",
   lockPrefix: "refreshment_break_start_emp_",
-  label: "Restroom Break",
-  /** Button text uses shortLabel (`Start Restroom`) so pill height matches Prayer/Meeting. */
-  shortLabel: "Restroom",
+  label: "Rest Room Break",
+  /** Button text uses shortLabel (`Start Rest Room`) so pill height matches Prayer/Meeting. */
+  shortLabel: "Rest Room",
   cardClass: "cardRefreshment",
   titleClass: "titleRefreshment",
   btnClass: "btnRefreshment",
@@ -79,7 +79,7 @@ export const SESSION_BREAK_CONFIGS: Record<SessionBreakKind, SessionBreakConfig>
 
 export function breakTypeLabel(breakType: string | null | undefined): string {
   if (breakType === "prayer_break") return "Prayer Break";
-  if (breakType === "refreshment_break") return "Restroom Break";
+  if (breakType === "refreshment_break") return "Rest Room Break";
   if (breakType === "meeting_break") return "Meeting";
   return "Break";
 }
