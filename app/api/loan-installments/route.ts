@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import {
+  syncLoanInstallmentFromLegacy,
+  syncNewLoanFromLegacy,
+} from "@/lib/employee-financial-history";
 
 function prevMonth(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
@@ -66,6 +70,13 @@ export async function POST(req: NextRequest) {
       );
       if (result?.insertId) inserted.push(result.insertId);
     }
+    await syncNewLoanFromLegacy({
+      employeeId: employee_id,
+      principal: amount,
+      installmentCount: numInstallments,
+      startMonth: start_month,
+      perMonth,
+    });
     return NextResponse.json({ success: true, ids: inserted });
   } catch (err) {
     return NextResponse.json(
@@ -86,6 +97,8 @@ export async function PATCH(req: NextRequest) {
         { status: 400 }
       );
     }
+    let current: any = null;
+    let newPayable: number | null = null;
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
@@ -100,7 +113,7 @@ export async function PATCH(req: NextRequest) {
          LIMIT 1`,
         [employee_id, month]
       );
-      const current = Array.isArray(currentRows) && currentRows.length > 0 ? currentRows[0] : null;
+      current = Array.isArray(currentRows) && currentRows.length > 0 ? currentRows[0] : null;
       if (!current) {
         await conn.rollback();
         return NextResponse.json(
@@ -112,7 +125,6 @@ export async function PATCH(req: NextRequest) {
       const updates: string[] = [];
       const params: any[] = [];
 
-      let newPayable: number | null = null;
       if (payable_this_month != null) {
         const val = parseFloat(payable_this_month);
         if (!isNaN(val) && val >= 0) {
@@ -211,6 +223,21 @@ export async function PATCH(req: NextRequest) {
     } finally {
       conn.release();
     }
+
+    const paidAmt =
+      status === "paid"
+        ? (newPayable ?? Number(current?.payable_this_month ?? current?.original_amount ?? 0))
+        : status
+          ? 0
+          : null;
+    await syncLoanInstallmentFromLegacy({
+      employeeId: employee_id,
+      month,
+      payable: newPayable,
+      status: status || null,
+      paidAmount: paidAmt,
+    });
+
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json(

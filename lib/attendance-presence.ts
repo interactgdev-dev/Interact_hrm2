@@ -122,6 +122,26 @@ export function evaluatePresencePrompt(
   };
 }
 
+export async function employeeHasOpenClockIn(
+  employeeId: string | null | undefined,
+): Promise<boolean> {
+  const eid = String(employeeId ?? "").trim();
+  if (!eid) return false;
+  try {
+    const { pool } = await import("./db");
+    const [rows] = await pool.execute(
+      `SELECT id FROM ${ATTENDANCE_TABLE}
+       WHERE employee_id = ? AND clock_out IS NULL
+       ORDER BY clock_in DESC
+       LIMIT 1`,
+      [eid],
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** True when shift/session 3h grace has ended — auto clock-out must not require face verify. */
 export async function isGraceExpiredForEmployee(
   conn: DbExecuteConn,

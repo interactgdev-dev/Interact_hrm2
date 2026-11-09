@@ -15,7 +15,11 @@ import {
   permissionImpliesDepartmentScope,
 } from "@/lib/org-role";
 import { basePermissionKey, permissionSetHas } from "@/lib/access-control/permission-scope";
-import { isHrDepartment } from "@/lib/access-control/hr-access";
+import {
+  isFinanceAccessRoleSlug,
+  isFinanceDepartment,
+  isHrDepartment,
+} from "@/lib/access-control/hr-access";
 
 export type ViewerDataScope = {
   mode: "all" | "department" | "team" | "self";
@@ -168,6 +172,23 @@ export async function resolveViewerDataScope(
   // HR staff need company-wide ops data (payroll / attendance / leaves across depts)
   if (isHrDepartment(selfDeptName)) {
     return emptyScope(orgRole);
+  }
+
+  // Finance / Accounts department — company-wide final salary + advance/loan
+  if (isFinanceDepartment(selfDeptName)) {
+    return emptyScope(orgRole);
+  }
+
+  // Finance Manager (and related) System Control roles — company-wide even if
+  // the employee's job department chip is not Finance.
+  try {
+    const access = await resolveEmployeeAccessRoleSlug(eid);
+    const financeRole = (access.roleSlugs || []).some((slug) =>
+      isFinanceAccessRoleSlug(slug),
+    );
+    if (financeRole) return emptyScope(orgRole);
+  } catch {
+    /* fall through */
   }
 
   const perms = new Set(await loadViewerPermissionKeys(eid));

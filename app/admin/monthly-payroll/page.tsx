@@ -1,13 +1,17 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { fetchAdvanceSalary } from "./advanceSalaryUtils";
+import { usePathname } from "next/navigation";
+import { fetchAdvanceSalary, fetchPayrollLoanAdvance } from "./advanceSalaryUtils";
 import { fetchLoanSalary } from "./loanSalaryUtils";
 import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
-import { FaFileExcel } from "react-icons/fa";
+import { FaFileExcel, FaCheckCircle, FaExclamationTriangle } from "react-icons/fa";
+import finalizeModal from "./finalize-modal.module.css";
+import fh from "../employee-financial-history/financial-history.module.css";
+import { orgDeptChipLabel } from "@/app/admin/roles-permissions/system-control-data";
 import * as XLSX from 'xlsx';
 import {
   getDateStringInTimeZone,
@@ -193,6 +197,7 @@ export default function MonthlyAttendancePage() {
   const [attendance, setAttendance] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [searchName, setSearchName] = useState("");
+  const [searchPseudo, setSearchPseudo] = useState("");
 
 
     // After attendanceByEmployee is defined (around line 660):
@@ -981,6 +986,17 @@ export default function MonthlyAttendancePage() {
         medicalClaims: getClaimsForEmployee(emp),
         medicalDedc: getMedicalDedcForEmployee(emp),
       });
+      if (financePayrollView) {
+        return {
+          ID: emp.employeeId,
+          "Employee Name": emp.employeeName,
+          Pseudonym: emp.pseudonym,
+          Department: emp.departmentName,
+          Advance: row.advanceDeduction,
+          Loan: row.loanDeduction,
+          "Final Salary": row.finalSalary,
+        };
+      }
       return {
       "ID": emp.employeeId,
       "Employee Name": emp.employeeName,
@@ -1209,12 +1225,116 @@ export default function MonthlyAttendancePage() {
   const [defaultCtdByEmployee, setDefaultCtdByEmployee] = React.useState<Record<string, number>>({});
   const [advanceSalaryMap, setAdvanceSalaryMap] = React.useState<Record<string, number>>({});
   const [loanSalaryMap, setLoanSalaryMap] = React.useState<Record<string, number>>({});
-  // Fetch advance salary for selected month
+  const [finalizeModalOpen, setFinalizeModalOpen] = React.useState(false);
+  const [finalizeBusy, setFinalizeBusy] = React.useState(false);
+  const [finalizeResult, setFinalizeResult] = React.useState<
+    null | { type: "success" | "error"; message: string }
+  >(null);
+  const pathname = usePathname() || "";
+  const onEmployeePortal = pathname.includes("/employee-dashboard");
+  const [viewerEmployeeId, setViewerEmployeeId] = React.useState("");
+  /** pending = waiting for /me so we don't flash full admin payroll for Finance users */
+  const [financeGate, setFinanceGate] = React.useState<"pending" | "yes" | "no">(
+    "pending",
+  );
+  /** Finance employee-dashboard: compact Final Salary view + Mark Paid */
+  const financePayrollView = onEmployeePortal && financeGate === "yes";
+  const showMarkPaidButton = financePayrollView;
+
+  React.useEffect(() => {
+    if (!onEmployeePortal) {
+      setFinanceGate("no");
+      setViewerEmployeeId("");
+      return;
+    }
+    let eid = "";
+    try {
+      eid = String(localStorage.getItem("employeeId") || "").trim();
+    } catch {
+      eid = "";
+    }
+    setViewerEmployeeId(/^\d+$/.test(eid) ? eid : "");
+    if (!/^\d+$/.test(eid)) {
+      setFinanceGate("no");
+      return;
+    }
+    let cancelled = false;
+    setFinanceGate("pending");
+    fetch(`/api/access-control/me?employeeId=${encodeURIComponent(eid)}`, {
+      cache: "no-store",
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const dept =
+          data?.departmentName ||
+          data?.department_name ||
+          data?.employee?.department_name ||
+          "";
+        const slugs: string[] = Array.isArray(data?.role?.slugs)
+          ? data.role.slugs
+          : data?.role?.slug
+            ? [String(data.role.slug)]
+            : [];
+        const perms: string[] = Array.isArray(data?.permissions)
+          ? data.permissions
+          : [];
+        const financeDept = orgDeptChipLabel(dept) === "Finance";
+        const financeRole = slugs.some((slug) => {
+          const s = String(slug || "").trim().toLowerCase();
+          return (
+            s === "finance_manager" ||
+            s === "team_lead_finance" ||
+            s === "accountant_billing" ||
+            s === "mp_finance" ||
+            s.includes("finance_manager") ||
+            s.includes("team_lead_finance")
+          );
+        });
+        const financePerm = perms.some((p) => {
+          const key = String(p || "").trim().toLowerCase();
+          return (
+            key === "payroll.loan@all_departments" ||
+            key === "payroll.advance@all_departments" ||
+            key === "payroll.monthly.edit@all_departments" ||
+            key === "payroll.monthly.view@all_departments"
+          );
+        });
+        setFinanceGate(financeDept || financeRole || financePerm ? "yes" : "no");
+      })
+      .catch(() => {
+        if (!cancelled) setFinanceGate("no");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onEmployeePortal]);
+
+  const expandIdMap = React.useCallback((raw: Record<string, number>) => {
+    const out: Record<string, number> = {};
+    for (const [id, amount] of Object.entries(raw || {})) {
+      const amt = Number(amount);
+      if (!Number.isFinite(amt) || amt <= 0) continue;
+      for (const k of payrollIdKeys(id)) {
+        out[k] = Math.max(out[k] || 0, amt);
+      }
+    }
+    return out;
+  }, []);
+
+  // Fetch unpaid advance + loan for selected month (separate maps)
   React.useEffect(() => {
     if (!selectedMonth) return;
-    fetchAdvanceSalary(selectedMonth).then(setAdvanceSalaryMap);
-    fetchLoanSalary(selectedMonth).then(setLoanSalaryMap);
-  }, [selectedMonth]);
+    let cancelled = false;
+    fetchPayrollLoanAdvance(selectedMonth).then((data) => {
+      if (cancelled) return;
+      setAdvanceSalaryMap(expandIdMap(data.advances || {}));
+      setLoanSalaryMap(expandIdMap(data.loans || {}));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMonth, expandIdMap]);
 
   // Fetch all employees and their salary (amount, any component)
   React.useEffect(() => {
@@ -1590,10 +1710,17 @@ export default function MonthlyAttendancePage() {
       ? (opts.ctd as number)
       : 0;
 
-    const adv = Number(advanceSalaryMap[employee.employeeId] ?? 0);
-    const loan = Number(loanSalaryMap[employee.employeeId] ?? 0);
-    const loanAdvance =
-      (Number.isFinite(adv) ? adv : 0) + (Number.isFinite(loan) ? loan : 0);
+    // Separate advance + loan (Finance compact view + admin Loan/Advance column)
+    const empKey = String(employee.employeeId ?? "");
+    const advanceDeduction = (() => {
+      const n = Number(lookupMoneyMap(advanceSalaryMap, empKey) ?? 0);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    })();
+    const loanDeduction = (() => {
+      const n = Number(lookupMoneyMap(loanSalaryMap, empKey) ?? 0);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    })();
+    const loanAdvance = advanceDeduction + loanDeduction;
 
     const totalDeductions =
       unpaidDaysSalary +
@@ -1602,7 +1729,8 @@ export default function MonthlyAttendancePage() {
       otherDed +
       ctd +
       medicalDedc +
-      loanAdvance;
+      advanceDeduction +
+      loanDeduction;
 
     const netBeforeTax = Math.max(0, grossSalary - totalDeductions);
     // Tax base = Net. Salary before Tax (not Gross).
@@ -1636,6 +1764,8 @@ export default function MonthlyAttendancePage() {
       kpisDed,
       otherDed,
       ctd,
+      advanceDeduction,
+      loanDeduction,
       loanAdvance,
       totalDeductions,
       netBeforeTax,
@@ -1660,10 +1790,548 @@ export default function MonthlyAttendancePage() {
 
   // Filter attendanceByEmployee for table and export
   const filteredEmployees = attendanceByEmployee.filter((emp: any) => {
-    const matchesName = searchName ? (emp.employeeName || "").toLowerCase().includes(searchName.toLowerCase()) : true;
-    const matchesDept = selectedDepartment ? (emp.departmentName || "").toLowerCase() === selectedDepartment.toLowerCase() : true;
-    return matchesName && matchesDept;
+    const nameQ = searchName.trim().toLowerCase();
+    const pseudoQ = searchPseudo.trim().toLowerCase();
+    const name = String(emp.employeeName || "").toLowerCase();
+    const pseudo = String(emp.pseudonym || "").toLowerCase();
+    const idStr = String(emp.employeeId || "");
+    const matchesName =
+      !nameQ ||
+      name.includes(nameQ) ||
+      idStr.includes(nameQ);
+    const matchesPseudo = !pseudoQ || pseudo.includes(pseudoQ);
+    const matchesDept = selectedDepartment
+      ? String(emp.departmentName || "").toLowerCase() === selectedDepartment.toLowerCase()
+      : true;
+    return matchesName && matchesPseudo && matchesDept;
   });
+
+  const financeSummary = React.useMemo(() => {
+    let advanceTotal = 0;
+    let loanTotal = 0;
+    let finalTotal = 0;
+    let withAdvance = 0;
+    let withLoan = 0;
+    for (const employee of filteredEmployees) {
+      const empId = employee.employeeId;
+      const taxManual = taxEditedRef.current.has(String(empId));
+      const row = getPayrollBreakdown(employee, {
+        taxAmount: taxByEmployee[empId],
+        taxManual,
+        breakExceedDed: breakExceedDedByEmployee[empId] ?? 0,
+        kpisDed: kpisDedByEmployee[empId] ?? 0,
+        otherDed: otherDedByEmployee[empId] ?? 0,
+        ctd: getCtdForEmployee(employee),
+        fuelAllowance: getFuelAllowanceForEmployee(employee),
+        unpaidDays: getUnpaidDaysForEmployee(employee),
+        medicalClaims: getClaimsForEmployee(employee),
+        medicalDedc: getMedicalDedcForEmployee(employee),
+      });
+      advanceTotal += row.advanceDeduction || 0;
+      loanTotal += row.loanDeduction || 0;
+      finalTotal += row.finalSalary || 0;
+      if ((row.advanceDeduction || 0) > 0) withAdvance += 1;
+      if ((row.loanDeduction || 0) > 0) withLoan += 1;
+    }
+    return {
+      employees: filteredEmployees.length,
+      advanceTotal,
+      loanTotal,
+      finalTotal,
+      withAdvance,
+      withLoan,
+    };
+  }, [
+    filteredEmployees,
+    taxByEmployee,
+    breakExceedDedByEmployee,
+    kpisDedByEmployee,
+    otherDedByEmployee,
+    advanceSalaryMap,
+    loanSalaryMap,
+    ctdByEmployee,
+    fuelByEmployee,
+    claimsByEmployee,
+    unpaidDaysByEmployee,
+    defaultCtdByEmployee,
+    defaultFuelByEmployee,
+    medicalPackageByEmployee,
+  ]);
+
+  // Snapshot Final Salary for Salary Disbursement (exact Monthly Payroll values).
+  React.useEffect(() => {
+    if (!selectedMonth || !attendanceByEmployee.length) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      const rows = attendanceByEmployee.map((employee: any) => {
+        const empId = employee.employeeId;
+        const taxManual = taxEditedRef.current.has(String(empId));
+        const row = getPayrollBreakdown(employee, {
+          taxAmount: taxByEmployee[empId],
+          taxManual,
+          breakExceedDed: breakExceedDedByEmployee[empId] ?? 0,
+          kpisDed: kpisDedByEmployee[empId] ?? 0,
+          otherDed: otherDedByEmployee[empId] ?? 0,
+          ctd: getCtdForEmployee(employee),
+          fuelAllowance: getFuelAllowanceForEmployee(employee),
+          unpaidDays: getUnpaidDaysForEmployee(employee),
+          medicalClaims: getClaimsForEmployee(employee),
+          medicalDedc: getMedicalDedcForEmployee(employee),
+        });
+        return {
+          employee_id: Number(empId),
+          final_salary: Number(row.finalSalary) || 0,
+        };
+      });
+      let viewer = "";
+      try {
+        viewer = String(localStorage.getItem("employeeId") || "").trim();
+      } catch {
+        viewer = "";
+      }
+      void fetch("/api/monthly-payroll/final-salaries", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(viewer ? { "x-employee-id": viewer, "x-hrm-employee-id": viewer } : {}),
+        },
+        body: JSON.stringify({
+          month: selectedMonth,
+          rows,
+          viewer_id: /^\d+$/.test(viewer) ? Number(viewer) : undefined,
+        }),
+      }).catch(() => {
+        /* non-blocking sync */
+      });
+    }, 1200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedMonth,
+    attendanceByEmployee,
+    taxByEmployee,
+    breakExceedDedByEmployee,
+    kpisDedByEmployee,
+    otherDedByEmployee,
+    advanceSalaryMap,
+    loanSalaryMap,
+    ctdByEmployee,
+    fuelByEmployee,
+    claimsByEmployee,
+    unpaidDaysByEmployee,
+    defaultCtdByEmployee,
+    defaultFuelByEmployee,
+    medicalPackageByEmployee,
+  ]);
+
+  const clearFinanceFilters = () => {
+    setSearchName("");
+    setSearchPseudo("");
+    setSelectedDepartment("");
+  };
+
+  const openMarkPaidModal = () => {
+    if (!selectedMonth) return;
+    setFinalizeResult(null);
+    setFinalizeModalOpen(true);
+  };
+
+  const finalizeModalNode = finalizeModalOpen ? (
+        <div
+          className={finalizeModal.overlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="finalize-payroll-title"
+          onClick={() => {
+            if (!finalizeBusy) setFinalizeModalOpen(false);
+          }}
+        >
+          <div
+            className={finalizeModal.card}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={finalizeModal.header}>
+              <div className={finalizeModal.iconWrap}>
+                {finalizeResult?.type === "success" ? (
+                  <FaCheckCircle />
+                ) : finalizeResult?.type === "error" ? (
+                  <FaExclamationTriangle />
+                ) : (
+                  <FaCheckCircle />
+                )}
+              </div>
+              <h3 id="finalize-payroll-title" className={finalizeModal.title}>
+                {finalizeResult?.type === "success"
+                  ? "Marked as Paid"
+                  : finalizeResult?.type === "error"
+                    ? "Could Not Update"
+                    : "Confirm Final Salary"}
+              </h3>
+              <p className={finalizeModal.subtitle}>
+                {finalizeResult
+                  ? finalizeResult.type === "success"
+                    ? "Statuses are updated in Employee Financial History."
+                    : "Please try again in a moment."
+                  : "Lock this month’s advance and loan deductions after Final Salary."}
+              </p>
+            </div>
+
+            <div className={finalizeModal.body}>
+              {!finalizeResult ? (
+                <>
+                  <div className={finalizeModal.monthPill}>
+                    Payroll month: {selectedMonth}
+                    {monthInfo.label ? ` · ${monthInfo.label}` : ""}
+                  </div>
+                  <ul className={finalizeModal.list}>
+                    <li>
+                      <span className={finalizeModal.bullet} />
+                      <span>
+                        Advances for this month will change from <strong>Active</strong> to{" "}
+                        <strong>Paid</strong> (green).
+                      </span>
+                    </li>
+                    <li>
+                      <span className={finalizeModal.bullet} />
+                      <span>
+                        This month’s loan installment will change from <strong>Pending</strong> to{" "}
+                        <strong>Paid</strong> (green).
+                      </span>
+                    </li>
+                    <li>
+                      <span className={finalizeModal.bullet} />
+                      <span>
+                        Amounts already deducted in Monthly Payroll will no longer be re-deducted.
+                      </span>
+                    </li>
+                  </ul>
+                  <p className={finalizeModal.note}>
+                    Use this only after Final Salary is ready for {selectedMonth}. You can review the
+                    result under Employee Financial History → Advances / Loans.
+                  </p>
+                </>
+              ) : finalizeResult.type === "success" ? (
+                <p className={finalizeModal.successBox}>{finalizeResult.message}</p>
+              ) : (
+                <p className={finalizeModal.errorBox}>{finalizeResult.message}</p>
+              )}
+            </div>
+
+            <div className={finalizeModal.actions}>
+              {!finalizeResult ? (
+                <>
+                  <button
+                    type="button"
+                    className={finalizeModal.btnGhost}
+                    disabled={finalizeBusy}
+                    onClick={() => setFinalizeModalOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className={finalizeModal.btnPrimary}
+                    disabled={finalizeBusy}
+                    onClick={async () => {
+                      if (!selectedMonth) return;
+                      setFinalizeBusy(true);
+                      try {
+                        const res = await fetch(
+                          "/api/employee-financial-history/mark-payroll-paid",
+                          {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              "x-employee-id": viewerEmployeeId,
+                              "x-hrm-employee-id": viewerEmployeeId,
+                            },
+                            body: JSON.stringify({
+                              month: selectedMonth,
+                              viewer_id: viewerEmployeeId
+                                ? Number(viewerEmployeeId)
+                                : undefined,
+                            }),
+                          },
+                        );
+                        const data = await res.json();
+                        if (!data.success) {
+                          setFinalizeResult({
+                            type: "error",
+                            message: data.message || "Failed to mark advance and loan as paid.",
+                          });
+                          return;
+                        }
+                        const maps = await fetchPayrollLoanAdvance(selectedMonth);
+                        setAdvanceSalaryMap(expandIdMap(maps.advances || {}));
+                        setLoanSalaryMap(expandIdMap(maps.loans || {}));
+                        setFinalizeResult({
+                          type: "success",
+                          message:
+                            data.message ||
+                            `Advance and this month's loan installment are now Paid on the Loan page, Advance page, and Financial History. Refresh those pages to see Paid (green).`,
+                        });
+                      } catch {
+                        setFinalizeResult({
+                          type: "error",
+                          message: "Failed to mark advance and loan as paid. Please try again.",
+                        });
+                      } finally {
+                        setFinalizeBusy(false);
+                      }
+                    }}
+                  >
+                    {finalizeBusy ? "Updating…" : "Confirm & Mark Paid"}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className={
+                    finalizeResult.type === "success"
+                      ? finalizeModal.btnSuccess
+                      : finalizeModal.btnPrimary
+                  }
+                  onClick={() => setFinalizeModalOpen(false)}
+                >
+                  Done
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null;
+
+  if (onEmployeePortal && financeGate === "pending") {
+    return (
+      <OptionalAdminShell>
+        <div className={fh.page}>
+          <div className={fh.hero}>
+            <h1 className={fh.heroTitle}>Final Salary</h1>
+            <p className={fh.heroSub}>Loading your Finance payroll access…</p>
+          </div>
+          <div className={fh.panel} style={{ padding: "28px 20px", textAlign: "center", color: "#64748b" }}>
+            Please wait…
+          </div>
+        </div>
+        {popup}
+      </OptionalAdminShell>
+    );
+  }
+
+  if (financePayrollView) {
+    const deptOptions = Array.from(
+      new Set(
+        attendanceByEmployee
+          .map((e: any) => String(e.departmentName || "").trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+
+    return (
+      <OptionalAdminShell>
+        <div className={fh.page}>
+          <div className={fh.hero}>
+            <h1 className={fh.heroTitle}>Final Salary (Finance)</h1>
+            <p className={fh.heroSub}>
+              Company-wide Final Salary with Advance and Loan for the selected month. Filter by
+              name, pseudo name, or department — then mark Loan/Advance Paid after recovery.
+            </p>
+          </div>
+
+          <div className={fh.panel}>
+            <div className={fh.filters}>
+              <div className={fh.field}>
+                <label className={fh.label}>Month</label>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className={fh.input}
+                />
+              </div>
+              <div className={fh.field}>
+                <label className={fh.label}>Search by name</label>
+                <input
+                  type="text"
+                  placeholder="Employee name or ID"
+                  value={searchName}
+                  onChange={(e) => setSearchName(e.target.value)}
+                  className={fh.input}
+                />
+              </div>
+              <div className={fh.field}>
+                <label className={fh.label}>Pseudo name</label>
+                <input
+                  type="text"
+                  placeholder="P.Name"
+                  value={searchPseudo}
+                  onChange={(e) => setSearchPseudo(e.target.value)}
+                  className={fh.input}
+                />
+              </div>
+              <div className={fh.field}>
+                <label className={fh.label}>Department</label>
+                <select
+                  value={selectedDepartment}
+                  onChange={(e) => setSelectedDepartment(e.target.value)}
+                  className={fh.select}
+                >
+                  <option value="">All departments</option>
+                  {deptOptions.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button type="button" className={fh.clearBtn} onClick={clearFinanceFilters}>
+                Clear filters
+              </button>
+            </div>
+          </div>
+
+          <div className={fh.cards}>
+            <div className={fh.card}>
+              <div className={fh.cardLabel}>Employees</div>
+              <div className={fh.cardValue}>{financeSummary.employees}</div>
+              <div className={fh.cardMeta}>{monthInfo.label || selectedMonth}</div>
+            </div>
+            <div className={fh.card}>
+              <div className={fh.cardLabel}>Advance this month</div>
+              <div className={fh.cardValue}>{formatWithCommas(financeSummary.advanceTotal)}</div>
+              <div className={fh.cardMeta}>{financeSummary.withAdvance} employee(s)</div>
+            </div>
+            <div className={fh.card}>
+              <div className={fh.cardLabel}>Loan this month</div>
+              <div className={fh.cardValue}>{formatWithCommas(financeSummary.loanTotal)}</div>
+              <div className={fh.cardMeta}>{financeSummary.withLoan} employee(s)</div>
+            </div>
+            <div className={fh.card}>
+              <div className={fh.cardLabel}>Final salary total</div>
+              <div className={fh.cardValue}>{formatWithCommas(financeSummary.finalTotal)}</div>
+              <div className={fh.cardMeta}>After deductions</div>
+            </div>
+          </div>
+
+          <div className={fh.selectedBar}>
+            <div className={fh.selectedText}>
+              {monthInfo.label
+                ? `Payroll for ${monthInfo.label}`
+                : `Payroll month ${selectedMonth}`}
+              {" · "}
+              {financeSummary.employees} shown
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button
+                type="button"
+                className={fh.ghostBtn}
+                onClick={() => {
+                  fetchAttendance();
+                  fetchCommissions(selectedMonth);
+                }}
+              >
+                Refresh
+              </button>
+              <button type="button" className={fh.ghostBtn} onClick={() => downloadExcel()}>
+                <FaFileExcel style={{ marginRight: 6 }} />
+                Export Excel
+              </button>
+              {showMarkPaidButton ? (
+                <button type="button" className={fh.primaryBtn} onClick={openMarkPaidModal}>
+                  Mark Final Loan/Advance Paid
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {loading ? <div className={fh.loading}>Loading payroll records...</div> : null}
+
+          <div className={fh.panel}>
+            <div className={fh.tableWrap}>
+              <table className={fh.table}>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Employee</th>
+                    <th>P.Name</th>
+                    <th>Department</th>
+                    <th>Advance</th>
+                    <th>Loan</th>
+                    <th>Final Salary</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEmployees.length > 0 ? (
+                    filteredEmployees.map((employee) => {
+                      const empId = employee.employeeId;
+                      const taxManual = taxEditedRef.current.has(String(empId));
+                      const row = getPayrollBreakdown(employee, {
+                        taxAmount: taxByEmployee[empId],
+                        taxManual,
+                        breakExceedDed: breakExceedDedByEmployee[empId] ?? 0,
+                        kpisDed: kpisDedByEmployee[empId] ?? 0,
+                        otherDed: otherDedByEmployee[empId] ?? 0,
+                        ctd: getCtdForEmployee(employee),
+                        fuelAllowance: getFuelAllowanceForEmployee(employee),
+                        unpaidDays: getUnpaidDaysForEmployee(employee),
+                        medicalClaims: getClaimsForEmployee(employee),
+                        medicalDedc: getMedicalDedcForEmployee(employee),
+                      });
+                      return (
+                        <tr key={employee.employeeId}>
+                          <td>{employee.employeeId}</td>
+                          <td>
+                            <EmployeeTableNameCell
+                              name={employee.employeeName}
+                              employeeId={employee.employeeId}
+                              photo={getPhoto(employee.employeeId)}
+                              onOpen={() =>
+                                openFromRow({
+                                  employee_id: employee.employeeId,
+                                  employee_name: employee.employeeName,
+                                  pseudonym: employee.pseudonym,
+                                  department_name: employee.departmentName,
+                                })
+                              }
+                            />
+                          </td>
+                          <td>{employee.pseudonym || "--"}</td>
+                          <td>{employee.departmentName || "--"}</td>
+                          <td style={{ color: "#dc2626", fontWeight: 600 }}>
+                            {formatWithCommas(row.advanceDeduction)}
+                          </td>
+                          <td style={{ color: "#dc2626", fontWeight: 600 }}>
+                            {formatWithCommas(row.loanDeduction)}
+                          </td>
+                          <td style={{ color: "#007a5a", fontWeight: 700 }}>
+                            {formatWithCommas(row.finalSalary)}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={7}>
+                        <div className={fh.empty}>
+                          No employees match the current filters for {selectedMonth}.
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        {finalizeModalNode}
+        {popup}
+      </OptionalAdminShell>
+    );
+  }
 
   return (
     <OptionalAdminShell>
@@ -1714,7 +2382,12 @@ export default function MonthlyAttendancePage() {
           >
             Search
           </button>
-          <button onClick={downloadExcel} className={styles.breakSummaryXLSButton}>
+          <button
+            onClick={() => {
+              downloadExcel();
+            }}
+            className={styles.breakSummaryXLSButton}
+          >
             <FaFileExcel /> Export Excel
           </button>
         </div>
@@ -1948,6 +2621,8 @@ export default function MonthlyAttendancePage() {
           </div>
         </div>
       </div>
+
+      {finalizeModalNode}
       {popup}
     </OptionalAdminShell>
   );

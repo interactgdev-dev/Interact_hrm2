@@ -34,7 +34,25 @@ export const HR_DEPARTMENT_DEFAULT_PERMISSIONS: string[] = [
   "payroll.monthly.view",
   "payroll.advance",
   "payroll.loan",
+  "payroll.financial_history",
   "people.employee_list.view",
+  "portal.tickets.create",
+  "portal.my_info.view",
+];
+
+/**
+ * Every Finance / Accounts employee — company-wide final salary view,
+ * Advance / Loan / Financial History, and Mark Paid from Monthly Payroll.
+ * `@all_departments` so lists are not limited to Finance dept only.
+ */
+export const FINANCE_DEPARTMENT_DEFAULT_PERMISSIONS: string[] = [
+  "payroll.monthly.view@all_departments",
+  "payroll.monthly.edit@all_departments",
+  "payroll.advance@all_departments",
+  "payroll.loan@all_departments",
+  "payroll.financial_history@all_departments",
+  "payroll.salary_disbursement@all_departments",
+  "people.employee_list.view@all_departments",
   "portal.tickets.create",
   "portal.my_info.view",
 ];
@@ -70,6 +88,51 @@ const ROLE_RANK: Record<string, number> = {
 
 export function isHrDepartment(departmentName: string | null | undefined): boolean {
   return orgDeptChipLabel(departmentName) === "HR";
+}
+
+export function isFinanceDepartment(departmentName: string | null | undefined): boolean {
+  return orgDeptChipLabel(departmentName) === "Finance";
+}
+
+/** System Control role slugs that unlock Finance payroll (Mark Paid, company-wide lists). */
+export function isFinanceAccessRoleSlug(slug: string | null | undefined): boolean {
+  const s = String(slug || "").trim().toLowerCase();
+  if (!s) return false;
+  return (
+    s === "finance_manager" ||
+    s === "team_lead_finance" ||
+    s === "accountant_billing" ||
+    s === "mp_finance" ||
+    s.includes("finance_manager") ||
+    s.includes("team_lead_finance") ||
+    (s.includes("accountant") && s.includes("bill"))
+  );
+}
+
+/**
+ * Who may use Finance Final Salary / Mark Loan-Advance Paid.
+ * Matches department chip, Finance Manager-style roles, or company-wide finance payroll perms.
+ */
+export function viewerHasFinancePayrollPowers(opts: {
+  departmentName?: string | null;
+  roleSlugs?: string[] | null;
+  permissions?: string[] | null;
+}): boolean {
+  if (isFinanceDepartment(opts.departmentName)) return true;
+  if ((opts.roleSlugs || []).some((s) => isFinanceAccessRoleSlug(s))) return true;
+  const perms = opts.permissions || [];
+  return perms.some((p) => {
+    const key = String(p || "").trim().toLowerCase();
+    return (
+      key === "payroll.loan@all_departments" ||
+      key === "payroll.advance@all_departments" ||
+      key === "payroll.monthly.edit@all_departments" ||
+      key === "payroll.monthly.view@all_departments" ||
+      key === "payroll.financial_history@all_departments" ||
+      key === "payroll.salary_disbursement@all_departments" ||
+      key === "payroll.salary_disbursement"
+    );
+  });
 }
 
 function roleRank(role: unknown): number {
@@ -110,28 +173,22 @@ export function mergeHrAccessPermissions(opts: {
    */
   allEmployeeDashboardEnabled?: boolean;
 }): string[] {
-  const slugsNorm = (opts.accessRoleSlugs || []).map((s) =>
-    String(s || "").trim().toLowerCase(),
-  );
-  const slugTeamLead = slugsNorm.some(
-    (s) =>
-      s.startsWith("team_lead") ||
-      s.includes("team_lead_") ||
-      s.includes("team-lead"),
-  );
-  const slugManager = slugsNorm.some(
-    (s) =>
-      !s.startsWith("team_lead") &&
-      !s.includes("team_lead_") &&
-      (s.includes("manager") || s.endsWith("_mgr")),
-  );
-  const manager = isManagerOrgRole(opts.orgRole) || slugManager;
-  const teamLead = isTeamLeadOrgRole(opts.orgRole) || slugTeamLead;
+  const manager = isManagerOrgRole(opts.orgRole);
+  const teamLead = isTeamLeadOrgRole(opts.orgRole);
   const ceo = isCeoOrgRole(opts.orgRole);
   const headHint = detectDeptHeadHint(opts.firstName, opts.lastName);
   const deptHeadCeo = ceo || Boolean(headHint);
 
+  const slugsEarly = (opts.accessRoleSlugs || []).map((s) =>
+    String(s || "").trim().toLowerCase(),
+  );
+  const finance = viewerHasFinancePayrollPowers({
+    departmentName: opts.departmentName,
+    roleSlugs: slugsEarly,
+  });
+
   // Master switch: everyone → default employee dashboard (no role menus).
+  // Exception: Finance staff / Finance Manager role still get payroll menus.
   if (opts.allEmployeeDashboardEnabled) {
     const set = new Set<string>();
     for (const k of opts.permissions.filter(Boolean)) {
@@ -144,13 +201,20 @@ export function mergeHrAccessPermissions(opts: {
         if (k.startsWith("system.")) set.delete(k);
       }
     }
+    if (finance) {
+      for (const k of FINANCE_DEPARTMENT_DEFAULT_PERMISSIONS) set.add(k);
+    }
     return [...set];
   }
 
   const set = new Set(opts.permissions.filter(Boolean));
   const hr = isHrDepartment(opts.departmentName);
   const hrDefaultsOn = opts.hrDepartmentDefaultsEnabled !== false;
-  const slugs = slugsNorm;
+  const slugs = slugsEarly;
+
+  if (finance) {
+    for (const k of FINANCE_DEPARTMENT_DEFAULT_PERMISSIONS) set.add(k);
+  }
 
   // Joe / Max / Mubeen (and BOD/CEO): leave tickets in Ticket Inbox — not Leaves page.
   if (deptHeadCeo) {

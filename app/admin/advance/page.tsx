@@ -17,9 +17,50 @@ export default function AdvancePage() {
   });
   // Advance amount input state per employee
   const [amountInputs, setAmountInputs] = useState<{ [key: string]: string }>({});
+  const [statusByEmployee, setStatusByEmployee] = useState<{ [key: string]: string }>({});
   const [saving, setSaving] = useState<{ [key: string]: boolean }>({});
   const [successMsg, setSuccessMsg] = useState("");
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  const statusPillStyle = (status: string): React.CSSProperties => {
+    const s = String(status || "active").toLowerCase();
+    if (s === "paid") {
+      return {
+        display: "inline-block",
+        padding: "4px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 700,
+        background: "#dcfce7",
+        color: "#166534",
+      };
+    }
+    if (s === "cancelled") {
+      return {
+        display: "inline-block",
+        padding: "4px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 700,
+        background: "#fee2e2",
+        color: "#991b1b",
+      };
+    }
+    return {
+      display: "inline-block",
+      padding: "4px 10px",
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 700,
+      background: "#dbeafe",
+      color: "#1d4ed8",
+    };
+  };
+
+  const formatStatus = (status: string) => {
+    const s = String(status || "active").trim();
+    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  };
 
   const getFullName = (emp: any) =>
     `${emp.first_name || ""} ${emp.middle_name || ""} ${emp.last_name || ""}`.replace(/\s+/g, " ").trim();
@@ -38,14 +79,23 @@ export default function AdvancePage() {
           setError(empData.error || "Failed to fetch employees");
         }
         if (advData.success && Array.isArray(advData.records)) {
-          // Pre-fill advance amount for each employee
-          type AdvanceRecord = { employee_id: string | number; advance_amount: string | number };
+          // Pre-fill advance amount + status for each employee
+          type AdvanceRecord = {
+            employee_id: string | number;
+            advance_amount: string | number;
+            status?: string;
+          };
           const advMap: { [key: string]: string } = {};
+          const stMap: { [key: string]: string } = {};
           (advData.records as AdvanceRecord[]).forEach((rec) => {
             const key = String(rec.employee_id);
             if (advMap[key] === undefined) advMap[key] = String(rec.advance_amount);
+            stMap[key] = String(rec.status || "active").toLowerCase();
           });
           setAmountInputs(advMap);
+          setStatusByEmployee(stMap);
+        } else {
+          setStatusByEmployee({});
         }
       })
       .catch(() => {
@@ -94,9 +144,15 @@ export default function AdvancePage() {
       if (data.success) {
         if (advanceAmount === "") {
           setAmountInputs((prev) => ({ ...prev, [emp.id]: "" }));
+          setStatusByEmployee((prev) => {
+            const next = { ...prev };
+            delete next[String(emp.id)];
+            return next;
+          });
           setSuccessMsg("Advance amount cleared!");
         } else {
           setAmountInputs((prev) => ({ ...prev, [emp.id]: String(Number(advanceAmount)) }));
+          setStatusByEmployee((prev) => ({ ...prev, [String(emp.id)]: "active" }));
           setSuccessMsg("Advance amount saved!");
         }
       } else {
@@ -128,6 +184,11 @@ export default function AdvancePage() {
       if (data.success) {
         setSuccessMsg("Advance amount removed!");
         setAmountInputs((prev) => ({ ...prev, [emp.id]: '' }));
+        setStatusByEmployee((prev) => {
+          const next = { ...prev };
+          delete next[String(emp.id)];
+          return next;
+        });
       } else {
         setError(data.message || "Failed to remove advance amount");
       }
@@ -183,19 +244,24 @@ export default function AdvancePage() {
                 <th>P.Name</th>
                 <th>Department</th>
                 <th>Advance Amount</th>
+                <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className={styles.breakSummaryNoRecords}>Loading...</td></tr>
+                <tr><td colSpan={7} className={styles.breakSummaryNoRecords}>Loading...</td></tr>
               ) : error ? (
-                <tr><td colSpan={6} className={styles.breakSummaryNoRecords} style={{ color: 'red' }}>{error}</td></tr>
+                <tr><td colSpan={7} className={styles.breakSummaryNoRecords} style={{ color: 'red' }}>{error}</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={6} className={styles.breakSummaryNoRecords}>No records found.</td></tr>
+                <tr><td colSpan={7} className={styles.breakSummaryNoRecords}>No records found.</td></tr>
               ) : (
                 filtered.map(emp => {
                   const fullName = getFullName(emp);
+                  const empKey = String(emp.id);
+                  const hasAmount = String(amountInputs[emp.id] ?? "").trim() !== "";
+                  const status = statusByEmployee[empKey] || (hasAmount ? "active" : "");
+                  const isPaid = String(status).toLowerCase() === "paid";
                   return (
                   <tr key={emp.id}>
                     <td>{emp.id}</td>
@@ -228,12 +294,23 @@ export default function AdvancePage() {
                         onChange={e => setAmountInputs((prev) => ({ ...prev, [emp.id]: e.target.value }))}
                         className={styles.breakSummaryInput}
                         style={{ width: 110, fontSize: 15 }}
+                        disabled={isPaid}
+                        title={isPaid ? "Paid from Monthly Payroll — clear/remove only if you need to reverse" : undefined}
                       />
+                    </td>
+                    <td>
+                      {hasAmount || status ? (
+                        <span style={statusPillStyle(status || "active")}>
+                          {formatStatus(status || "active")}
+                        </span>
+                      ) : (
+                        <span style={{ color: "#94a3b8" }}>--</span>
+                      )}
                     </td>
                     <td>
                       <button
                         style={{ marginLeft: 8, padding: '4px 10px', borderRadius: 4, border: 'none', background: '#0052CC', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}
-                        disabled={saving[emp.id]}
+                        disabled={saving[emp.id] || isPaid}
                         onClick={() => handleSave(emp)}
                       >
                         {saving[emp.id] ? 'Saving...' : 'Save'}

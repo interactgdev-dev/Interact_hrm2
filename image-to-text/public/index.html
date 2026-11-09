@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Image → Text</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <p class="eyebrow">Local tool · Readable summaries</p>
+        <h1>Image → Text</h1>
+        <p class="lede">
+          Use <strong>Readable summary</strong> for Cursor / messy screenshots.
+          It explains the image in clear English paragraphs (needs a free
+          Gemini API key in <code>.env</code>). OCR modes are for simple photos.
+        </p>
+      </header>
+
+      <section
+        id="drop"
+        class="drop"
+        tabindex="0"
+        aria-label="Drop image here"
+      >
+        <p><strong>Drop image here</strong> or click to choose</p>
+        <p class="hint">PNG, JPG, WEBP</p>
+        <input id="file" type="file" accept="image/*" hidden />
+      </section>
+
+      <div class="row">
+        <label>
+          Language (OCR only)
+          <select id="lang">
+            <option value="eng" selected>English</option>
+            <option value="eng+urd">English + Urdu</option>
+            <option value="urd">Urdu</option>
+          </select>
+        </label>
+        <label>
+          Output mode
+          <select id="mode">
+            <option value="summary" selected>Readable summary (recommended)</option>
+            <option value="paragraph">OCR · clean paragraphs</option>
+            <option value="clean">OCR · clean lines</option>
+            <option value="raw">OCR · raw</option>
+          </select>
+        </label>
+        <button id="copy" type="button" disabled>Copy text</button>
+        <button id="download" type="button" disabled>Save .txt</button>
+      </div>
+
+      <p id="status" class="status" aria-live="polite"></p>
+
+      <section class="preview-grid">
+        <div>
+          <h2>Preview</h2>
+          <img id="preview" alt="Selected image preview" hidden />
+          <p id="no-preview" class="empty">No image yet.</p>
+        </div>
+        <div>
+          <h2>Readable text</h2>
+          <textarea
+            id="output"
+            rows="18"
+            placeholder="Clear paragraphs will appear here…"
+          ></textarea>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

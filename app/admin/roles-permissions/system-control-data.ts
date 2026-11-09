@@ -83,6 +83,10 @@ const PERM_HINTS: Record<string, string> = {
   "payroll.commissions": "Access commission calculation and payout screens.",
   "payroll.advance": "Process salary advance requests.",
   "payroll.loan": "Manage employee loan schedules and deductions.",
+  "payroll.financial_history":
+    "View complete employee advance/loan history, installments, and yearly totals.",
+  "payroll.salary_disbursement":
+    "Mark monthly salary Paid/Unpaid for Askari and other bank account holders.",
   "payroll.financial_requests.view": "Review advance/loan financial request inbox.",
   "department.salary.view":
     "View salaries of people in your own department (at or below your level). Off by default for HR — Managers can enable this in Permissions.",
@@ -313,6 +317,8 @@ export const FEATURE_MODULES = withPermissionHints([
       { key: "payroll.commissions", label: "Commissions" },
       { key: "payroll.advance", label: "Advance" },
       { key: "payroll.loan", label: "Loan" },
+      { key: "payroll.financial_history", label: "Financial history" },
+      { key: "payroll.salary_disbursement", label: "Salary disbursement" },
       { key: "payroll.financial_requests.view", label: "Financial request inbox" },
       {
         key: "department.salary.view",
@@ -494,6 +500,7 @@ const HR_ROLE_OPS = [
   "payroll.daily.edit",
   "payroll.advance",
   "payroll.loan",
+  "payroll.financial_history",
   "ops.tickets.view",
 ];
 for (const roleId of ["hr_manager", "hr_coordinator", "team_lead_hr"]) {

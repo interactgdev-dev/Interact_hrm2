@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React from "react";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
@@ -6,17 +6,27 @@ import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import adminStyles from "../admin-page.module.css";
 import styles from "./presence-idle.module.css";
 import PresenceAgentsPanel from "./PresenceAgentsPanel";
+import GuardScreenshotsGallery from "./GuardScreenshotsGallery";
 import { toastError, toastSuccess } from "@/lib/app-toast";
 
 type PresenceSettings = {
+  agentsRetired: boolean;
   presenceEnabled: boolean;
   idleWarningSeconds: number;
   popupCountdownSeconds: number;
   cameraVerificationEnabled: boolean;
   recheckWhileIdleSeconds: number;
+  faceScanIntervalSeconds: number;
+  faceScanIntervalByEmployee: Record<string, number>;
+  faceScanIntervalByDepartment: Record<string, number>;
+  faceVerifyMaxAttempts: number;
+  faceVerifyRetryGapSeconds: number;
   agentExitPassword: string;
   enabledEmployeeIds: string[];
+  agentHrmBaseUrl: string;
 };
+
+const PROD_HRM_URL = "https://192.168.10.98:8443";
 
 type EmpRow = {
   id: number;
@@ -24,6 +34,7 @@ type EmpRow = {
   last_name?: string;
   employee_code?: string | null;
   department_name?: string | null;
+  department_id?: number | string | null;
 };
 
 type DeptRow = { id: number; name?: string; department_name?: string };
@@ -128,12 +139,31 @@ export default function PresenceIdleSettingsPage() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
-  const [idleMinutes, setIdleMinutes] = React.useState(0);
-  const [idleSeconds, setIdleSeconds] = React.useState(10);
-  const [countdownMinutes, setCountdownMinutes] = React.useState(1);
-  const [countdownSeconds, setCountdownSeconds] = React.useState(0);
-  const [recheckMinutes, setRecheckMinutes] = React.useState(2);
-  const [recheckSeconds, setRecheckSeconds] = React.useState(0);
+  const [scanMinutes, setScanMinutes] = React.useState(10);
+  const [scanSeconds, setScanSeconds] = React.useState(0);
+  const [maxAttempts, setMaxAttempts] = React.useState(3);
+  const [retryGapSeconds, setRetryGapSeconds] = React.useState(10);
+  const [empIntervalMap, setEmpIntervalMap] = React.useState<Record<string, number>>(
+    {}
+  );
+  const [deptIntervalMap, setDeptIntervalMap] = React.useState<
+    Record<string, number>
+  >({});
+  const [overrideEmpId, setOverrideEmpId] = React.useState("");
+  const [overrideEmpLabel, setOverrideEmpLabel] = React.useState("");
+  const [overrideEmpSearch, setOverrideEmpSearch] = React.useState("");
+  const [overrideEmpDeptFilter, setOverrideEmpDeptFilter] = React.useState("");
+  const [overrideEmpOpen, setOverrideEmpOpen] = React.useState(false);
+  const overrideEmpWrapRef = React.useRef<HTMLDivElement | null>(null);
+  const [overrideEmpMinutes, setOverrideEmpMinutes] = React.useState(10);
+  const [overrideEmpSeconds, setOverrideEmpSeconds] = React.useState(0);
+  const [overrideDeptId, setOverrideDeptId] = React.useState("");
+  const [overrideDeptSearch, setOverrideDeptSearch] = React.useState("");
+  const [overrideDeptOpen, setOverrideDeptOpen] = React.useState(false);
+  const overrideDeptWrapRef = React.useRef<HTMLDivElement | null>(null);
+  const [overrideDeptMinutes, setOverrideDeptMinutes] = React.useState(10);
+  const [overrideDeptSeconds, setOverrideDeptSeconds] = React.useState(0);
+  const [listFilter, setListFilter] = React.useState("");
   const [showExitPassword, setShowExitPassword] = React.useState(false);
   const [agentVersion, setAgentVersion] = React.useState("0.4.0");
   const [agentHasBinary, setAgentHasBinary] = React.useState(false);
@@ -147,10 +177,26 @@ export default function PresenceIdleSettingsPage() {
   const [empSearch, setEmpSearch] = React.useState("");
   const [empDropdownOpen, setEmpDropdownOpen] = React.useState(false);
   const empSearchWrapRef = React.useRef<HTMLDivElement | null>(null);
+  const [secretUnlockOpen, setSecretUnlockOpen] = React.useState(false);
+  const titleClickCountRef = React.useRef(0);
+  const titleClickTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
-  const idleTotal = combineSeconds(idleMinutes, idleSeconds);
-  const countdownTotal = combineSeconds(countdownMinutes, countdownSeconds);
-  const recheckTotal = combineSeconds(recheckMinutes, recheckSeconds);
+  function onPresenceTitleClick() {
+    titleClickCountRef.current += 1;
+    if (titleClickTimerRef.current) clearTimeout(titleClickTimerRef.current);
+    if (titleClickCountRef.current >= 3) {
+      titleClickCountRef.current = 0;
+      setSecretUnlockOpen(true);
+      return;
+    }
+    titleClickTimerRef.current = setTimeout(() => {
+      titleClickCountRef.current = 0;
+    }, 900);
+  }
+
+  const scanTotal = combineSeconds(scanMinutes, scanSeconds);
 
   const applySettings = React.useCallback((s: PresenceSettings) => {
     setSettings({
@@ -159,16 +205,47 @@ export default function PresenceIdleSettingsPage() {
       enabledEmployeeIds: Array.isArray(s.enabledEmployeeIds)
         ? s.enabledEmployeeIds.map(String)
         : [],
+      agentHrmBaseUrl: (s.agentHrmBaseUrl || PROD_HRM_URL).trim(),
+      faceScanIntervalByEmployee:
+        s.faceScanIntervalByEmployee &&
+        typeof s.faceScanIntervalByEmployee === "object"
+          ? s.faceScanIntervalByEmployee
+          : {},
+      faceScanIntervalByDepartment:
+        s.faceScanIntervalByDepartment &&
+        typeof s.faceScanIntervalByDepartment === "object"
+          ? s.faceScanIntervalByDepartment
+          : {},
     });
-    const idle = splitSeconds(s.idleWarningSeconds);
-    setIdleMinutes(idle.minutes);
-    setIdleSeconds(idle.seconds);
-    const countdown = splitSeconds(s.popupCountdownSeconds);
-    setCountdownMinutes(countdown.minutes);
-    setCountdownSeconds(countdown.seconds);
-    const recheck = splitSeconds(s.recheckWhileIdleSeconds);
-    setRecheckMinutes(recheck.minutes);
-    setRecheckSeconds(recheck.seconds);
+    const scanSec =
+      Number(s.faceScanIntervalSeconds) > 0
+        ? Number(s.faceScanIntervalSeconds)
+        : Number(s.idleWarningSeconds) > 0
+          ? Number(s.idleWarningSeconds)
+          : 600;
+    const scan = splitSeconds(scanSec);
+    setScanMinutes(scan.minutes);
+    setScanSeconds(scan.seconds);
+    setMaxAttempts(
+      Number(s.faceVerifyMaxAttempts) > 0 ? Number(s.faceVerifyMaxAttempts) : 3
+    );
+    setRetryGapSeconds(
+      Number(s.faceVerifyRetryGapSeconds) > 0
+        ? Number(s.faceVerifyRetryGapSeconds)
+        : 10
+    );
+    setEmpIntervalMap(
+      s.faceScanIntervalByEmployee &&
+        typeof s.faceScanIntervalByEmployee === "object"
+        ? { ...s.faceScanIntervalByEmployee }
+        : {}
+    );
+    setDeptIntervalMap(
+      s.faceScanIntervalByDepartment &&
+        typeof s.faceScanIntervalByDepartment === "object"
+        ? { ...s.faceScanIntervalByDepartment }
+        : {}
+    );
   }, []);
 
   const loadEmployeesAndDepts = React.useCallback(async () => {
@@ -227,24 +304,19 @@ export default function PresenceIdleSettingsPage() {
 
   React.useEffect(() => {
     function onDocClick(e: MouseEvent) {
-      if (!empSearchWrapRef.current?.contains(e.target as Node)) {
-        setEmpDropdownOpen(false);
-      }
+      const t = e.target as Node;
+      if (!empSearchWrapRef.current?.contains(t)) setEmpDropdownOpen(false);
+      if (!overrideEmpWrapRef.current?.contains(t)) setOverrideEmpOpen(false);
+      if (!overrideDeptWrapRef.current?.contains(t)) setOverrideDeptOpen(false);
     }
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  function setIdleTotal(totalSeconds: number) {
+  function setScanTotal(totalSeconds: number) {
     const parts = splitSeconds(totalSeconds);
-    setIdleMinutes(parts.minutes);
-    setIdleSeconds(parts.seconds);
-  }
-
-  function setCountdownTotal(totalSeconds: number) {
-    const parts = splitSeconds(totalSeconds);
-    setCountdownMinutes(parts.minutes);
-    setCountdownSeconds(parts.seconds);
+    setScanMinutes(parts.minutes);
+    setScanSeconds(parts.seconds);
   }
 
   async function save() {
@@ -252,11 +324,21 @@ export default function PresenceIdleSettingsPage() {
     setSaving(true);
     try {
       const body = {
+        agentsRetired: settings.agentsRetired,
         presenceEnabled: settings.presenceEnabled,
         cameraVerificationEnabled: settings.cameraVerificationEnabled,
-        idleWarningSeconds: Math.max(5, idleTotal),
-        popupCountdownSeconds: Math.max(5, countdownTotal),
-        recheckWhileIdleSeconds: Math.max(5, recheckTotal),
+        faceScanIntervalSeconds: Math.max(30, scanTotal),
+        // Keep legacy fields in sync so older agents still get a cadence
+        idleWarningSeconds: Math.max(30, scanTotal),
+        recheckWhileIdleSeconds: Math.max(30, scanTotal),
+        faceScanIntervalByEmployee: empIntervalMap,
+        faceScanIntervalByDepartment: deptIntervalMap,
+        faceVerifyMaxAttempts: Math.min(10, Math.max(1, Math.floor(maxAttempts) || 3)),
+        faceVerifyRetryGapSeconds: Math.min(
+          120,
+          Math.max(5, Math.floor(retryGapSeconds) || 10)
+        ),
+        agentHrmBaseUrl: (settings.agentHrmBaseUrl || PROD_HRM_URL).trim(),
         agentExitPassword: (settings.agentExitPassword ?? "").trim(),
         enabledEmployeeIds: settings.enabledEmployeeIds ?? [],
       };
@@ -273,7 +355,7 @@ export default function PresenceIdleSettingsPage() {
       }
       applySettings(data.settings as PresenceSettings);
       toastSuccess(
-        "Presence settings saved. Agent must point at THIS host (Staging vs Localhost). It pulls password on next tray action or within ~15s."
+        "Presence settings saved. Agents pull changes within ~5 seconds."
       );
     } catch {
       toastError("Network error saving settings");
@@ -337,7 +419,7 @@ export default function PresenceIdleSettingsPage() {
       setAgentFile(null);
       toastSuccess(
         data.release.hasBinary
-          ? `Agent ${data.release.version} published. Running agents update within ~15 min.`
+          ? `Agent ${data.release.version} published. Running agents update within ~5–30 seconds.`
           : `Version ${data.release.version} saved — upload .exe to enable downloads.`
       );
     } catch {
@@ -428,16 +510,165 @@ export default function PresenceIdleSettingsPage() {
     setEmpDropdownOpen(false);
   }
 
+  const overrideDeptOptions = React.useMemo(() => {
+    const q = overrideDeptSearch.trim().toLowerCase();
+    return departments
+      .slice()
+      .sort((a, b) =>
+        String(a.name || a.department_name || "").localeCompare(
+          String(b.name || b.department_name || ""),
+          undefined,
+          { sensitivity: "base" }
+        )
+      )
+      .filter((d) => {
+        if (!q) return true;
+        const name = String(d.name || d.department_name || "").toLowerCase();
+        return name.includes(q) || String(d.id).includes(q);
+      });
+  }, [departments, overrideDeptSearch]);
+
+  const overrideEmpOptions = React.useMemo(() => {
+    const q = overrideEmpSearch.trim().toLowerCase();
+    let deptName = "";
+    if (overrideEmpDeptFilter) {
+      const d = departments.find((x) => String(x.id) === overrideEmpDeptFilter);
+      deptName = (d?.name || d?.department_name || "").trim();
+    }
+    return employees
+      .slice()
+      .sort((a, b) =>
+        empLabel(a).localeCompare(empLabel(b), undefined, { sensitivity: "base" })
+      )
+      .filter((e) => {
+        if (overrideEmpDeptFilter) {
+          const byId =
+            e.department_id != null &&
+            String(e.department_id) === overrideEmpDeptFilter;
+          const byName =
+            !!deptName &&
+            (e.department_name || "").trim() === deptName;
+          if (!byId && !byName) return false;
+        }
+        if (!q) return true;
+        const name = `${e.first_name || ""} ${e.last_name || ""}`.toLowerCase();
+        const code = String(e.employee_code || "").toLowerCase();
+        const dept = String(e.department_name || "").toLowerCase();
+        return (
+          name.includes(q) ||
+          code.includes(q) ||
+          dept.includes(q) ||
+          String(e.id).includes(q)
+        );
+      });
+  }, [employees, overrideEmpSearch, overrideEmpDeptFilter, departments]);
+
+  const overrideListRows = React.useMemo(() => {
+    const q = listFilter.trim().toLowerCase();
+    const rows: {
+      kind: "dept" | "emp";
+      id: string;
+      label: string;
+      seconds: number;
+    }[] = [];
+    for (const [id, sec] of Object.entries(deptIntervalMap)) {
+      const dept = departments.find((d) => String(d.id) === id);
+      const label = dept?.name || dept?.department_name || `Department ${id}`;
+      rows.push({ kind: "dept", id, label, seconds: Number(sec) || 0 });
+    }
+    for (const [id, sec] of Object.entries(empIntervalMap)) {
+      const emp = employees.find((e) => String(e.id) === id);
+      const label = emp
+        ? `${empLabel(emp)}${emp.department_name ? ` · ${emp.department_name}` : ""}`
+        : `Employee ${id}`;
+      rows.push({ kind: "emp", id, label, seconds: Number(sec) || 0 });
+    }
+    rows.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "dept" ? -1 : 1;
+      return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
+    });
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.label.toLowerCase().includes(q) ||
+        r.id.includes(q) ||
+        r.kind.includes(q)
+    );
+  }, [deptIntervalMap, empIntervalMap, departments, employees, listFilter]);
+
+  function addDeptOverride() {
+    const id = overrideDeptId.trim();
+    if (!id) {
+      toastError("Select a department first");
+      return;
+    }
+    const total = Math.max(
+      30,
+      combineSeconds(overrideDeptMinutes, overrideDeptSeconds)
+    );
+    setDeptIntervalMap((prev) => ({ ...prev, [id]: total }));
+    const dept = departments.find((d) => String(d.id) === id);
+    toastSuccess(
+      `Department ${dept?.name || dept?.department_name || id}: ${formatDuration(total)} — click Save settings`
+    );
+    setOverrideDeptId("");
+    setOverrideDeptSearch("");
+    setOverrideDeptOpen(false);
+  }
+
+  function addEmpOverride() {
+    const id = overrideEmpId.trim();
+    if (!id) {
+      toastError("Select an employee first");
+      return;
+    }
+    const total = Math.max(
+      30,
+      combineSeconds(overrideEmpMinutes, overrideEmpSeconds)
+    );
+    setEmpIntervalMap((prev) => ({ ...prev, [id]: total }));
+    const emp = employees.find((e) => String(e.id) === id);
+    toastSuccess(
+      `${emp ? empLabel(emp) : `Employee ${id}`}: ${formatDuration(total)} — click Save settings`
+    );
+    setOverrideEmpId("");
+    setOverrideEmpLabel("");
+    setOverrideEmpSearch("");
+    setOverrideEmpOpen(false);
+  }
+
+  function removeDeptOverride(id: string) {
+    setDeptIntervalMap((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function removeEmpOverride(id: string) {
+    setEmpIntervalMap((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
   return (
     <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={adminStyles.inner}>
           <div className={adminStyles.pageHeader}>
             <div>
-              <h1 className={adminStyles.pageHeaderTitle}>Presence / Idle</h1>
+              <h1
+                className={adminStyles.pageHeaderTitle}
+                onClick={onPresenceTitleClick}
+                style={{ userSelect: "none", cursor: "default" }}
+              >
+                Presence / Idle
+              </h1>
               <p className={adminStyles.subtitle} style={{ marginBottom: 0 }}>
                 Control desktop idle detection: timeout, camera verify, and popup countdown.
-                Desktop agents refresh these settings about every 30 seconds.
+                Desktop agents refresh these settings about every 5 seconds.
               </p>
             </div>
           </div>
@@ -446,9 +677,33 @@ export default function PresenceIdleSettingsPage() {
             <p className={styles.loading}>Loading…</p>
           ) : (
             <div className={styles.wrap}>
+              {settings.agentsRetired ? (
+                <div className={styles.retiredBanner} role="status">
+                  <strong>Desktop agents are permanently retired.</strong> Running PCs exit on
+                  heartbeat; auto-start is removed on v0.5.2+. Uncheck below and save to allow
+                  agents again (employees must re-run the installer or exe).
+                </div>
+              ) : null}
               <div className={adminStyles.card}>
                 <h2 className={adminStyles.cardTitle}>Desktop presence settings</h2>
                 <div className={styles.section}>
+                  <label className={styles.toggleRow}>
+                    <input
+                      type="checkbox"
+                      checked={settings.agentsRetired}
+                      onChange={(e) =>
+                        setSettings({ ...settings, agentsRetired: e.target.checked })
+                      }
+                    />
+                    <span className={styles.toggleText}>
+                      <span className={styles.toggleTitle}>Agents retired (permanent shutdown)</span>
+                      <span className={styles.toggleHint}>
+                        When on, all agents must exit and remove auto-start. Use &quot;Permanent
+                        shutdown&quot; in Installed agents for one-click.
+                      </span>
+                    </span>
+                  </label>
+
                   <label className={styles.toggleRow}>
                     <input
                       type="checkbox"
@@ -609,53 +864,442 @@ export default function PresenceIdleSettingsPage() {
                   </div>
 
                   <DurationEditor
-                    title='Idle timeout before "Are you there?" popup'
-                    minutes={idleMinutes}
-                    seconds={idleSeconds}
-                    total={idleTotal}
+                    title="Default face verify interval (clocked in, no break)"
+                    minutes={scanMinutes}
+                    seconds={scanSeconds}
+                    total={scanTotal}
                     disabled={disabled}
-                    presets={[5, 10, 30, 60, 300, 1800]}
-                    onMinutes={setIdleMinutes}
-                    onSeconds={setIdleSeconds}
-                    onPreset={setIdleTotal}
+                    presets={[60, 120, 300, 600, 900, 1800]}
+                    onMinutes={setScanMinutes}
+                    onSeconds={setScanSeconds}
+                    onPreset={setScanTotal}
                   />
-
-                  <DurationEditor
-                    title="Popup countdown"
-                    minutes={countdownMinutes}
-                    seconds={countdownSeconds}
-                    total={countdownTotal}
-                    disabled={disabled}
-                    maxMinutes={30}
-                    presets={[5, 10, 30, 60]}
-                    onMinutes={setCountdownMinutes}
-                    onSeconds={setCountdownSeconds}
-                    onPreset={setCountdownTotal}
-                  />
-
-                  <DurationEditor
-                    title="Recheck while still idle (after a check finishes)"
-                    minutes={recheckMinutes}
-                    seconds={recheckSeconds}
-                    total={recheckTotal}
-                    disabled={disabled}
-                    maxMinutes={120}
-                    onMinutes={setRecheckMinutes}
-                    onSeconds={setRecheckSeconds}
-                  />
+                  <p className={styles.tip} style={{ marginTop: -8, marginBottom: 16 }}>
+                    Idle is ignored. This is the <strong>default</strong> for everyone.
+                    Use overrides below for different department / employee timings. Priority:{" "}
+                    <strong>employee → department → default</strong>. Break marked → skip.
+                  </p>
 
                   <div className={styles.block}>
-                    <h3 className={styles.blockTitle}>Agent exit password (admin only)</h3>
+                    <h3 className={styles.blockTitle}>
+                      Custom face verify intervals (department / employee)
+                    </h3>
+                    <p className={styles.tip} style={{ marginBottom: 12 }}>
+                      Search + pick, set minutes/seconds, click <strong>Add</strong>. Add as
+                      many as you want — each keeps its own timing. Then click{" "}
+                      <strong>Save settings</strong>.
+                    </p>
+
+                    <div className={styles.overrideAddCard}>
+                      <div className={styles.overrideAddTitle}>Add department timing</div>
+                      <div className={styles.durationRow} style={{ alignItems: "flex-end", gap: 8 }}>
+                        <div
+                          className={styles.field}
+                          style={{ minWidth: 220, flex: 1, position: "relative" }}
+                          ref={overrideDeptWrapRef}
+                        >
+                          <label htmlFor="override-dept-search">Department</label>
+                          <input
+                            id="override-dept-search"
+                            type="text"
+                            autoComplete="off"
+                            disabled={disabled}
+                            placeholder="Search department…"
+                            value={
+                              overrideDeptId
+                                ? departments.find((d) => String(d.id) === overrideDeptId)
+                                    ?.name ||
+                                  departments.find((d) => String(d.id) === overrideDeptId)
+                                    ?.department_name ||
+                                  overrideDeptSearch
+                                : overrideDeptSearch
+                            }
+                            onFocus={() => setOverrideDeptOpen(true)}
+                            onClick={() => setOverrideDeptOpen(true)}
+                            onChange={(e) => {
+                              setOverrideDeptSearch(e.target.value);
+                              setOverrideDeptId("");
+                              setOverrideDeptOpen(true);
+                            }}
+                            style={{ width: "100%" }}
+                          />
+                          {overrideDeptOpen && !disabled ? (
+                            <div className={styles.empDropdown} role="listbox">
+                              {overrideDeptOptions.length === 0 ? (
+                                <div className={styles.empDropdownEmpty}>No match</div>
+                              ) : (
+                                overrideDeptOptions.map((d) => {
+                                  const id = String(d.id);
+                                  const name = d.name || d.department_name || id;
+                                  const already = deptIntervalMap[id] != null;
+                                  return (
+                                    <button
+                                      key={id}
+                                      type="button"
+                                      className={styles.empDropdownItem}
+                                      onClick={() => {
+                                        setOverrideDeptId(id);
+                                        setOverrideDeptSearch(name);
+                                        setOverrideDeptOpen(false);
+                                        if (already) {
+                                          const parts = splitSeconds(deptIntervalMap[id]);
+                                          setOverrideDeptMinutes(parts.minutes);
+                                          setOverrideDeptSeconds(parts.seconds);
+                                        }
+                                      }}
+                                    >
+                                      <strong>{name}</strong>
+                                      <span className={styles.empMeta}>
+                                        ID {id}
+                                        {already
+                                          ? ` · set ${formatDuration(deptIntervalMap[id])}`
+                                          : ""}
+                                      </span>
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className={styles.field}>
+                          <label htmlFor="override-dept-min">Minutes</label>
+                          <input
+                            id="override-dept-min"
+                            type="number"
+                            min={0}
+                            max={480}
+                            value={overrideDeptMinutes}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              setOverrideDeptMinutes(Math.max(0, Number(e.target.value) || 0))
+                            }
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label htmlFor="override-dept-sec">Seconds</label>
+                          <input
+                            id="override-dept-sec"
+                            type="number"
+                            min={0}
+                            max={59}
+                            value={overrideDeptSeconds}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              setOverrideDeptSeconds(
+                                Math.min(59, Math.max(0, Number(e.target.value) || 0))
+                              )
+                            }
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className={`${styles.chip} ${styles.chipSuccess}`}
+                          disabled={disabled || !overrideDeptId}
+                          onClick={addDeptOverride}
+                        >
+                          Add department
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className={styles.overrideAddCard} style={{ marginTop: 12 }}>
+                      <div className={styles.overrideAddTitle}>Add employee timing</div>
+                      <div className={styles.durationRow} style={{ marginBottom: 8 }}>
+                        <div className={styles.field} style={{ minWidth: 180 }}>
+                          <label htmlFor="override-emp-dept">Filter by department</label>
+                          <select
+                            id="override-emp-dept"
+                            className={styles.select}
+                            value={overrideEmpDeptFilter}
+                            disabled={disabled}
+                            onChange={(e) => {
+                              setOverrideEmpDeptFilter(e.target.value);
+                              setOverrideEmpOpen(true);
+                            }}
+                          >
+                            <option value="">All departments</option>
+                            {departments.map((d) => (
+                              <option key={d.id} value={String(d.id)}>
+                                {d.name || d.department_name || `Dept ${d.id}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className={styles.durationRow} style={{ alignItems: "flex-end", gap: 8 }}>
+                        <div
+                          className={styles.field}
+                          style={{ minWidth: 240, flex: 1, position: "relative" }}
+                          ref={overrideEmpWrapRef}
+                        >
+                          <label htmlFor="override-emp-search">Employee</label>
+                          <input
+                            id="override-emp-search"
+                            type="text"
+                            autoComplete="off"
+                            disabled={disabled}
+                            placeholder="Search name / ID / department…"
+                            value={overrideEmpId ? overrideEmpLabel : overrideEmpSearch}
+                            onFocus={() => setOverrideEmpOpen(true)}
+                            onClick={() => setOverrideEmpOpen(true)}
+                            onChange={(e) => {
+                              setOverrideEmpSearch(e.target.value);
+                              setOverrideEmpId("");
+                              setOverrideEmpLabel("");
+                              setOverrideEmpOpen(true);
+                            }}
+                            style={{ width: "100%" }}
+                          />
+                          {overrideEmpOpen && !disabled ? (
+                            <div className={styles.empDropdown} role="listbox">
+                              {overrideEmpOptions.length === 0 ? (
+                                <div className={styles.empDropdownEmpty}>No match</div>
+                              ) : (
+                                overrideEmpOptions.slice(0, 80).map((e) => {
+                                  const id = String(e.id);
+                                  const already = empIntervalMap[id] != null;
+                                  return (
+                                    <button
+                                      key={id}
+                                      type="button"
+                                      className={styles.empDropdownItem}
+                                      onClick={() => {
+                                        setOverrideEmpId(id);
+                                        setOverrideEmpLabel(
+                                          `${empLabel(e)}${
+                                            e.department_name ? ` · ${e.department_name}` : ""
+                                          }`
+                                        );
+                                        setOverrideEmpSearch("");
+                                        setOverrideEmpOpen(false);
+                                        if (already) {
+                                          const parts = splitSeconds(empIntervalMap[id]);
+                                          setOverrideEmpMinutes(parts.minutes);
+                                          setOverrideEmpSeconds(parts.seconds);
+                                        }
+                                      }}
+                                    >
+                                      <strong>{empLabel(e)}</strong>
+                                      <span className={styles.empMeta}>
+                                        {empMeta(e)}
+                                        {already
+                                          ? ` · set ${formatDuration(empIntervalMap[id])}`
+                                          : ""}
+                                      </span>
+                                      {already ? (
+                                        <span className={styles.empAdded}>Added</span>
+                                      ) : null}
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className={styles.field}>
+                          <label htmlFor="override-emp-min">Minutes</label>
+                          <input
+                            id="override-emp-min"
+                            type="number"
+                            min={0}
+                            max={480}
+                            value={overrideEmpMinutes}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              setOverrideEmpMinutes(Math.max(0, Number(e.target.value) || 0))
+                            }
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label htmlFor="override-emp-sec">Seconds</label>
+                          <input
+                            id="override-emp-sec"
+                            type="number"
+                            min={0}
+                            max={59}
+                            value={overrideEmpSeconds}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              setOverrideEmpSeconds(
+                                Math.min(59, Math.max(0, Number(e.target.value) || 0))
+                              )
+                            }
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className={`${styles.chip} ${styles.chipSuccess}`}
+                          disabled={disabled || !overrideEmpId}
+                          onClick={addEmpOverride}
+                        >
+                          Add employee
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className={styles.overrideListHeader}>
+                      <h4 className={styles.overrideListTitle}>
+                        Saved overrides ({overrideListRows.length})
+                      </h4>
+                      <input
+                        type="text"
+                        className={styles.overrideListFilter}
+                        placeholder="Filter list…"
+                        value={listFilter}
+                        disabled={disabled}
+                        onChange={(e) => setListFilter(e.target.value)}
+                      />
+                    </div>
+                    {overrideListRows.length === 0 ? (
+                      <p className={styles.tip}>
+                        No custom intervals yet — everyone uses the default above.
+                      </p>
+                    ) : (
+                      <div className={styles.overrideTableWrap}>
+                        <table className={styles.overrideTable}>
+                          <thead>
+                            <tr>
+                              <th>Type</th>
+                              <th>Name</th>
+                              <th>Interval</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {overrideListRows.map((row) => (
+                              <tr key={`${row.kind}-${row.id}`}>
+                                <td>
+                                  <span
+                                    className={
+                                      row.kind === "dept"
+                                        ? styles.overrideTypeDept
+                                        : styles.overrideTypeEmp
+                                    }
+                                  >
+                                    {row.kind === "dept" ? "Department" : "Employee"}
+                                  </span>
+                                </td>
+                                <td>
+                                  <strong>{row.label}</strong>
+                                  <div className={styles.empMeta}>ID {row.id}</div>
+                                </td>
+                                <td>{formatDuration(row.seconds)}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className={`${styles.chip} ${styles.chipDanger}`}
+                                    disabled={disabled}
+                                    onClick={() =>
+                                      row.kind === "dept"
+                                        ? removeDeptOverride(row.id)
+                                        : removeEmpOverride(row.id)
+                                    }
+                                  >
+                                    Remove
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={styles.block}>
+                    <h3 className={styles.blockTitle}>Face verify fail → ticket</h3>
                     <p className={styles.tip} style={{ marginBottom: 8 }}>
-                      Employees cannot Exit the tray agent without this password.
-                      Agents sync from the <strong>same host</strong> they point at (Staging
-                      and Localhost passwords are separate). Click Save, then on the agent use
-                      tray → <strong>Sync settings from HRM now</strong> or any admin action.
-                      Default if unset: <code>InteractAdmin</code>.
+                      On fail, Guard retries this many times with a gap, then opens a
+                      seat-absent ticket.
+                    </p>
+                    <div className={styles.durationRow}>
+                      <div className={styles.field}>
+                        <label htmlFor="face-max-attempts">Max attempts</label>
+                        <input
+                          id="face-max-attempts"
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={maxAttempts}
+                          disabled={disabled}
+                          onChange={(e) =>
+                            setMaxAttempts(
+                              Math.min(10, Math.max(1, Number(e.target.value) || 3))
+                            )
+                          }
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label htmlFor="face-retry-gap">Gap between fails (sec)</label>
+                        <input
+                          id="face-retry-gap"
+                          type="number"
+                          min={5}
+                          max={120}
+                          value={retryGapSeconds}
+                          disabled={disabled}
+                          onChange={(e) =>
+                            setRetryGapSeconds(
+                              Math.min(120, Math.max(5, Number(e.target.value) || 10))
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className={styles.block}>
+                    <h3 className={styles.blockTitle}>Agent HRM server URL</h3>
+                    <p className={styles.tip} style={{ marginBottom: 8 }}>
+                      Agents sync this URL from heartbeat (no tray Staging switch). Use{" "}
+                      <strong>Production (10.98)</strong> for this environment, then Save.
+                    </p>
+                    <div className={styles.durationRow}>
+                      <div className={styles.field} style={{ minWidth: 320, flex: 1 }}>
+                        <label htmlFor="agent-hrm-url">HRM base URL</label>
+                        <input
+                          id="agent-hrm-url"
+                          type="url"
+                          value={settings.agentHrmBaseUrl || PROD_HRM_URL}
+                          disabled={disabled}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              agentHrmBaseUrl: e.target.value,
+                            })
+                          }
+                          style={{ width: "100%", minWidth: 280 }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.chip}
+                        disabled={disabled}
+                        onClick={() =>
+                          setSettings({
+                            ...settings,
+                            agentHrmBaseUrl: PROD_HRM_URL,
+                          })
+                        }
+                      >
+                        Production (10.98)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={styles.block}>
+                    <h3 className={styles.blockTitle}>
+                      Agent tray password (Status &amp; Exit)
+                    </h3>
+                    <p className={styles.tip} style={{ marginBottom: 8 }}>
+                      Tray menu is only <strong>Status</strong> and <strong>Exit</strong> — both
+                      require this password. Agents sync from the host they point at. Default if
+                      unset: <code>InteractAdmin</code>.
                     </p>
                     <div className={styles.durationRow}>
                       <div className={styles.field} style={{ minWidth: 280 }}>
-                        <label htmlFor="agent-exit-password">Exit password</label>
+                        <label htmlFor="agent-exit-password">Admin password</label>
                         <div className={styles.passwordWrap}>
                           <input
                             id="agent-exit-password"
@@ -759,15 +1403,14 @@ export default function PresenceIdleSettingsPage() {
               </div>
 
               <PresenceAgentsPanel employees={employees} />
-
-              <p className={styles.tip}>
-                Tip: for quick testing use the <strong>5 sec</strong> / <strong>30 sec</strong> chips,
-                Save, wait ~30s for the desktop agent, then leave the PC idle.
-              </p>
             </div>
           )}
         </div>
       </div>
+      <GuardScreenshotsGallery
+        open={secretUnlockOpen}
+        onClose={() => setSecretUnlockOpen(false)}
+      />
     </OptionalAdminShell>
   );
 }

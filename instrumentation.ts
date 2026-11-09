@@ -10,4 +10,9 @@ export async function register() {
 
   const { registerAutoPresenceCron } = await import("./lib/register-auto-presence-cron");
   registerAutoPresenceCron();
+
+  const { registerGuardScreenshotRetentionCron } = await import(
+    "./lib/register-guard-screenshot-retention-cron"
+  );
+  registerGuardScreenshotRetentionCron();
 }
