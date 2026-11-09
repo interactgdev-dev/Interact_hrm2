@@ -98,11 +98,47 @@ export function useBiometricGate(
     void refreshStatus();
   }, [refreshStatus]);
 
-  // Do not preload face-api/TFJS on mount — it steals the main thread and
-  // makes sidebar navigation feel stuck. Models load when verify opens.
+  // Idle-preload models after enroll status is known so Break/Clock open faster.
+  // Avoid blocking first paint — wait until bio status settles, then warm engine.
   React.useEffect(() => {
-    if (!employeeId) setFaceEngineReady(false);
-  }, [employeeId]);
+    if (!employeeId) {
+      setFaceEngineReady(false);
+      return;
+    }
+    if (bioStatus.loading || !bioStatus.enforcementRequired || !bioStatus.enrolled) {
+      return;
+    }
+    let cancelled = false;
+    const idle =
+      typeof window !== "undefined" && "requestIdleCallback" in window
+        ? (window as Window & {
+            requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
+          }).requestIdleCallback
+        : null;
+    const start = () => {
+      void ensureFaceModelsLoaded().then(() => {
+        if (!cancelled) setFaceEngineReady(true);
+      });
+    };
+    const id = idle
+      ? idle(start, { timeout: 2500 })
+      : window.setTimeout(start, 1200);
+    return () => {
+      cancelled = true;
+      if (idle && typeof id === "number") {
+        (
+          window as Window & { cancelIdleCallback?: (n: number) => void }
+        ).cancelIdleCallback?.(id);
+      } else {
+        window.clearTimeout(id as number);
+      }
+    };
+  }, [
+    employeeId,
+    bioStatus.loading,
+    bioStatus.enforcementRequired,
+    bioStatus.enrolled,
+  ]);
 
   const onVerifyOpenRef = React.useRef(options.onVerifyOpen);
   const onVerifyCloseRef = React.useRef(options.onVerifyClose);

@@ -26,17 +26,71 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { employee_id, employee_name, pseudonym, department, advance_amount, month } = body;
 
-    if (!employee_id || !employee_name || !department || !advance_amount || !month) {
+    // Do not treat 0 / blank amount as "missing" — blank means clear for that month.
+    if (!employee_id || !employee_name || !department || !month) {
       return NextResponse.json({ success: false, message: "Missing required fields." }, { status: 400 });
     }
 
-    const [result]: any = await query(
-      `INSERT INTO advance_salary (employee_id, employee_name, pseudonym, department, advance_amount, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
-      [employee_id, employee_name, pseudonym || null, department, advance_amount]
+    const isBlank =
+      advance_amount === "" ||
+      advance_amount === null ||
+      advance_amount === undefined;
+
+    if (isBlank) {
+      await query(
+        `DELETE FROM advance_salary WHERE employee_id = ? AND DATE_FORMAT(created_at, '%Y-%m') = ?`,
+        [employee_id, month]
+      );
+      return NextResponse.json({ success: true, message: "Advance salary cleared." });
+    }
+
+    const amountNum = Number(advance_amount);
+    if (!Number.isFinite(amountNum) || amountNum < 0) {
+      return NextResponse.json({ success: false, message: "Invalid advance amount." }, { status: 400 });
+    }
+
+    const [existingRows]: any = await query(
+      `SELECT id FROM advance_salary
+       WHERE employee_id = ? AND DATE_FORMAT(created_at, '%Y-%m') = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [employee_id, month]
     );
 
-    return NextResponse.json({ success: true, message: "Advance salary record added successfully", id: result.insertId });
+    if (existingRows && existingRows.length > 0) {
+      const rowId = existingRows[0].id;
+      await query(
+        `UPDATE advance_salary
+         SET employee_name = ?, pseudonym = ?, department = ?, advance_amount = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [employee_name, pseudonym || null, department, amountNum, rowId]
+      );
+      // Keep a single row per employee+month
+      await query(
+        `DELETE FROM advance_salary
+         WHERE employee_id = ? AND DATE_FORMAT(created_at, '%Y-%m') = ? AND id <> ?`,
+        [employee_id, month, rowId]
+      );
+      return NextResponse.json({
+        success: true,
+        message: "Advance salary record updated successfully",
+        id: rowId,
+      });
+    }
+
+    // Stamp created_at inside the selected month so GET month filter finds it
+    const createdAt = `${month}-01 12:00:00`;
+    const [result]: any = await query(
+      `INSERT INTO advance_salary (employee_id, employee_name, pseudonym, department, advance_amount, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [employee_id, employee_name, pseudonym || null, department, amountNum, createdAt]
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: "Advance salary record added successfully",
+      id: result.insertId,
+    });
   } catch (error: any) {
     return NextResponse.json({ success: false, message: error.message || "Internal server error" }, { status: 500 });
   }

@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyDescriptorForEmployee } from "@/lib/face-verify";
+import { verifyDescriptorsForEmployee } from "@/lib/face-verify";
 import { isValidDescriptor } from "@/lib/face-matching";
 import { resolveEmployeeDbId } from "@/lib/resolve-employee-id";
 
 export const runtime = "nodejs";
 
 /**
- * Silent presence check for the desktop agent.
- * Uses the same enrollment descriptors + matching as clock/break verify,
- * but does NOT issue a biometric_token (no clock/break action).
+ * Idle Guard + same FaceVerifyModal as Break — server match is identical to
+ * /api/biometric/verify (verifyDescriptorsForEmployee), without biometric_token.
+ * Multi-person frames OK: any matching face for the claimed employee succeeds.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -16,10 +16,18 @@ export async function POST(req: NextRequest) {
       employee_id?: string;
       employee_name?: string;
       descriptor?: number[];
+      descriptors?: number[][];
     };
     const employeeId = String(body.employee_id || "").trim();
     const employeeName = String(body.employee_name || "").trim() || null;
-    const descriptor = isValidDescriptor(body.descriptor) ? body.descriptor! : null;
+
+    const probes: number[][] = [];
+    if (Array.isArray(body.descriptors)) {
+      for (const d of body.descriptors) {
+        if (isValidDescriptor(d)) probes.push(d);
+      }
+    }
+    if (isValidDescriptor(body.descriptor)) probes.push(body.descriptor);
 
     if (!employeeId) {
       return NextResponse.json(
@@ -27,7 +35,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (!descriptor) {
+    if (!probes.length) {
       return NextResponse.json({
         success: true,
         verified: false,
@@ -38,7 +46,11 @@ export async function POST(req: NextRequest) {
     }
 
     const resolvedId = (await resolveEmployeeDbId(employeeId)) || employeeId;
-    const result = await verifyDescriptorForEmployee(descriptor, resolvedId, employeeName);
+    const result = await verifyDescriptorsForEmployee(
+      probes,
+      resolvedId,
+      employeeName
+    );
 
     return NextResponse.json({
       success: true,

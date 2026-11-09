@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { issueBiometricGrantForEmployee } from "@/lib/biometric-session";
 import {
   type BiometricAction,
-  verifyDescriptorForEmployee,
+  verifyDescriptorsForEmployee,
 } from "@/lib/face-verify";
 import { isValidDescriptor } from "@/lib/face-matching";
 import { resolveEmployeeDbId } from "@/lib/resolve-employee-id";
@@ -23,13 +23,27 @@ const ACTIONS: BiometricAction[] = [
   "meeting_end",
 ];
 
+function collectProbes(body: {
+  descriptor?: number[];
+  descriptors?: number[][];
+}): number[][] {
+  const out: number[][] = [];
+  if (Array.isArray(body.descriptors)) {
+    for (const d of body.descriptors) {
+      if (isValidDescriptor(d)) out.push(d);
+    }
+  }
+  if (isValidDescriptor(body.descriptor)) out.push(body.descriptor);
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get("content-type") || "";
     let employeeId = "";
     let employeeName: string | null = null;
     let action = "" as BiometricAction;
-    let descriptor: number[] | null = null;
+    let probes: number[][] = [];
 
     if (contentType.includes("application/json")) {
       const body = (await req.json()) as {
@@ -37,21 +51,33 @@ export async function POST(req: NextRequest) {
         employee_name?: string;
         action?: string;
         descriptor?: number[];
+        descriptors?: number[][];
       };
       employeeId = String(body.employee_id || "").trim();
       employeeName = String(body.employee_name || "").trim() || null;
       action = String(body.action || "").trim() as BiometricAction;
-      descriptor = isValidDescriptor(body.descriptor) ? body.descriptor : null;
+      probes = collectProbes(body);
     } else {
       const form = await req.formData();
       employeeId = String(form.get("employee_id") || "").trim();
       employeeName = String(form.get("employee_name") || "").trim() || null;
       action = String(form.get("action") || "").trim() as BiometricAction;
+      const rawList = form.get("descriptors");
+      if (rawList) {
+        try {
+          const parsed = JSON.parse(String(rawList)) as number[][];
+          if (Array.isArray(parsed)) {
+            probes = parsed.filter(isValidDescriptor);
+          }
+        } catch {
+          // ignore
+        }
+      }
       const raw = form.get("descriptor");
       if (raw) {
         try {
           const parsed = JSON.parse(String(raw)) as number[];
-          if (isValidDescriptor(parsed)) descriptor = parsed;
+          if (isValidDescriptor(parsed)) probes.push(parsed);
         } catch {
           // ignore
         }
@@ -64,7 +90,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (!descriptor) {
+    if (!probes.length) {
       return NextResponse.json(
         {
           success: false,
@@ -76,7 +102,8 @@ export async function POST(req: NextRequest) {
     }
 
     const resolvedId = (await resolveEmployeeDbId(employeeId)) || employeeId;
-    const result = await verifyDescriptorForEmployee(descriptor, resolvedId, employeeName);
+    // Try every face in the frame — enrolled employee succeeds even if a coworker is visible.
+    const result = await verifyDescriptorsForEmployee(probes, resolvedId, employeeName);
 
     if (!result.verified) {
       return NextResponse.json({

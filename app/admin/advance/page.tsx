@@ -69,11 +69,14 @@ export default function AdvancePage() {
     return matchesSearch && matchesDept;
   });
 
-  // Save advance amount handler
+  // Save advance amount handler (blank clears that month's record)
   const handleSave = async (emp: any) => {
     setSaving((prev) => ({ ...prev, [emp.id]: true }));
     setSuccessMsg("");
     setError("");
+    const rawAmount = amountInputs[emp.id];
+    const advanceAmount =
+      rawAmount === undefined || rawAmount === null ? "" : String(rawAmount).trim();
     try {
       const res = await fetch("/api/advance-salary", {
         method: "POST",
@@ -83,13 +86,19 @@ export default function AdvancePage() {
           employee_name: `${emp.first_name} ${emp.middle_name || ''} ${emp.last_name || ''}`.trim(),
           pseudonym: emp.pseudonym || null,
           department: emp.department_name,
-          advance_amount: amountInputs[emp.id],
+          advance_amount: advanceAmount,
           month,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setSuccessMsg("Advance amount saved!");
+        if (advanceAmount === "") {
+          setAmountInputs((prev) => ({ ...prev, [emp.id]: "" }));
+          setSuccessMsg("Advance amount cleared!");
+        } else {
+          setAmountInputs((prev) => ({ ...prev, [emp.id]: String(Number(advanceAmount)) }));
+          setSuccessMsg("Advance amount saved!");
+        }
       } else {
         setError(data.message || "Failed to save advance amount");
       }
