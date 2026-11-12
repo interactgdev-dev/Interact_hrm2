@@ -26,7 +26,7 @@ type PresenceSettings = {
   agentHrmBaseUrl: string;
 };
 
-const PROD_HRM_URL = "https://192.168.10.98:8443";
+const PROD_HRM_URL = "https://hrm.ig.com";
 
 type EmpRow = {
   id: number;

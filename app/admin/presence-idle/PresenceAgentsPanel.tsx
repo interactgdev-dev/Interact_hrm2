@@ -58,8 +58,8 @@ const HRM_URL_PRESETS = [
     label: "Staging — https://192.168.10.6:8443",
   },
   {
-    value: "https://192.168.10.98:8443",
-    label: "Production LAN — https://192.168.10.98:8443",
+    value: "https://192.168.10.98",
+    label: "Production LAN — https://192.168.10.98",
   },
 ] as const;
 

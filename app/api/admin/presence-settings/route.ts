@@ -36,6 +36,8 @@ export async function PUT(req: NextRequest) {
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const settings = await savePresenceSettings({
+      agentsRetired:
+        typeof body.agentsRetired === "boolean" ? body.agentsRetired : undefined,
       presenceEnabled:
         typeof body.presenceEnabled === "boolean"
           ? body.presenceEnabled
@@ -62,6 +64,36 @@ export async function PUT(req: NextRequest) {
           : typeof body.recheckWhileIdleSeconds === "string"
             ? parseInt(body.recheckWhileIdleSeconds, 10)
             : undefined,
+      faceScanIntervalSeconds:
+        typeof body.faceScanIntervalSeconds === "number"
+          ? body.faceScanIntervalSeconds
+          : typeof body.faceScanIntervalSeconds === "string"
+            ? parseInt(body.faceScanIntervalSeconds, 10)
+            : undefined,
+      faceScanIntervalByEmployee:
+        body.faceScanIntervalByEmployee &&
+        typeof body.faceScanIntervalByEmployee === "object" &&
+        !Array.isArray(body.faceScanIntervalByEmployee)
+          ? (body.faceScanIntervalByEmployee as Record<string, number>)
+          : undefined,
+      faceScanIntervalByDepartment:
+        body.faceScanIntervalByDepartment &&
+        typeof body.faceScanIntervalByDepartment === "object" &&
+        !Array.isArray(body.faceScanIntervalByDepartment)
+          ? (body.faceScanIntervalByDepartment as Record<string, number>)
+          : undefined,
+      faceVerifyMaxAttempts:
+        typeof body.faceVerifyMaxAttempts === "number"
+          ? body.faceVerifyMaxAttempts
+          : typeof body.faceVerifyMaxAttempts === "string"
+            ? parseInt(body.faceVerifyMaxAttempts, 10)
+            : undefined,
+      faceVerifyRetryGapSeconds:
+        typeof body.faceVerifyRetryGapSeconds === "number"
+          ? body.faceVerifyRetryGapSeconds
+          : typeof body.faceVerifyRetryGapSeconds === "string"
+            ? parseInt(body.faceVerifyRetryGapSeconds, 10)
+            : undefined,
       agentExitPassword:
         typeof body.agentExitPassword === "string"
           ? body.agentExitPassword.trim()
@@ -69,6 +101,32 @@ export async function PUT(req: NextRequest) {
       enabledEmployeeIds: Array.isArray(body.enabledEmployeeIds)
         ? (body.enabledEmployeeIds as unknown[]).map((v) => String(v))
         : undefined,
+      screenshotCaptureEnabled:
+        typeof body.screenshotCaptureEnabled === "boolean"
+          ? body.screenshotCaptureEnabled
+          : undefined,
+      screenshotIntervalSeconds:
+        typeof body.screenshotIntervalSeconds === "number"
+          ? body.screenshotIntervalSeconds
+          : typeof body.screenshotIntervalSeconds === "string"
+            ? parseInt(body.screenshotIntervalSeconds, 10)
+            : undefined,
+      screenshotJpegQuality:
+        typeof body.screenshotJpegQuality === "number"
+          ? body.screenshotJpegQuality
+          : typeof body.screenshotJpegQuality === "string"
+            ? parseInt(body.screenshotJpegQuality, 10)
+            : undefined,
+      screenshotScalePercent:
+        typeof body.screenshotScalePercent === "number"
+          ? body.screenshotScalePercent
+          : typeof body.screenshotScalePercent === "string"
+            ? parseInt(body.screenshotScalePercent, 10)
+            : undefined,
+      agentHrmBaseUrl:
+        typeof body.agentHrmBaseUrl === "string"
+          ? body.agentHrmBaseUrl.trim()
+          : undefined,
     });
     return noStoreJson({ success: true, settings });
   } catch (err) {
