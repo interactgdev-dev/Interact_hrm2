@@ -35,33 +35,45 @@ function parseDescriptorJson(raw: unknown): number[] | null {
   return parsed as number[];
 }
 
+let faceEnrollmentTableReady: Promise<void> | null = null;
+
+/** One-shot schema guard — cached so list/status APIs do not re-run CREATE/ALTER. */
 export async function ensureFaceEnrollmentTable() {
-  const conn = await pool.getConnection();
-  try {
-    await conn.execute(`
-      CREATE TABLE IF NOT EXISTS ${FACE_ENROLLMENT_TABLE} (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        employee_id VARCHAR(50) NOT NULL,
-        compreface_subject VARCHAR(255) NOT NULL,
-        compreface_image_id VARCHAR(64) NOT NULL,
-        local_path VARCHAR(512) NULL,
-        face_descriptor JSON NULL,
-        source ENUM('upload','webcam') NOT NULL DEFAULT 'upload',
-        enrolled_by VARCHAR(100) NULL,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY uq_compreface_image (compreface_image_id),
-        INDEX idx_employee (employee_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `);
+  if (faceEnrollmentTableReady) return faceEnrollmentTableReady;
+  faceEnrollmentTableReady = (async () => {
+    const conn = await pool.getConnection();
     try {
-      await conn.execute(
-        `ALTER TABLE ${FACE_ENROLLMENT_TABLE} ADD COLUMN face_descriptor JSON NULL`
-      );
-    } catch {
-      // column already exists
+      await conn.execute(`
+        CREATE TABLE IF NOT EXISTS ${FACE_ENROLLMENT_TABLE} (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          employee_id VARCHAR(50) NOT NULL,
+          compreface_subject VARCHAR(255) NOT NULL,
+          compreface_image_id VARCHAR(64) NOT NULL,
+          local_path VARCHAR(512) NULL,
+          face_descriptor JSON NULL,
+          source ENUM('upload','webcam') NOT NULL DEFAULT 'upload',
+          enrolled_by VARCHAR(100) NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY uq_compreface_image (compreface_image_id),
+          INDEX idx_employee (employee_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+      try {
+        await conn.execute(
+          `ALTER TABLE ${FACE_ENROLLMENT_TABLE} ADD COLUMN face_descriptor JSON NULL`
+        );
+      } catch {
+        // column already exists
+      }
+    } finally {
+      conn.release();
     }
-  } finally {
-    conn.release();
+  })();
+  try {
+    await faceEnrollmentTableReady;
+  } catch (err) {
+    faceEnrollmentTableReady = null;
+    throw err;
   }
 }
 

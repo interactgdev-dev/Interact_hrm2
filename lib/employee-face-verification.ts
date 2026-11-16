@@ -99,67 +99,6 @@ export type EmployeeFaceVerificationRow = {
   descriptor_count: number;
 };
 
-type BaseEmployeeRow = {
-  id: number;
-  first_name: string | null;
-  last_name: string | null;
-  pseudonym: string | null;
-  employee_code: string | null;
-  department_name: string | null;
-};
-
-async function loadBaseEmployees(): Promise<BaseEmployeeRow[]> {
-  const [rows] = await pool.query(`
-    SELECT
-      e.id,
-      e.first_name,
-      e.last_name,
-      e.pseudonym,
-      e.employee_code,
-      d.name AS department_name
-    FROM hrm_employees e
-    LEFT JOIN employee_jobs j ON e.id = j.employee_id
-    LEFT JOIN departments d ON j.department_id = d.id
-    ORDER BY e.id ASC
-  `);
-
-  const seen = new Set<number>();
-  const unique: BaseEmployeeRow[] = [];
-  for (const raw of rows as Array<Record<string, unknown>>) {
-    const id = Number(raw.id);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    unique.push({
-      id,
-      first_name: raw.first_name != null ? String(raw.first_name) : null,
-      last_name: raw.last_name != null ? String(raw.last_name) : null,
-      pseudonym: raw.pseudonym != null ? String(raw.pseudonym) : null,
-      employee_code: raw.employee_code != null ? String(raw.employee_code) : null,
-      department_name: raw.department_name != null ? String(raw.department_name) : null,
-    });
-  }
-  return unique;
-}
-
-async function loadVerificationFlags(): Promise<Map<number, boolean>> {
-  const map = new Map<number, boolean>();
-  await ensureFaceVerificationColumn();
-  try {
-    const [rows] = await pool.query(
-      `SELECT id, COALESCE(face_verification_enabled, 0) AS face_verification_enabled
-       FROM hrm_employees`
-    );
-    for (const raw of rows as Array<Record<string, unknown>>) {
-      const id = Number(raw.id);
-      if (!id) continue;
-      map.set(id, Number(raw.face_verification_enabled ?? 0) === 1);
-    }
-  } catch {
-    // leave map empty — callers treat missing as inactive
-  }
-  return map;
-}
-
 async function loadEnrollmentCounts(): Promise<
   Map<number, { photo_count: number; descriptor_count: number }>
 > {
@@ -188,29 +127,57 @@ async function loadEnrollmentCounts(): Promise<
   return map;
 }
 
+/**
+ * One employee query (name + flag + dept) + one enrollment aggregate.
+ * Avoids the previous 3-query fan-out (base + flags + counts).
+ */
 export async function listEmployeesFaceVerification(): Promise<EmployeeFaceVerificationRow[]> {
-  const [baseEmployees, verificationFlags, enrollmentCounts] = await Promise.all([
-    loadBaseEmployees(),
-    loadVerificationFlags(),
+  await ensureFaceVerificationColumn();
+
+  const [empResult, enrollmentCounts] = await Promise.all([
+    pool.query(`
+      SELECT
+        e.id,
+        e.first_name,
+        e.last_name,
+        e.pseudonym,
+        e.employee_code,
+        COALESCE(e.face_verification_enabled, 0) AS face_verification_enabled,
+        d.name AS department_name
+      FROM hrm_employees e
+      LEFT JOIN employee_jobs j ON e.id = j.employee_id
+      LEFT JOIN departments d ON j.department_id = d.id
+      ORDER BY e.id ASC
+    `),
     loadEnrollmentCounts(),
   ]);
 
-  return baseEmployees.map((row) => {
-    const name = [row.first_name, row.last_name]
+  const [rows] = empResult;
+  const seen = new Set<number>();
+  const out: EmployeeFaceVerificationRow[] = [];
+
+  for (const raw of rows as Array<Record<string, unknown>>) {
+    const id = Number(raw.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+
+    const name = [raw.first_name, raw.last_name]
       .map((v) => String(v || "").trim())
       .filter(Boolean)
       .join(" ");
-    const counts = enrollmentCounts.get(row.id) ?? { photo_count: 0, descriptor_count: 0 };
+    const counts = enrollmentCounts.get(id) ?? { photo_count: 0, descriptor_count: 0 };
 
-    return {
-      id: row.id,
-      name: name || `Employee ${row.id}`,
-      pseudonym: row.pseudonym,
-      employee_code: row.employee_code,
-      department: row.department_name,
-      face_verification_enabled: verificationFlags.get(row.id) ?? false,
+    out.push({
+      id,
+      name: name || `Employee ${id}`,
+      pseudonym: raw.pseudonym != null ? String(raw.pseudonym) : null,
+      employee_code: raw.employee_code != null ? String(raw.employee_code) : null,
+      department: raw.department_name != null ? String(raw.department_name) : null,
+      face_verification_enabled: Number(raw.face_verification_enabled ?? 0) === 1,
       photo_count: counts.photo_count,
       descriptor_count: counts.descriptor_count,
-    };
-  });
+    });
+  }
+
+  return out;
 }

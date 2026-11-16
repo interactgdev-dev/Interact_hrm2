@@ -9,6 +9,7 @@ import { useEmployeeDetailPopup } from "../../components/use-employee-detail-pop
 import {
   descriptorToJson,
   ensureFaceModelsLoaded,
+  preloadFaceRuntime,
   scanBlob,
   scanVideoFrame,
 } from "@/lib/face-client-engine";
@@ -151,22 +152,54 @@ export default function FaceEnrollmentAdminPage() {
     }
   }, []);
 
+  // Picker uses the same lightweight face-enrollment employees payload (not /api/employee-list).
   React.useEffect(() => {
-    Promise.all([
-      fetch("/api/employee-list").then((r) => r.json()),
-      refreshServiceStatus(),
-      loadEmployeeList(),
-      ensureFaceModelsLoaded()
-        .then(() => setModelsReady(true))
-        .catch(() =>
-          setError("Face engine failed to load. Run npm run face:setup, then refresh this page.")
-        ),
-    ])
-      .then(([empData]) => {
-        if (empData.success) setEmployees(empData.employees || []);
+    setEmployees(
+      employeeRows.map((row) => {
+        const parts = String(row.name || "")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+        return {
+          id: row.id,
+          first_name: parts[0] || row.name || `Employee ${row.id}`,
+          last_name: parts.slice(1).join(" ") || undefined,
+          pseudonym: row.pseudonym || undefined,
+          employee_code: row.employee_code || undefined,
+        };
+      }),
+    );
+  }, [employeeRows]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    // Paint the page as soon as list + status return — do not wait for TF/face-api models.
+    Promise.all([loadEmployeeList(), refreshServiceStatus()])
+      .catch(() => {
+        if (!cancelled) setError("Failed to load page data");
       })
-      .catch(() => setError("Failed to load page data"))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    // Start JS parse early; weight download continues in background.
+    preloadFaceRuntime();
+    ensureFaceModelsLoaded()
+      .then(() => {
+        if (!cancelled) setModelsReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError(
+            "Face engine failed to load. Run npm run face:setup, then refresh this page.",
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [loadEmployeeList, refreshServiceStatus]);
 
   const handleVerificationToggle = async (row: EmployeeVerificationRow) => {
