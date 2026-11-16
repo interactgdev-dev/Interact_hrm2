@@ -79,28 +79,6 @@ type MonthlyAttendanceEmployeeRow = {
   importedFooter?: { totalDeduction?: string; extraHours?: string; workingDays?: string };
 };
 
-import {
-  PUNCH_ONLY_DEFAULT_SHIFT,
-  PUNCH_ONLY_EMPLOYEE_IDS,
-  PUNCH_ONLY_EMPLOYEES,
-  punchOnlyById,
-  punchOnlyDisplayName,
-  punchOnlyPinForId,
-} from "../../../lib/punch-only-employees";
-
-/**
- * Who may appear as a "punch-only" employee card with no HRM clock-in rows.
- * Admin dept / punch-only roster only. Normal staff cards still come from attendance.
- * (ZK T.Punch on Absent days is enabled separately via includeZkOnlyDays=true.)
- */
-function allowsPunchWithoutClockIn(
-  employeeId: string | number | null | undefined,
-  departmentName: string | null | undefined,
-): boolean {
-  const id = String(employeeId || "").trim();
-  if (id && PUNCH_ONLY_EMPLOYEE_IDS.has(id)) return true;
-  return isAdminStaffDepartment(departmentName);
-}
 
 /** Billable late is already after 1h relaxation — show/sum any minutes > 0. */
 const EXCESS_LATE_SHOW_AFTER_MINUTES = 0;
@@ -881,7 +859,7 @@ export default function MonthlyAttendancePage() {
       Date.now(),
       zkFrom,
       zkTo,
-      shiftResolverForEmployee(empId),
+      undefined,
       true,
     );
   }
@@ -1039,31 +1017,23 @@ export default function MonthlyAttendancePage() {
         // handled above when no sessions and no records
       }
 
-      const leaveKindSession = approvedLeaveOnDay(
-        approvedLeavesMap,
-        employee.employeeId,
-        day.dateKey,
-      );
-      const leaveAttSession = leaveKindSession
-        ? attendanceFromApprovedLeaveDay(leaveKindSession)
-        : null;
-      // No HRM clock-in meta → Absent (or leave/off). Punches do not change status.
-      const emptySessionFallback = emptyWorkingDayStatus(
-        day.dateKey,
-        workingDay,
-        leaveKindSession,
-      );
+      // Status from HRM meta only — ZK punches never invent On Time / change status.
+      let fallbackStatus = workingDay ? "Absent" : "Off";
+      let fallbackDeduction = workingDay ? "100%" : "";
+      if (
+        workingDay &&
+        approvedLeavesMap[employee.employeeId] &&
+        approvedLeavesMap[employee.employeeId][day.dateKey]
+      ) {
+        fallbackStatus = "Leave";
+        fallbackDeduction = "0%";
+      }
 
       sessionsToExport.forEach(({ session, record }, sessionIndex) => {
         const statusLabel = normalizeAttendanceStatus(
-          leaveAttSession?.statusLabel ||
-            meta?.statusLabel ||
-            emptySessionFallback.statusLabel,
+          meta?.statusLabel || fallbackStatus,
         );
-        const deduction =
-          leaveAttSession?.deduction ||
-          meta?.deduction ||
-          emptySessionFallback.deduction;
+        const deduction = meta?.deduction || fallbackDeduction;
         dataRows.push({
           cells: [
             day.weekday,
@@ -1337,24 +1307,15 @@ export default function MonthlyAttendancePage() {
           return;
         }
 
-        const leaveKind = approvedLeaveOnDay(
-          approvedLeavesMap,
-          employee.employeeId,
-          day.dateKey,
-        );
-        const leaveAtt = leaveKind ? attendanceFromApprovedLeaveDay(leaveKind) : null;
-        const emptyFallback = emptyWorkingDayStatus(day.dateKey, true, leaveKind);
         // ZK punches never invent "On Time" — status from HRM / leave / Absent only.
-        const exportStatus =
-          leaveAtt?.statusLabel || meta?.statusLabel || emptyFallback.statusLabel;
+        const exportStatus = meta?.statusLabel || "Absent";
         if (!shouldIncludeInDeductionSummary(exportStatus)) return;
-        const deduction =
-          leaveAtt?.deduction || meta?.deduction || emptyFallback.deduction;
+        const deduction = meta?.deduction || "100%";
         const tardyCount = meta?.runningLate ?? "";
         const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
 
         sessionsToExport.forEach(({ session, record }) => {
-          pushDeductionSummaryRow(rows, employee, day.dateKey, statusLabel, deduction, tardyCount, {
+          pushDeductionSummaryRow(rows, employee, day.dateKey, exportStatus, deduction, tardyCount, {
             session,
             record,
           });
@@ -1549,7 +1510,7 @@ export default function MonthlyAttendancePage() {
           pairingNow,
           zkFrom,
           zkTo,
-          shiftResolverForEmployee(empId),
+          undefined,
           true,
         ),
       );
@@ -1903,31 +1864,20 @@ export default function MonthlyAttendancePage() {
                             );
                           }
 
-                          const leaveKindDay = approvedLeaveOnDay(
-                            approvedLeavesMap,
-                            employee.employeeId,
-                            day.dateKey,
+                          // Status from HRM meta / leave / Absent — punches never change it.
+                          let fallbackStatus = workingDay ? "Absent" : "Off";
+                          let fallbackDeduction = workingDay ? "100%" : "";
+                          if (
+                            workingDay &&
+                            approvedLeavesMap[employee.employeeId] &&
+                            approvedLeavesMap[employee.employeeId][day.dateKey]
+                          ) {
+                            fallbackStatus = "Leave";
+                            fallbackDeduction = "0%";
+                          }
+                          const recordStatus = normalizeAttendanceStatus(
+                            meta?.statusLabel || fallbackStatus,
                           );
-                          const leaveAttDay = leaveKindDay
-                            ? attendanceFromApprovedLeaveDay(leaveKindDay)
-                            : null;
-                          const emptyFallback = emptyWorkingDayStatus(
-                            day.dateKey,
-                            workingDay,
-                            leaveKindDay,
-                          );
-                          const dayLevelOverride = overrideStatusFor(
-                            employee.employeeId,
-                            day.dateKey,
-                          );
-                          // Status: leave → HRM meta → Absent/Off. Punches never change it.
-                          const dayAutoStatus = leaveAttDay
-                            ? leaveAttDay.statusLabel
-                            : meta?.autoStatusLabel || meta?.statusLabel
-                              ? normalizeAttendanceStatus(
-                                  meta.autoStatusLabel || meta.statusLabel || "-",
-                                )
-                              : emptyFallback.statusLabel;
                           const sessionsToShow = getDaySessionRows(
                             day.dateKey,
                             dayRecords,
@@ -1935,27 +1885,6 @@ export default function MonthlyAttendancePage() {
                           );
 
                           return sessionsToShow.map(({ session, record }, index) => {
-                            const attId = normalizeOverrideAttendanceId(record?.id);
-                            // Session-specific override wins; else legacy day-level; else auto.
-                            const sessionOverride =
-                              attId > 0
-                                ? overrideStatusFor(
-                                    employee.employeeId,
-                                    day.dateKey,
-                                    attId,
-                                  )
-                                : null;
-                            const effectiveOverride = sessionOverride || dayLevelOverride;
-                            const rowStatus = effectiveOverride || dayAutoStatus;
-                            const rowDeduction = effectiveOverride
-                              ? deductionForAttendanceStatus(
-                                  effectiveOverride,
-                                  meta?.runningLate,
-                                )
-                              : leaveAttDay
-                                ? leaveAttDay.deduction
-                                : meta?.deduction || emptyFallback.deduction;
-                            const statusIsManual = Boolean(effectiveOverride);
                             return (
                               <tr
                                 key={`${employee.employeeId}-${day.dateKey}-session-${index}`}
@@ -2010,7 +1939,7 @@ export default function MonthlyAttendancePage() {
                                     dayRecords
                                   )}
                                 </td>
-                                <td>{meta?.deduction || ""}</td>
+                                <td>{meta?.deduction || fallbackDeduction}</td>
                               </tr>
                             );
                           });

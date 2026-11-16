@@ -12,6 +12,7 @@ export type PinProfile = {
 export type HrmCodeProfile = {
   employeeName: string;
   department: string;
+  employeeId?: string;
 };
 
 function trimStr(v: unknown) {
@@ -113,6 +114,30 @@ export function hrmMapFromEmployees(
     map.set(code, {
       employeeName,
       department: trimStr(e.department_name) || "-",
+    });
+  }
+  return map;
+}
+
+/** Match punches by HRM employee id (hrm_employees.id as string key). */
+export function hrmIdMapFromEmployees(
+  employees: {
+    id?: string | number;
+    first_name?: string;
+    last_name?: string;
+    department_name?: string | null;
+  }[],
+): Map<string, HrmCodeProfile> {
+  const map = new Map<string, HrmCodeProfile>();
+  for (const e of employees) {
+    if (e.id == null || e.id === "") continue;
+    const idKey = String(e.id);
+    const employeeName =
+      nameFromParts(trimStr(e.first_name), trimStr(e.last_name)) || "—";
+    map.set(idKey, {
+      employeeName,
+      department: trimStr(e.department_name) || "-",
+      employeeId: idKey,
     });
   }
   return map;

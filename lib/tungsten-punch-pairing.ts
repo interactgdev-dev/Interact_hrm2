@@ -1,17 +1,24 @@
-import { parseAttendanceDateTimeMs } from "./shift-timing";
+import { computeShiftEndEpochMs, parseAttendanceDateTimeMs, wallClockToEpochMs } from "./shift-timing";
 import {
   getDateStringInTimeZone,
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "./timezone";
+import { parseZkbioDateTimeMs } from "./zkbio-time";
 import {
   buildPinProfilesFromRows,
   hrmMapFromEmployees,
+  hrmIdMapFromEmployees,
   profileMapsFromApi,
   resolveZkIdentity,
   type HrmCodeProfile,
   type PinProfile,
 } from "./zkbio-employee-resolve";
+import {
+  PUNCH_ONLY_MIDNIGHT_EXIT_MORNING_CAP,
+  punchOnlyUsesLastSpanOut,
+  punchOnlyUsesMidnightExitLastOut,
+} from "./punch-only-employees";
 
 export const MAX_SESSION_MS = 24 * 60 * 60 * 1000;
 const TUNGSTEN_AFTER_CLOCK_GRACE_MS = 30 * 60 * 1000;
@@ -26,7 +33,40 @@ export type TungstenPunchContext = {
   batchPinProfiles: Map<string, PinProfile>;
   dbPinProfiles: Map<string, PinProfile>;
   hrmByCode: Map<string, HrmCodeProfile>;
+  hrmById: Map<string, HrmCodeProfile>;
+  hrmEmployees: HrmEmployeeRef[];
 };
+
+export type HrmEmployeeRef = {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string;
+  departmentName: string;
+  pseudonym: string;
+  gender: string;
+};
+
+/** Match Tungsten punches to an HRM employee by PIN (employee_code) and/or name. */
+export type EmployeeMatchKeys = {
+  employeeName: string;
+  employeeCode?: string | null;
+  employeeId?: string | null;
+  pseudonym?: string | null;
+};
+
+export type ShiftDayTiming = {
+  startTime: string;
+  endTime: string;
+};
+
+export type EmployeeShiftResolver = (
+  sessionDate: string,
+) => ShiftDayTiming | null | undefined;
+
+function resolveHrmPinMatch(ctx: TungstenPunchContext, pin: string) {
+  if (!pin) return undefined;
+  return ctx.hrmByCode.get(pin) || ctx.hrmById.get(pin);
+}
 
 /** One row = one Employee Report session (same punch in/out logic). */
 export type EmployeeReportSession = {
@@ -49,6 +89,163 @@ function normalizeName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function rawZkNameFromRow(z: Record<string, unknown>) {
+  const first = String(z.first_name ?? "").trim();
+  const last = String(z.last_name ?? "").trim();
+  return `${first} ${last}`.trim();
+}
+
+function formatPunchTimeFromMs(ms: number) {
+  return getTimeStringInTimeZone(new Date(ms), SERVER_TIMEZONE);
+}
+
+/** PIN match, exact name, or partial name (e.g. Tungsten "Zahid Ali" vs HRM "Zahid Ali Parviz"). */
+function namesLooselyMatch(a: string, b: string) {
+  const na = normalizeName(a);
+  const nb = normalizeName(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  // "NA" must not match "Naveed" / "Hussain" via 2-letter substring.
+  if (na.length < 3 || nb.length < 3) return false;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  const ta = na.split(" ").filter((t) => t.length >= 3);
+  const tb = nb.split(" ").filter((t) => t.length >= 3);
+  if (ta.length >= 2 && tb.length >= 2) {
+    const shared = tb.filter((t) => ta.includes(t)).length;
+    if (shared >= 2) return true;
+    if (ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1]) return true;
+  }
+  return false;
+}
+
+export function punchMatchesEmployee(
+  pin: string,
+  zkResolvedName: string,
+  hrmPinMatch: HrmCodeProfile | undefined,
+  target: EmployeeMatchKeys,
+  rawZkRowName?: string,
+): boolean {
+  const empId = String(target.employeeId ?? "").trim();
+  const code = String(target.employeeCode ?? "").trim();
+  // Strict PIN match only when HRM has a real device employee_code.
+  // (Staging often has empty codes after Mongo cutover — then name-match below.)
+  if (code) {
+    if (pin && pin === code) return true;
+    if (empId && pin && pin === empId) return true;
+    return false;
+  }
+
+  // No employee_code: allow pin === HRM id (some devices use id as PIN).
+  if (empId && pin && pin === empId) return true;
+
+  const candidates = [
+    hrmPinMatch?.employeeName || "",
+    zkResolvedName,
+    rawZkRowName || "",
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (namesLooselyMatch(target.employeeName, candidate)) return true;
+  }
+
+  if (
+    hrmPinMatch?.employeeId &&
+    empId &&
+    hrmPinMatch.employeeId === empId
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Device PINs we trust without name matching.
+ * Only when employee_code is set — otherwise callers fall back to name match
+ * (empty codes on staging must not block all T.Punch).
+ */
+export function employeeZkPins(target: EmployeeMatchKeys): Set<string> {
+  const pins = new Set<string>();
+  const code = String(target.employeeCode ?? "").trim();
+  const empId = String(target.employeeId ?? "").trim();
+  if (!code) return pins;
+  pins.add(code);
+  if (empId) pins.add(empId);
+  return pins;
+}
+
+export function punchMatchesEmployeePinOnly(
+  pin: string,
+  target: EmployeeMatchKeys,
+): boolean {
+  if (!pin) return false;
+  return employeeZkPins(target).has(pin);
+}
+
+export function employeeHasZkPunchesInRange(
+  ctx: TungstenPunchContext,
+  target: EmployeeMatchKeys,
+  dateFrom: string,
+  dateTo: string,
+): boolean {
+  for (const z of ctx.zkRows) {
+    const pin = String(z.pin ?? "").trim();
+    const knownPins = employeeZkPins(target);
+    if (knownPins.size > 0) {
+      if (!knownPins.has(pin)) continue;
+    } else {
+      const { employeeName: zkName } = resolveZkIdentity(
+        z,
+        ctx.batchPinProfiles,
+        ctx.dbPinProfiles,
+        ctx.hrmByCode,
+      );
+      const hrmMatch = resolveHrmPinMatch(ctx, pin);
+      const rawName = rawZkNameFromRow(z);
+      if (!punchMatchesEmployee(pin, zkName, hrmMatch, target, rawName)) continue;
+    }
+
+    const rawVal = z.event_time ?? z.imported_at;
+    if (rawVal == null || rawVal === "") continue;
+    const punchMs = parseZkbioDateTimeMs(z);
+    if (punchMs == null) continue;
+    const eventDate = getDateStringInTimeZone(punchMs, SERVER_TIMEZONE);
+    if (eventDate < dateFrom || eventDate > dateTo) continue;
+    return true;
+  }
+  return false;
+}
+
+export function hrmEmployeesFromList(
+  employees: {
+    id?: string | number;
+    first_name?: string;
+    last_name?: string;
+    employee_code?: string | null;
+    department_name?: string | null;
+    pseudonym?: string | null;
+    gender?: string | null;
+  }[],
+): HrmEmployeeRef[] {
+  return employees
+    .map((e) => {
+      const employeeId = e.id != null ? String(e.id) : "";
+      if (!employeeId) return null;
+      const first = String(e.first_name ?? "").trim();
+      const last = String(e.last_name ?? "").trim();
+      const employeeName = `${first} ${last}`.trim() || "—";
+      return {
+        employeeId,
+        employeeName,
+        employeeCode: String(e.employee_code ?? "").trim(),
+        departmentName: String(e.department_name ?? "").trim() || "-",
+        pseudonym: String(e.pseudonym ?? "").trim() || "-",
+        gender: String(e.gender ?? "").trim(),
+      };
+    })
+    .filter((e): e is HrmEmployeeRef => e != null);
+}
+
 export function addDaysToDateKey(dateKey: string, days: number) {
   const [y, m, d] = dateKey.split("-").map(Number);
   if (!y || !m || !d) return dateKey;
@@ -56,9 +253,12 @@ export function addDaysToDateKey(dateKey: string, days: number) {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** HRM + ZKBio timestamps — UTC wall in DB (same as attendance / auto clock-out). */
-function rowFromIso(source: "H" | "T", iso: string, detail: string): InternalRow | null {
-  const ms = parseAttendanceDateTimeMs(iso);
+/** HRM + ZKBio timestamps — prefer device-local eventTime for Tungsten rows. */
+function rowFromIso(source: "H" | "T", isoOrMs: string | number, detail: string): InternalRow | null {
+  const ms =
+    typeof isoOrMs === "number"
+      ? isoOrMs
+      : parseAttendanceDateTimeMs(isoOrMs);
   if (ms == null) return null;
   const at = new Date(ms);
   return {
@@ -112,59 +312,68 @@ export async function loadTungstenPunchContext(
   });
   if (dept) zkParams.set("dept", dept);
 
-  const [zkResult, pinProfRes, empListRes] = await Promise.all([
+  const [zkResult, empListRes] = await Promise.all([
     fetchAllZkRows(zkParams),
-    fetch("/api/zkbio-pin-profiles"),
     fetch("/api/employee-list"),
   ]);
 
-  const pinProfData = await pinProfRes.json();
+  // Skip /api/zkbio-pin-profiles — full dump is multi‑MB and stalls Monthly Attendance.
+  // Month-window rows already feed batchPinProfiles for identity backfill.
   const empListData = await empListRes.json();
 
   return {
     zkRows: zkResult.rows,
     batchPinProfiles: buildPinProfilesFromRows(zkResult.rows),
-    dbPinProfiles: pinProfData.success
-      ? profileMapsFromApi(pinProfData.profiles || [])
-      : new Map(),
+    dbPinProfiles: new Map(),
     hrmByCode:
       empListData.success && empListData.employees
         ? hrmMapFromEmployees(empListData.employees)
         : new Map(),
+    hrmById:
+      empListData.success && empListData.employees
+        ? hrmIdMapFromEmployees(empListData.employees)
+        : new Map(),
+    hrmEmployees:
+      empListData.success && empListData.employees
+        ? hrmEmployeesFromList(empListData.employees)
+        : [],
   };
 }
 
 function appendTungstenRows(
   merged: InternalRow[],
-  employeeName: string,
+  target: EmployeeMatchKeys,
   ctx: TungstenPunchContext,
   zkDateFrom: string,
   zkDateTo: string,
 ) {
-  const key = normalizeName(employeeName);
   for (const z of ctx.zkRows) {
     const pin = String(z.pin ?? "").trim();
-    const { employeeName: zkName } = resolveZkIdentity(
-      z,
-      ctx.batchPinProfiles,
-      ctx.dbPinProfiles,
-      ctx.hrmByCode,
-    );
-    const hrmMatch = pin ? ctx.hrmByCode.get(pin) : undefined;
-    const rowName = (hrmMatch?.employeeName || zkName).trim().toLowerCase().replace(/\s+/g, " ");
-    if (rowName !== key) continue;
+    const knownPins = employeeZkPins(target);
+    if (knownPins.size > 0) {
+      if (!knownPins.has(pin)) continue;
+    } else {
+      const { employeeName: zkName } = resolveZkIdentity(
+        z,
+        ctx.batchPinProfiles,
+        ctx.dbPinProfiles,
+        ctx.hrmByCode,
+      );
+      const hrmMatch = resolveHrmPinMatch(ctx, pin);
+      const rawName = rawZkNameFromRow(z);
+      if (!punchMatchesEmployee(pin, zkName, hrmMatch, target, rawName)) continue;
+    }
 
     const rawVal = z.event_time ?? z.imported_at;
     if (rawVal == null || rawVal === "") continue;
-    const raw = String(rawVal);
-    const punchMs = parseAttendanceDateTimeMs(raw);
+    const punchMs = parseZkbioDateTimeMs(z);
     if (punchMs == null) continue;
     const eventDate = getDateStringInTimeZone(punchMs, SERVER_TIMEZONE);
     if (eventDate < zkDateFrom || eventDate > zkDateTo) continue;
 
     const reader = String(z.reader_name || "").trim() || "-";
     const event = String(z.event_name || "").trim() || "Punch";
-    const r = rowFromIso("T", raw, `${reader} — ${event}`);
+    const r = rowFromIso("T", punchMs, `${reader} — ${event}`);
     if (r) merged.push(r);
   }
 }
@@ -181,14 +390,6 @@ function parseShiftTimeToHms(value: string | null | undefined) {
     m: Number(match[2]),
     s: Number(match[3] || "0"),
   };
-}
-
-/** Wall-clock on dateKey in Asia/Karachi (UTC+5, no DST). */
-function wallClockToEpochMs(dateKey: string, timeValue: string) {
-  const [y, mo, d] = dateKey.split("-").map(Number);
-  const hms = parseShiftTimeToHms(timeValue);
-  if (!y || !mo || !d || !hms) return null;
-  return Date.UTC(y, mo - 1, d, hms.h - 5, hms.m, hms.s);
 }
 
 /**
@@ -263,7 +464,8 @@ function isExitCandidate(
  * T.Punch out: last exit Tungsten for this session.
  * 1) Last punch in 30 min after clock-out
  * 2) Else last door punch before clock-out
- * 3) Else last same-day punch after clock-out (late ZK / just past grace)
+ * 3) Else last punch after clock-out through shift-end window / session max
+ *    (overnight: next-calendar-morning outs count — not same-day locked)
  */
 function assignSessionPunchOut(
   tungstenByTime: TungstenEvent[],
@@ -273,6 +475,7 @@ function assignSessionPunchOut(
   nowMs: number,
   usedPunchAt: Set<number>,
   excludeExitAtMs?: number,
+  shiftEndMs?: number | null,
 ): string | undefined {
   if (Number.isNaN(cinMs) || Number.isNaN(outMs)) return undefined;
 
@@ -302,14 +505,26 @@ function assignSessionPunchOut(
     return pick.time;
   }
 
-  const sameDayLateExit = tungstenByTime.filter(
-    (t) =>
-      t.date === sessionDate &&
-      isExitCandidate(t, cinMs, usedPunchAt, excludeExitAtMs) &&
-      t.atMs > outMs,
+  // Overnight / late ZK: allow next-calendar-day punches through shift end + grace
+  // (do NOT lock to sessionDate — Fri 1:02 AM must close Thu open session).
+  const lateSearchEnd = Math.min(
+    nowMs,
+    Math.max(
+      outMs + 12 * 60 * 60 * 1000,
+      shiftEndMs != null && Number.isFinite(shiftEndMs)
+        ? shiftEndMs + EXIT_AFTER_SHIFT_END_MS
+        : outMs + TUNGSTEN_AFTER_CLOCK_GRACE_MS,
+      cinMs + MAX_SESSION_MS,
+    ),
   );
-  if (sameDayLateExit.length) {
-    const pick = sameDayLateExit[sameDayLateExit.length - 1];
+  const lateExit = tungstenByTime.filter(
+    (t) =>
+      isExitCandidate(t, cinMs, usedPunchAt, excludeExitAtMs) &&
+      t.atMs > outMs &&
+      t.atMs <= lateSearchEnd,
+  );
+  if (lateExit.length) {
+    const pick = lateExit[lateExit.length - 1];
     usedPunchAt.add(pick.atMs);
     return pick.time;
   }
@@ -738,6 +953,7 @@ export function pairTungstenWithSessions(
   todayKey: string,
   nowMs: number = Date.now(),
   resolveShiftStart?: (sessionDate: string) => string | null | undefined,
+  resolveShift?: EmployeeShiftResolver,
 ): EmployeeReportSession[] {
   const tungstenByTime = [...tungsten].sort((a, b) => a.atMs - b.atMs);
   const arrivalPunchByShiftDay = new Map<string, string>();
@@ -750,6 +966,7 @@ export function pairTungstenWithSessions(
     cinMs: number;
     outMs: number | null;
     excludeExitAtMs?: number;
+    shiftTiming?: ShiftDayTiming | null;
   };
 
   const drafts: SessionDraft[] = [];
@@ -872,12 +1089,13 @@ export function pairTungstenWithSessions(
       cinMs,
       outMs: outMs != null && !Number.isNaN(outMs) ? outMs : null,
       excludeExitAtMs,
+      shiftTiming: shiftTiming?.endTime ? shiftTiming : null,
     });
   }
 
   // Newest session picks exit punches first (avoids long session stealing evening punches).
   const exitOrder = [...drafts]
-    .filter((d) => d.outMs != null)
+    .filter((d) => d.outMs != null || d.shiftTiming?.endTime)
     .sort((a, b) => b.cinMs - a.cinMs);
 
   for (const draft of exitOrder) {
@@ -967,23 +1185,25 @@ export function pairTungstenWithSessions(
       tungstenByTime,
       draft.sessionDate,
       draft.cinMs,
-      draft.outMs as number,
+      exitAnchorMs,
       nowMs,
       usedPunchAt,
       draft.excludeExitAtMs,
+      shiftEndMs,
     );
-    if (last) draft.tungstenPunchOut = last;
+    if (lastPunch) draft.tungstenPunchOut = lastPunch;
   }
 
-  return drafts.map(({ cinMs: _c, outMs: _o, excludeExitAtMs: _e, ...session }) => session);
+  return drafts.map(({ cinMs: _c, outMs: _o, excludeExitAtMs: _e, shiftTiming: _s, ...session }) => session);
 }
 
 export function buildEmployeeReportSessions(
-  employeeName: string,
+  target: EmployeeMatchKeys | string,
   attendanceRecords: {
     clock_in?: string | null;
     clock_out?: string | null;
     shift_start_time?: string | null;
+    shift_end_time?: string | null;
   }[],
   ctx: TungstenPunchContext | null,
   todayKey: string,
@@ -998,14 +1218,22 @@ export function buildEmployeeReportSessions(
    */
   includeZkOnlyDays: boolean = false,
 ): EmployeeReportSession[] {
-  const shiftStartByDate = new Map<string, string>();
+  const match: EmployeeMatchKeys =
+    typeof target === "string" ? { employeeName: target } : target;
+  const shiftTimingByDate = new Map<string, ShiftDayTiming>();
   for (const a of attendanceRecords) {
-    if (!a.shift_start_time || !a.clock_in) continue;
+    if (!a.shift_start_time || !a.shift_end_time || !a.clock_in) continue;
     const dk = getDateStringInTimeZone(new Date(String(a.clock_in)), SERVER_TIMEZONE);
-    if (dk && !shiftStartByDate.has(dk)) {
-      shiftStartByDate.set(dk, String(a.shift_start_time));
+    if (dk && !shiftTimingByDate.has(dk)) {
+      shiftTimingByDate.set(dk, {
+        startTime: String(a.shift_start_time),
+        endTime: String(a.shift_end_time),
+      });
     }
   }
+
+  const getShift = (sessionDate: string): ShiftDayTiming | null =>
+    shiftTimingByDate.get(sessionDate) ?? resolveShift?.(sessionDate) ?? null;
 
   const merged: InternalRow[] = [];
 
@@ -1023,7 +1251,7 @@ export function buildEmployeeReportSessions(
   if (ctx) {
     const from = zkDateFrom || "0000-01-01";
     const to = zkDateTo || "9999-12-31";
-    appendTungstenRows(merged, employeeName, ctx, from, to);
+    appendTungstenRows(merged, match, ctx, from, to);
   }
 
   merged.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
@@ -1047,7 +1275,7 @@ export function buildEmployeeReportSessions(
     }
   }
 
-  return pairTungstenWithSessions(
+  const paired = pairTungstenWithSessions(
     hrmIns,
     hrmOuts,
     tungsten,

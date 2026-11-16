@@ -25,14 +25,45 @@ export function normalizeDateKey(value: unknown): string | null {
   return getDateStringInTimeZone(parsed, SERVER_TIMEZONE);
 }
 
+/**
+ * Normalize DB / UI shift times to HH:mm:ss for overnight math.
+ * Accepts HH:mm, HH:mm:ss, Date, or "7:00 PM" style.
+ */
+export function normalizeShiftTimeString(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const h = String(value.getUTCHours()).padStart(2, "0");
+    const m = String(value.getUTCMinutes()).padStart(2, "0");
+    const s = String(value.getUTCSeconds()).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+  const raw = String(value).trim();
+  const ampm = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (ampm) {
+    let h = Number(ampm[1]) % 12;
+    if (String(ampm[4]).toUpperCase() === "PM") h += 12;
+    const m = Number(ampm[2]);
+    const s = Number(ampm[3] || "0");
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(raw);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  const s = Number(match[3] || "0");
+  if (h > 23 || m > 59 || s > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 function parseShiftTimeHms(value: string | null | undefined) {
-  if (!value) return null;
-  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(value).trim());
+  const normalized = normalizeShiftTimeString(value);
+  if (!normalized) return null;
+  const match = /^(\d{2}):(\d{2}):(\d{2})$/.exec(normalized);
   if (!match) return null;
   return {
     h: Number(match[1]),
     m: Number(match[2]),
-    s: Number(match[3] || "0"),
+    s: Number(match[3]),
   };
 }
 
