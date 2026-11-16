@@ -413,6 +413,13 @@ export function buildEmployeeReportSessions(
   nowMs: number = Date.now(),
   zkDateFrom?: string,
   zkDateTo?: string,
+  resolveShift?: EmployeeShiftResolver,
+  /**
+   * When true, invent T.Punch rows for days with ZK punches but no HRM clock-in
+   * (forgot clock-in). Status still comes from HRM only — this only fills T.Punch
+   * first/last per shift (including midnight). Monthly Attendance enables for all.
+   */
+  includeZkOnlyDays: boolean = false,
 ): EmployeeReportSession[] {
   const shiftStartByDate = new Map<string, string>();
   for (const a of attendanceRecords) {
@@ -469,7 +476,18 @@ export function buildEmployeeReportSessions(
     tungsten,
     todayKey,
     nowMs,
-    (sessionDate) => shiftStartByDate.get(sessionDate) ?? null,
+    (sessionDate) => getShift(sessionDate)?.startTime ?? null,
+    (sessionDate) => getShift(sessionDate),
+  );
+
+  // When false: T.Punch only beside real Clock In sessions.
+  // When true: also show ZK-only days (no HRM clock-in) — display only, not status.
+  if (!includeZkOnlyDays) return paired;
+
+  const from = zkDateFrom || "0000-01-01";
+  const to = zkDateTo || "9999-12-31";
+  return appendZkOnlyDaySessions(paired, tungsten, from, to, (sessionDate) =>
+    getShift(sessionDate),
   );
 }
 
