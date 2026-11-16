@@ -15,6 +15,11 @@ import {
 
 export const MAX_SESSION_MS = 24 * 60 * 60 * 1000;
 const TUNGSTEN_AFTER_CLOCK_GRACE_MS = 30 * 60 * 1000;
+/** Exit window: up to 1h before shift end through 2h after (overnight AM outs). */
+const EXIT_BEFORE_SHIFT_END_MS = 60 * 60 * 1000;
+const EXIT_AFTER_SHIFT_END_MS = 2 * 60 * 60 * 1000;
+/** Early arrival: count punches up to this long before shift start as T.Punch In. */
+const ENTRY_BEFORE_SHIFT_START_MS = 4 * 60 * 60 * 1000;
 
 export type TungstenPunchContext = {
   zkRows: Record<string, unknown>[];
@@ -187,29 +192,58 @@ function wallClockToEpochMs(dateKey: string, timeValue: string) {
 }
 
 /**
- * Arrival thumb for a shift day: skip early-morning punches (overnight carry-over
- * after midnight). Prefer first punch before shift start (aty hoye); else first at/after shift start.
+ * Earliest valid entry punch for a shift day (not overnight carry-over).
+ * Prefer first punch before shift start ("aty hoye"); else first at/after shift start.
+ */
+function entryFloorMsForShiftDay(
+  sessionDate: string,
+  shiftStartMs: number,
+  crossesMidnight: boolean,
+): number {
+  if (crossesMidnight) {
+    return shiftStartMs - ENTRY_BEFORE_SHIFT_START_MS;
+  }
+  const noonMs = wallClockToEpochMs(sessionDate, "12:00:00");
+  const dayStartMs = wallClockToEpochMs(sessionDate, "00:00:00");
+  // Afternoon/evening day shift: ignore pre-noon AM leftovers from overnight.
+  if (noonMs != null && shiftStartMs >= noonMs) return noonMs;
+  // Morning shift: from midnight / up to 4h early — do NOT skip before noon.
+  const early = shiftStartMs - ENTRY_BEFORE_SHIFT_START_MS;
+  if (dayStartMs != null) return Math.max(dayStartMs, early);
+  return early;
+}
+
+/**
+ * Arrival thumb for a shift day: very first punch in the entry window
+ * (early arrival before shift, else first at/after shift start).
  */
 function firstArrivalPunchForShiftDay(
   tungstenByTime: TungstenEvent[],
   sessionDate: string,
   shiftStart: string | null | undefined,
+  shiftEnd?: string | null,
 ): string | undefined {
   const shiftMs = wallClockToEpochMs(sessionDate, shiftStart || "14:00:00");
-  const noonMs = wallClockToEpochMs(sessionDate, "12:00:00");
-  if (shiftMs == null || noonMs == null) return undefined;
+  if (shiftMs == null) return undefined;
 
-  const onDay = tungstenByTime.filter((t) => t.date === sessionDate);
-  if (!onDay.length) return undefined;
+  const startHms = parseShiftTimeToHms(shiftStart || "14:00:00");
+  const endHms = parseShiftTimeToHms(shiftEnd || null);
+  const crossesMidnight =
+    !!startHms &&
+    !!endHms &&
+    endHms.h * 60 + endHms.m <= startHms.h * 60 + startHms.m;
+  const floorMs = entryFloorMsForShiftDay(sessionDate, shiftMs, crossesMidnight);
 
-  for (const t of onDay) {
-    if (t.atMs < noonMs) continue;
-    if (t.atMs < shiftMs) return t.time;
-  }
-  for (const t of onDay) {
-    if (t.atMs >= noonMs && t.atMs >= shiftMs) return t.time;
-  }
-  return undefined;
+  const candidates = tungstenByTime
+    .filter((t) => t.atMs >= floorMs)
+    .sort((a, b) => a.atMs - b.atMs);
+  if (!candidates.length) return undefined;
+
+  // Prefer first early arrival before shift start
+  const early = candidates.find((t) => t.atMs < shiftMs);
+  if (early) return early.time;
+  // Else very first at/after shift start
+  return candidates[0].time;
 }
 
 function isExitCandidate(
@@ -283,6 +317,416 @@ function assignSessionPunchOut(
   return undefined;
 }
 
+/** Shift-day punches: include next-morning exits for overnight shifts. */
+function collectShiftDayPunches(
+  tungstenByTime: TungstenEvent[],
+  sessionDate: string,
+  shift?: ShiftDayTiming | null,
+): TungstenEvent[] {
+  const onDay = tungstenByTime.filter((t) => t.date === sessionDate);
+  if (!shift?.startTime || !shift?.endTime) return onDay;
+
+  const start = parseShiftTimeToHms(shift.startTime);
+  const end = parseShiftTimeToHms(shift.endTime);
+  if (!start || !end) return onDay;
+
+  const overnight = end.h * 60 + end.m <= start.h * 60 + start.m;
+  if (!overnight) return onDay;
+
+  const nextDate = addDaysToDateKey(sessionDate, 1);
+  const shiftEndMs = computeShiftEndEpochMs(
+    {
+      start_time: shift.startTime,
+      end_time: shift.endTime,
+      assigned_date: sessionDate,
+    },
+    sessionDate,
+  );
+  const windowEnd =
+    shiftEndMs != null ? shiftEndMs + EXIT_AFTER_SHIFT_END_MS : null;
+  const nextDay = tungstenByTime.filter(
+    (t) =>
+      t.date === nextDate &&
+      windowEnd != null &&
+      t.atMs <= windowEnd,
+  );
+  return [...onDay, ...nextDay];
+}
+
+type ShiftDayPunchOptions = {
+  /**
+   * When true, T.Punch Out must be a real punch at/after shift end.
+   * No fallback to "day last punch" before shift end.
+   */
+  requireOutAfterShiftEnd?: boolean;
+  /**
+   * When true (Khalid pilot): T.In = first at/after shift start;
+   * T.Out = last punch in span until next day's shift start (overnight-safe).
+   */
+  lastAnyPunchInSpan?: boolean;
+  /**
+   * Pervaiz midnight shift: T.Out = last punch after midnight (shift end)
+   * until morning cap (default 08:00) — ignores next-day late-morning returns.
+   */
+  midnightExitLastPunch?: boolean;
+};
+
+/**
+ * Shift-day T.Punch: very first punch in entry window (early arrival allowed);
+ * last punch near shift end / overnight midnight span.
+ */
+function firstLastPunchForShiftDay(
+  tungstenByTime: TungstenEvent[],
+  sessionDate: string,
+  shift?: ShiftDayTiming | null,
+  options?: ShiftDayPunchOptions,
+): { punchIn: string; punchOut: string } {
+  if (!shift?.startTime || !shift?.endTime) {
+    const onDay = [...tungstenByTime.filter((t) => t.date === sessionDate)].sort(
+      (a, b) => a.atMs - b.atMs,
+    );
+    if (!onDay.length) return { punchIn: "-", punchOut: "-" };
+    const punchIn = onDay[0].time;
+    const punchOut = onDay.length > 1 ? onDay[onDay.length - 1].time : "-";
+    return { punchIn, punchOut: punchOut === punchIn ? "-" : punchOut };
+  }
+
+  const shiftStartMs = wallClockToEpochMs(sessionDate, shift.startTime);
+  const shiftEndMs = computeShiftEndEpochMs(
+    {
+      start_time: shift.startTime,
+      end_time: shift.endTime,
+      assigned_date: sessionDate,
+    },
+    sessionDate,
+  );
+  if (shiftStartMs == null || shiftEndMs == null) return { punchIn: "-", punchOut: "-" };
+
+  const crossesMidnight = shiftEndMs <= shiftStartMs;
+  const entryFromMs = entryFloorMsForShiftDay(
+    sessionDate,
+    shiftStartMs,
+    crossesMidnight,
+  );
+
+  // Pervaiz midnight: last punch after shift end until morning — not 10am–noon returns.
+  if (options?.midnightExitLastPunch === true && crossesMidnight) {
+    const nextStartMs = wallClockToEpochMs(
+      addDaysToDateKey(sessionDate, 1),
+      shift.startTime,
+    );
+    const morningCapMs = wallClockToEpochMs(
+      addDaysToDateKey(sessionDate, 1),
+      PUNCH_ONLY_MIDNIGHT_EXIT_MORNING_CAP,
+    );
+    let collectUntilMs =
+      nextStartMs != null ? nextStartMs - 1 : shiftStartMs + MAX_SESSION_MS;
+    if (morningCapMs != null) {
+      collectUntilMs = Math.min(collectUntilMs, morningCapMs);
+    }
+    const spanPunches = tungstenByTime
+      .filter((t) => t.atMs >= entryFromMs && t.atMs <= collectUntilMs)
+      .sort((a, b) => a.atMs - b.atMs);
+    if (!spanPunches.length) return { punchIn: "-", punchOut: "-" };
+    const punchIn = spanPunches[0].time;
+    const afterMidnight = spanPunches.filter(
+      (t) => t.atMs >= shiftEndMs && t.time !== punchIn,
+    );
+    let punchOut = "-";
+    if (afterMidnight.length) {
+      punchOut = afterMidnight[afterMidnight.length - 1].time;
+    } else if (spanPunches.length > 1) {
+      // Left before midnight — last evening punch still counts as Out.
+      punchOut = spanPunches[spanPunches.length - 1].time;
+    }
+    if (punchOut === punchIn) punchOut = "-";
+    return { punchIn, punchOut };
+  }
+
+  // Overnight / Khalid last-span: through next morning (noon-capped) until next shift.
+  // Default for midnight shifts so T.Out is the real last exit, not a mid-evening punch.
+  const useLastSpan =
+    options?.lastAnyPunchInSpan === true ||
+    (crossesMidnight && options?.lastAnyPunchInSpan !== false && !options?.requireOutAfterShiftEnd);
+  if (useLastSpan && crossesMidnight) {
+    const nextStartMs = wallClockToEpochMs(
+      addDaysToDateKey(sessionDate, 1),
+      shift.startTime,
+    );
+    let collectUntilMs =
+      nextStartMs != null ? nextStartMs - 1 : shiftStartMs + MAX_SESSION_MS;
+    const noonNextMs = wallClockToEpochMs(
+      addDaysToDateKey(sessionDate, 1),
+      "12:00:00",
+    );
+    if (noonNextMs != null) {
+      collectUntilMs = Math.min(collectUntilMs, noonNextMs);
+    }
+    const spanPunches = tungstenByTime
+      .filter((t) => t.atMs >= entryFromMs && t.atMs <= collectUntilMs)
+      .sort((a, b) => a.atMs - b.atMs);
+    if (!spanPunches.length) return { punchIn: "-", punchOut: "-" };
+    const punchIn = spanPunches[0].time;
+    let punchOut =
+      spanPunches.length > 1 ? spanPunches[spanPunches.length - 1].time : "-";
+    if (punchOut === punchIn) punchOut = "-";
+    return { punchIn, punchOut };
+  }
+
+  const collectUntilMs = shiftEndMs + EXIT_AFTER_SHIFT_END_MS;
+  const dayPunches = tungstenByTime
+    .filter((t) => t.atMs >= entryFromMs && t.atMs <= collectUntilMs)
+    .sort((a, b) => a.atMs - b.atMs);
+  if (!dayPunches.length) return { punchIn: "-", punchOut: "-" };
+
+  // Very first punch in entry window (early arrival before shift start counts).
+  const punchIn = dayPunches[0].time;
+  const requireOutAfterShiftEnd = options?.requireOutAfterShiftEnd === true;
+  const exitFromMs = requireOutAfterShiftEnd
+    ? shiftEndMs
+    : shiftEndMs - EXIT_BEFORE_SHIFT_END_MS;
+  const exitCandidates = dayPunches.filter(
+    (t) => t.atMs >= exitFromMs && t.atMs !== dayPunches[0].atMs,
+  );
+  let punchOut = "-";
+  if (exitCandidates.length) {
+    punchOut = exitCandidates[exitCandidates.length - 1].time;
+  } else if (!requireOutAfterShiftEnd && dayPunches.length > 1) {
+    punchOut = dayPunches[dayPunches.length - 1].time;
+  }
+  if (punchOut === punchIn) punchOut = "-";
+  return { punchIn, punchOut };
+}
+
+function punchesInShiftWindow(
+  tungstenByTime: TungstenEvent[],
+  sessionDate: string,
+  shift?: ShiftDayTiming | null,
+): TungstenEvent[] {
+  if (!shift?.startTime || !shift?.endTime) {
+    return [...tungstenByTime.filter((t) => t.date === sessionDate)].sort((a, b) => a.atMs - b.atMs);
+  }
+  const shiftStartMs = wallClockToEpochMs(sessionDate, shift.startTime);
+  const shiftEndMs = computeShiftEndEpochMs(
+    {
+      start_time: shift.startTime,
+      end_time: shift.endTime,
+      assigned_date: sessionDate,
+    },
+    sessionDate,
+  );
+  if (shiftStartMs == null || shiftEndMs == null) {
+    return [...tungstenByTime.filter((t) => t.date === sessionDate)].sort((a, b) => a.atMs - b.atMs);
+  }
+  const crossesMidnight = shiftEndMs <= shiftStartMs;
+  const entryFromMs = entryFloorMsForShiftDay(
+    sessionDate,
+    shiftStartMs,
+    crossesMidnight,
+  );
+  const collectUntilMs = shiftEndMs + EXIT_AFTER_SHIFT_END_MS;
+  return tungstenByTime
+    .filter((t) => t.atMs >= entryFromMs && t.atMs <= collectUntilMs)
+    .sort((a, b) => a.atMs - b.atMs);
+}
+
+function appendZkOnlyDaySessions(
+  sessions: EmployeeReportSession[],
+  tungstenByTime: TungstenEvent[],
+  zkDateFrom: string,
+  zkDateTo: string,
+  resolveShift?: EmployeeShiftResolver,
+): EmployeeReportSession[] {
+  const coveredDates = new Set(sessions.map((s) => s.sessionDate));
+  const punchDates = new Set(tungstenByTime.map((t) => t.date));
+  const extra: EmployeeReportSession[] = [];
+
+  // Punches already claimed as a prior session's T.Punch Out (by wall time string + nearby ms)
+  const claimedOutTimes = new Set(
+    sessions
+      .map((s) => String(s.tungstenPunchOut || "").trim())
+      .filter((t) => t && t !== "-"),
+  );
+
+  for (const date of punchDates) {
+    if (date < zkDateFrom || date > zkDateTo) continue;
+    if (coveredDates.has(date)) continue;
+
+    // Overnight carry: punches on this calendar morning that belong to previous shift day
+    // must NOT become a new "T.Punch In" row (e.g. Fri 1:02 AM closing Thu open session).
+    const prevDate = addDaysToDateKey(date, -1);
+    const prevSession = sessions.find((s) => s.sessionDate === prevDate);
+    const prevShift = resolveShift?.(prevDate) ?? null;
+    if (prevSession && prevShift?.startTime && prevShift?.endTime) {
+      const start = parseShiftTimeToHms(prevShift.startTime);
+      const end = parseShiftTimeToHms(prevShift.endTime);
+      const overnight =
+        !!start &&
+        !!end &&
+        end.h * 60 + end.m <= start.h * 60 + start.m;
+      if (overnight) {
+        const prevEndMs = computeShiftEndEpochMs(
+          {
+            start_time: prevShift.startTime,
+            end_time: prevShift.endTime,
+            assigned_date: prevDate,
+          },
+          prevDate,
+        );
+        if (prevEndMs != null) {
+          const windowEnd = prevEndMs + EXIT_AFTER_SHIFT_END_MS;
+          const dayPunches = tungstenByTime.filter((t) => t.date === date);
+          const allCarryOver =
+            dayPunches.length > 0 &&
+            dayPunches.every((t) => t.atMs <= windowEnd);
+          if (allCarryOver) continue;
+        }
+      }
+    }
+
+    // Also skip if the only punch times were already used as someone else's Out
+    const dayPunchTimes = tungstenByTime
+      .filter((t) => t.date === date)
+      .map((t) => t.time);
+    if (
+      dayPunchTimes.length > 0 &&
+      dayPunchTimes.every((t) => claimedOutTimes.has(t))
+    ) {
+      continue;
+    }
+
+    const shiftForDay = resolveShift?.(date) ?? null;
+    const { punchIn, punchOut } = firstLastPunchForShiftDay(
+      tungstenByTime,
+      date,
+      shiftForDay,
+      // Overnight: last punch through next morning (same as admin midnight logic).
+      shiftForDay
+        ? { requireOutAfterShiftEnd: false, lastAnyPunchInSpan: true }
+        : undefined,
+    );
+    if (punchIn === "-" && punchOut === "-") continue;
+    // Don't invent a Friday In from a punch already shown as Thursday Out
+    if (punchIn !== "-" && claimedOutTimes.has(punchIn) && punchOut === "-") {
+      continue;
+    }
+    extra.push({
+      sessionDate: date,
+      tungstenPunchIn: punchIn,
+      hrmClockIn: "-",
+      hrmClockOut: "-",
+      tungstenPunchOut: punchOut,
+    });
+  }
+
+  if (!extra.length) return sessions;
+  return [...sessions, ...extra].sort((a, b) =>
+    a.sessionDate.localeCompare(b.sessionDate),
+  );
+}
+
+function collectEmployeeTungstenEvents(
+  target: EmployeeMatchKeys,
+  ctx: TungstenPunchContext,
+  zkDateFrom: string,
+  zkDateTo: string,
+  pinOnly = false,
+): TungstenEvent[] {
+  const tungsten: TungstenEvent[] = [];
+  const knownPins = employeeZkPins(target);
+  for (const z of ctx.zkRows) {
+    const pin = String(z.pin ?? "").trim();
+    if (knownPins.size > 0 || pinOnly) {
+      if (!punchMatchesEmployeePinOnly(pin, target)) continue;
+    } else {
+      const { employeeName: zkName } = resolveZkIdentity(
+        z,
+        ctx.batchPinProfiles,
+        ctx.dbPinProfiles,
+        ctx.hrmByCode,
+      );
+      const hrmMatch = resolveHrmPinMatch(ctx, pin);
+      const rawName = rawZkNameFromRow(z);
+      if (!punchMatchesEmployee(pin, zkName, hrmMatch, target, rawName)) continue;
+    }
+
+    const punchMs = parseZkbioDateTimeMs(z);
+    if (punchMs == null) continue;
+    const eventDate = getDateStringInTimeZone(punchMs, SERVER_TIMEZONE);
+    if (eventDate < zkDateFrom || eventDate > zkDateTo) continue;
+
+    tungsten.push({
+      atMs: punchMs,
+      time: formatPunchTimeFromMs(punchMs),
+      date: eventDate,
+    });
+  }
+  return tungsten.sort((a, b) => a.atMs - b.atMs);
+}
+
+/**
+ * Punch-only employees (no HRM clock in/out): per shift day,
+ * T.Punch In = first punch at/after shift start; T.Punch Out = last punch in shift window
+ * (overnight exits on next calendar morning count for the previous shift day).
+ * Overnight Admin punch-only (Khalid logic): T.Out = last punch until next shift start (noon-capped).
+ * Day shifts (e.g. Dawood 2–10, Zahid 11–10): T.Out uses shift-end exit window — not next-day arrivals.
+ */
+export function buildShiftPunchOnlySessions(
+  target: EmployeeMatchKeys,
+  ctx: TungstenPunchContext | null,
+  dateFrom: string,
+  dateTo: string,
+  resolveShift: EmployeeShiftResolver,
+): EmployeeReportSession[] {
+  if (!ctx || !dateFrom || !dateTo) return [];
+
+  const tungsten = collectEmployeeTungstenEvents(
+    target,
+    ctx,
+    addDaysToDateKey(dateFrom, -1),
+    addDaysToDateKey(dateTo, 1),
+    true, // punch-only rows must stay strict: pin(employee_code) or employee id only
+  );
+
+  const empId = String(target.employeeId ?? "").trim();
+  const allowLastSpanOut = punchOnlyUsesLastSpanOut(empId);
+  const midnightExit = punchOnlyUsesMidnightExitLastOut(empId);
+
+  const sessions: EmployeeReportSession[] = [];
+  let day = dateFrom;
+  while (day <= dateTo) {
+    const shift = resolveShift(day);
+    if (shift) {
+      // Overnight = end clock <= start clock (crosses midnight). Day shifts use exit window.
+      const [sh = 0, sm = 0] = String(shift.startTime).split(":").map(Number);
+      const [eh = 0, em = 0] = String(shift.endTime).split(":").map(Number);
+      const crossesMidnight = eh * 60 + em <= sh * 60 + sm;
+      // Pervaiz: dedicated midnight last-out. Others: Khalid last-span (noon-capped).
+      const useMidnightExit = midnightExit && crossesMidnight;
+      const lastAnyPunchInSpan =
+        !useMidnightExit && allowLastSpanOut && crossesMidnight;
+
+      const { punchIn, punchOut } = firstLastPunchForShiftDay(tungsten, day, shift, {
+        // Day shifts: allow exit window from 1h before shift end (not only after end).
+        requireOutAfterShiftEnd: false,
+        lastAnyPunchInSpan,
+        midnightExitLastPunch: useMidnightExit,
+      });
+      if (punchIn !== "-" || punchOut !== "-") {
+        sessions.push({
+          sessionDate: day,
+          tungstenPunchIn: punchIn,
+          hrmClockIn: "-",
+          hrmClockOut: "-",
+          tungstenPunchOut: punchOut,
+        });
+      }
+    }
+    day = addDaysToDateKey(day, 1);
+  }
+  return sessions;
+}
+
 /**
  * T.Punch in: first Tungsten entry of the shift day.
  * T.Punch out: last exit punch for the session (never the day-first arrival).
@@ -349,20 +793,71 @@ export function pairTungstenWithSessions(
     let punchIn = "-";
     let excludeExitAtMs: number | undefined;
 
-    const shiftStart = resolveShiftStart?.(sessionDate);
-    const cacheKey = `${sessionDate}|${shiftStart ?? ""}`;
-    let arrival = arrivalPunchByShiftDay.get(cacheKey);
-    if (arrival === undefined) {
-      const found = firstArrivalPunchForShiftDay(tungstenByTime, sessionDate, shiftStart);
-      arrival = found ?? "";
-      arrivalPunchByShiftDay.set(cacheKey, arrival);
-    }
-    if (arrival) {
-      punchIn = arrival;
-      const arrivalEvent = tungstenByTime.find(
-        (t) => t.date === sessionDate && t.time === arrival,
-      );
-      if (arrivalEvent) excludeExitAtMs = arrivalEvent.atMs;
+    const shiftTiming =
+      resolveShift?.(sessionDate) ??
+      (resolveShiftStart?.(sessionDate)
+        ? {
+            startTime: String(resolveShiftStart(sessionDate)),
+            endTime: "",
+          }
+        : null);
+
+    // T.Punch In (shift-day very first punch — not "second"/near clock-in):
+    // 1) First arrival in entry window (early before shift, else first at/after start)
+    // 2) Else last door punch at/before this Clock In
+    // 3) Else first punch in shift window
+    {
+      const shiftStart =
+        shiftTiming?.startTime ?? resolveShiftStart?.(sessionDate) ?? null;
+      const shiftEnd = shiftTiming?.endTime || null;
+      const cacheKey = `${sessionDate}|${shiftStart ?? ""}|${shiftEnd ?? ""}`;
+      let arrival = arrivalPunchByShiftDay.get(cacheKey);
+      if (arrival === undefined) {
+        const found = firstArrivalPunchForShiftDay(
+          tungstenByTime,
+          sessionDate,
+          shiftStart,
+          shiftEnd,
+        );
+        arrival = found ?? "";
+        arrivalPunchByShiftDay.set(cacheKey, arrival);
+      }
+      if (arrival) {
+        const arrivalEvent = tungstenByTime.find(
+          (t) => t.time === arrival && !usedPunchAt.has(t.atMs),
+        );
+        if (arrivalEvent) {
+          punchIn = arrival;
+          excludeExitAtMs = arrivalEvent.atMs;
+          usedPunchAt.add(arrivalEvent.atMs);
+        }
+      }
+      if (punchIn === "-" && !Number.isNaN(cinMs)) {
+        const beforeCin = tungstenByTime.filter(
+          (t) =>
+            t.atMs <= cinMs &&
+            t.atMs >= cinMs - 16 * 60 * 60 * 1000 &&
+            !usedPunchAt.has(t.atMs),
+        );
+        if (beforeCin.length) {
+          const pick = beforeCin[beforeCin.length - 1];
+          punchIn = pick.time;
+          excludeExitAtMs = pick.atMs;
+          usedPunchAt.add(pick.atMs);
+        }
+      }
+      if (punchIn === "-" && shiftTiming?.startTime) {
+        const inWindow = punchesInShiftWindow(
+          tungstenByTime,
+          sessionDate,
+          shiftTiming,
+        ).filter((t) => !usedPunchAt.has(t.atMs));
+        if (inWindow.length) {
+          punchIn = inWindow[0].time;
+          excludeExitAtMs = inWindow[0].atMs;
+          usedPunchAt.add(inWindow[0].atMs);
+        }
+      }
     }
 
     const outMs =
@@ -386,7 +881,89 @@ export function pairTungstenWithSessions(
     .sort((a, b) => b.cinMs - a.cinMs);
 
   for (const draft of exitOrder) {
-    const last = assignSessionPunchOut(
+    const shiftEndMs =
+      draft.shiftTiming?.startTime && draft.shiftTiming?.endTime
+        ? computeShiftEndEpochMs(
+            {
+              start_time: draft.shiftTiming.startTime,
+              end_time: draft.shiftTiming.endTime,
+              assigned_date: draft.sessionDate,
+            },
+            draft.sessionDate,
+          )
+        : null;
+    const startHms = draft.shiftTiming?.startTime
+      ? parseShiftTimeToHms(draft.shiftTiming.startTime)
+      : null;
+    const endHms = draft.shiftTiming?.endTime
+      ? parseShiftTimeToHms(draft.shiftTiming.endTime)
+      : null;
+    const overnight =
+      !!startHms &&
+      !!endHms &&
+      endHms.h * 60 + endHms.m <= startHms.h * 60 + startHms.m;
+
+    // Prefer real HRM clock-out as exit anchor — but if overnight was auto-closed
+    // early (mid-shift ~6:46 PM), anchor on shift end so Fri 1:02 AM can match.
+    let exitAnchorMs: number | null =
+      draft.outMs != null && !Number.isNaN(draft.outMs)
+        ? draft.outMs
+        : shiftEndMs != null && !Number.isNaN(shiftEndMs)
+          ? shiftEndMs
+          : null;
+    if (
+      overnight &&
+      shiftEndMs != null &&
+      draft.outMs != null &&
+      draft.outMs < shiftEndMs - 30 * 60 * 1000
+    ) {
+      exitAnchorMs = shiftEndMs;
+    }
+    if (exitAnchorMs == null) continue;
+
+    const { punchOut: last } = firstLastPunchForShiftDay(
+      tungstenByTime,
+      draft.sessionDate,
+      draft.shiftTiming,
+      overnight
+        ? { requireOutAfterShiftEnd: false, lastAnyPunchInSpan: true }
+        : undefined,
+    );
+    let acceptedShiftOut = false;
+    if (last && last !== "-" && last !== draft.tungstenPunchIn) {
+      // Reject mid-shift "outs" on overnight when a later punch exists in the exit window
+      const lastEv = tungstenByTime.find(
+        (t) => t.time === last && t.atMs >= draft.cinMs,
+      );
+      const lastTooEarly =
+        overnight &&
+        shiftEndMs != null &&
+        lastEv != null &&
+        lastEv.atMs < shiftEndMs - 30 * 60 * 1000;
+      if (!lastTooEarly) {
+        draft.tungstenPunchOut = last;
+        acceptedShiftOut = true;
+      } else {
+        // Prefer last punch at/after shift end (true overnight exit)
+        const { punchOut: strictOut } = firstLastPunchForShiftDay(
+          tungstenByTime,
+          draft.sessionDate,
+          draft.shiftTiming,
+          { requireOutAfterShiftEnd: true },
+        );
+        if (
+          strictOut &&
+          strictOut !== "-" &&
+          strictOut !== draft.tungstenPunchIn
+        ) {
+          draft.tungstenPunchOut = strictOut;
+          acceptedShiftOut = true;
+        }
+      }
+    }
+    if (acceptedShiftOut) continue;
+
+    const lastPunch = assignSessionPunchOut(
       tungstenByTime,
       draft.sessionDate,
       draft.cinMs,
