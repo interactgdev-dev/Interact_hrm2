@@ -1,11 +1,17 @@
-import { getDateStringInTimeZone, getTimeStringInTimeZone, SERVER_TIMEZONE } from "./timezone";
+import { parseAttendanceDateTimeMs } from "./shift-timing";
+import {
+  dateTimeLocalToIsoInTimeZone,
+  getDateStringInTimeZone,
+  getTimeStringInTimeZone,
+  SERVER_TIMEZONE,
+} from "./timezone";
 
 /**
- * ZKBio / Tungsten device times are Asia/Karachi wall clocks.
- * - Naive "YYYY-MM-DD HH:mm:ss" (MySQL DATETIME) → interpret as +05:00.
- * - Date / ISO with Z → true UTC instant (Mongo after correct sync / migration).
+ * Raw ZKBio / Mongo date values (Date, ISO, naive Karachi DATETIME).
+ * - Naive "YYYY-MM-DD HH:mm:ss" → interpret as +05:00.
+ * - Date / ISO with Z → true UTC instant.
  */
-export function parseZkbioDateTimeMs(value: unknown): number | null {
+function parseRawZkbioValueMs(value: unknown): number | null {
   if (value == null || value === "") return null;
 
   if (value instanceof Date) {
@@ -36,10 +42,106 @@ export function parseZkbioDateTimeMs(value: unknown): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-/** Format ZKBio event for UI in Asia/Karachi. */
+function isPunchRow(value: unknown): value is Record<string, unknown> {
+  if (value == null || typeof value !== "object" || value instanceof Date || Array.isArray(value)) {
+    return false;
+  }
+  const z = value as Record<string, unknown>;
+  return (
+    "raw_json" in z ||
+    "pin" in z ||
+    "log_id" in z ||
+    "first_name" in z ||
+    ("event_time" in z && ("imported_at" in z || "device_name" in z))
+  );
+}
+
+/**
+ * Prefer device-local eventTime from raw_json on punch rows; otherwise parse raw
+ * Date/string values (Mongo adapter / direct event_time fields).
+ */
+export function parseZkbioDateTimeMs(value: unknown): number | null {
+  if (value == null || value === "") return null;
+
+  if (isPunchRow(value)) {
+    const rawJson = value.raw_json;
+    if (rawJson != null && rawJson !== "") {
+      try {
+        const parsed =
+          typeof rawJson === "string"
+            ? JSON.parse(rawJson)
+            : (rawJson as Record<string, unknown>);
+        const eventTime = parsed?.eventTime ?? parsed?.event_time;
+        if (eventTime != null && String(eventTime).trim() !== "") {
+          const local = String(eventTime).trim().replace(" ", "T");
+          const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2}))?/.exec(local);
+          if (match) {
+            const isoLocal = `${match[1]}:${match[2] || "00"}`;
+            const iso = dateTimeLocalToIsoInTimeZone(isoLocal, SERVER_TIMEZONE);
+            if (iso) {
+              const ms = new Date(iso).getTime();
+              if (!Number.isNaN(ms)) return ms;
+            }
+          }
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+
+    const rawVal = value.event_time ?? value.imported_at;
+    if (rawVal == null || rawVal === "") return null;
+    return parseAttendanceDateTimeMs(rawVal) ?? parseRawZkbioValueMs(rawVal);
+  }
+
+  return parseRawZkbioValueMs(value);
+}
+
+export function formatPunchTimeMs(ms: number): string {
+  return new Date(ms).toLocaleString("en-US", {
+    timeZone: SERVER_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  });
+}
+
 export function formatZkbioDateTime(value: unknown): string {
   const ms = parseZkbioDateTimeMs(value);
   if (ms == null) return "";
+  return new Date(ms).toLocaleString("en-US", {
+    timeZone: SERVER_TIMEZONE,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  });
+}
+
+export function formatZkbioDateTime12h(
+  z: Record<string, unknown>,
+  fallback?: unknown,
+): string {
+  const ms = parseZkbioDateTimeMs(z);
+  if (ms == null) {
+    if (fallback == null || fallback === "") return "";
+    const d = new Date(String(fallback));
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString("en-US", {
+      timeZone: SERVER_TIMEZONE,
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+  }
   return new Date(ms).toLocaleString("en-US", {
     timeZone: SERVER_TIMEZONE,
     month: "short",
@@ -62,20 +164,4 @@ export function zkbioTimeString(value: unknown): string {
   const ms = parseZkbioDateTimeMs(value);
   if (ms == null) return "";
   return getTimeStringInTimeZone(ms, SERVER_TIMEZONE);
-}
-
-/**
- * Legacy Mongo rows: naive Karachi wall was inserted as UTC (digits unchanged).
- * Convert stored UTC-wall Date → true UTC instant (subtract 5h).
- */
-export function legacyZkbioUtcWallToInstantMs(value: Date): number {
-  return Date.UTC(
-    value.getUTCFullYear(),
-    value.getUTCMonth(),
-    value.getUTCDate(),
-    value.getUTCHours() - 5,
-    value.getUTCMinutes(),
-    value.getUTCSeconds(),
-    value.getUTCMilliseconds(),
-  );
 }

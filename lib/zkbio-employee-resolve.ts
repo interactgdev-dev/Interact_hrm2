@@ -1,5 +1,3 @@
-import { parseZkbioDateTimeMs } from "./zkbio-time";
-
 export type ZkIdentity = {
   employeeName: string;
   department: string;
@@ -14,6 +12,7 @@ export type PinProfile = {
 export type HrmCodeProfile = {
   employeeName: string;
   department: string;
+  employeeId?: string;
 };
 
 function trimStr(v: unknown) {
@@ -27,8 +26,8 @@ function nameFromParts(first: string, last: string) {
 /** Latest named punch per PIN from a batch (newest event first). */
 export function buildPinProfilesFromRows(rows: Record<string, unknown>[]): Map<string, PinProfile> {
   const sorted = [...rows].sort((a, b) => {
-    const ta = parseZkbioDateTimeMs(a.event_time || a.imported_at) ?? 0;
-    const tb = parseZkbioDateTimeMs(b.event_time || b.imported_at) ?? 0;
+    const ta = new Date(String(a.event_time || a.imported_at || "")).getTime();
+    const tb = new Date(String(b.event_time || b.imported_at || "")).getTime();
     return tb - ta;
   });
 
@@ -115,6 +114,30 @@ export function hrmMapFromEmployees(
     map.set(code, {
       employeeName,
       department: trimStr(e.department_name) || "-",
+    });
+  }
+  return map;
+}
+
+/** Match punches by HRM employee id (hrm_employees.id as string key). */
+export function hrmIdMapFromEmployees(
+  employees: {
+    id?: string | number;
+    first_name?: string;
+    last_name?: string;
+    department_name?: string | null;
+  }[],
+): Map<string, HrmCodeProfile> {
+  const map = new Map<string, HrmCodeProfile>();
+  for (const e of employees) {
+    if (e.id == null || e.id === "") continue;
+    const idKey = String(e.id);
+    const employeeName =
+      nameFromParts(trimStr(e.first_name), trimStr(e.last_name)) || "—";
+    map.set(idKey, {
+      employeeName,
+      department: trimStr(e.department_name) || "-",
+      employeeId: idKey,
     });
   }
   return map;

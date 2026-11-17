@@ -61,9 +61,12 @@ import {
 } from "../../../lib/monthly-attendance-import";
 import {
   buildEmployeeReportSessions,
+  employeeHasZkPunchesInRange,
   loadTungstenPunchContext,
   monthlyDash,
+  type EmployeeMatchKeys,
   type EmployeeReportSession,
+  type ShiftDayTiming,
   type TungstenPunchContext,
 } from "../../../lib/tungsten-punch-pairing";
 import { AutoClockOutBadge } from "../../components/AutoClockOutBadge";
@@ -76,6 +79,8 @@ type MonthlyAttendanceEmployeeRow = {
   pseudonym: string;
   departmentName: string;
   gender: string;
+  /** Device / HRM employee_code when known (helps ZK PIN match). */
+  employeeCode?: string;
   byDate: Record<string, any[]>;
   dateMeta: Record<
     string,
@@ -93,6 +98,8 @@ type MonthlyAttendanceEmployeeRow = {
     }
   >;
   isImported?: boolean;
+  /** True when card exists only because Tungsten punches exist (no HRM clock-in). */
+  zkOnlyCard?: boolean;
   importedDays?: ImportedMonthlyDay[];
   importedFooter?: { totalDeduction?: string; extraHours?: string; workingDays?: string };
 };
@@ -316,6 +323,10 @@ export default function MonthlyAttendancePage() {
   const [importedSnapshot, setImportedSnapshot] = useState<ImportedMonthlySnapshot | null>(null);
   const [tungstenCtx, setTungstenCtx] = useState<TungstenPunchContext | null>(null);
   const [pairingNow, setPairingNow] = useState(() => Date.now());
+  /** Latest assigned shift per employee (for Absent-day / forgot-clock-in T.Punch). */
+  const [shiftByEmployeeId, setShiftByEmployeeId] = useState<
+    Record<string, ShiftDayTiming>
+  >({});
   /** Collapsed by default — full month tables for every employee freeze the browser */
   const [expandedEmployeeIds, setExpandedEmployeeIds] = useState<Record<string, boolean>>({});
   const fetchGenRef = useRef(0);
@@ -353,6 +364,30 @@ export default function MonthlyAttendancePage() {
         }
       })
       .catch(err => console.error('Error fetching departments:', err));
+  }, []);
+
+  // Bulk shift assignments — needed so Absent / forgot-clock-in days still get
+  // shift-aware first punch (before start) + midnight last punch.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/hrm-shifts-assignments")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled || !data?.success || !Array.isArray(data.employees)) return;
+        const next: Record<string, ShiftDayTiming> = {};
+        for (const e of data.employees) {
+          const id = String(e?.id ?? "").trim();
+          const start = String(e?.start_time ?? "").trim();
+          const end = String(e?.end_time ?? "").trim();
+          if (!id || !start || !end) continue;
+          next[id] = { startTime: start, endTime: end };
+        }
+        setShiftByEmployeeId(next);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fetch attendance first (unblocks UI), then tardy/leaves/tungsten in background
@@ -1352,9 +1387,56 @@ export default function MonthlyAttendancePage() {
     return weekday !== 0 && weekday !== 6;
   }
 
+  function matchKeysForEmployee(employee: {
+    employeeId: string;
+    employeeName: string;
+    pseudonym?: string;
+    employeeCode?: string;
+  }): EmployeeMatchKeys {
+    return {
+      employeeId: String(employee.employeeId),
+      employeeName: employee.employeeName,
+      employeeCode: employee.employeeCode || null,
+      pseudonym: employee.pseudonym || null,
+    };
+  }
+
+  function resolveShiftForEmployee(
+    employeeId: string,
+    sessionDate: string,
+    allRecords: any[],
+  ): ShiftDayTiming | null {
+    for (const r of allRecords) {
+      if (!r?.clock_in || !r?.shift_start_time || !r?.shift_end_time) continue;
+      const dk = getDateStringInTimeZone(new Date(String(r.clock_in)), SERVER_TIMEZONE);
+      if (dk === sessionDate) {
+        return {
+          startTime: String(r.shift_start_time),
+          endTime: String(r.shift_end_time),
+        };
+      }
+    }
+    // Fallback: any known shift on this employee's attendance rows
+    for (const r of allRecords) {
+      if (r?.shift_start_time && r?.shift_end_time) {
+        return {
+          startTime: String(r.shift_start_time),
+          endTime: String(r.shift_end_time),
+        };
+      }
+    }
+    return shiftByEmployeeId[String(employeeId)] || null;
+  }
+
   /** Pair T.Punch for this employee even if their card is collapsed (export needs every sheet). */
   function pairSessionsForEmployee(
-    employee: { employeeId: string; employeeName: string; isImported?: boolean },
+    employee: {
+      employeeId: string;
+      employeeName: string;
+      pseudonym?: string;
+      employeeCode?: string;
+      isImported?: boolean;
+    },
     ctx: TungstenPunchContext | null,
   ): EmployeeReportSession[] {
     if (employee.isImported) return [];
@@ -1365,13 +1447,16 @@ export default function MonthlyAttendancePage() {
       (record: any) => String(record.employee_id) === String(employee.employeeId),
     );
     return buildEmployeeReportSessions(
-      employee.employeeName,
+      matchKeysForEmployee(employee),
       allRecords,
       ctx,
       todayKey,
       Date.now(),
       zkFrom,
       zkTo,
+      (sessionDate) =>
+        resolveShiftForEmployee(String(employee.employeeId), sessionDate, allRecords),
+      true,
     );
   }
 
@@ -1926,6 +2011,7 @@ export default function MonthlyAttendancePage() {
           pseudonym: record.pseudonym || "-",
           departmentName: record.department_name || "-",
           gender: record.gender || "",
+          employeeCode: record.employee_code ? String(record.employee_code) : undefined,
           byDate: {},
           dateMeta: {},
         };
@@ -1933,11 +2019,45 @@ export default function MonthlyAttendancePage() {
       if (!map[empId].gender && record.gender) {
         map[empId].gender = record.gender;
       }
+      if (!map[empId].employeeCode && record.employee_code) {
+        map[empId].employeeCode = String(record.employee_code);
+      }
       const dateKey = getRecordDateKey(record);
       if (!dateKey) return;
       if (!map[empId].byDate[dateKey]) map[empId].byDate[dateKey] = [];
       map[empId].byDate[dateKey].push(record);
     });
+
+    // Employees who punch Tungsten but never HRM-clock-in this month still need a card
+    // so Absent days can show shift-aware T.Punch In/Out (e.g. Aqsa Durrani).
+    if (tungstenCtx && fromDate && toDate) {
+      for (const hrm of tungstenCtx.hrmEmployees || []) {
+        const empId = String(hrm.employeeId || "").trim();
+        if (!empId || map[empId]) continue;
+        if (selectedDepartment) {
+          const dept = (hrm.departmentName || "").toLowerCase();
+          if (dept !== selectedDepartment.toLowerCase()) continue;
+        }
+        const keys: EmployeeMatchKeys = {
+          employeeId: empId,
+          employeeName: hrm.employeeName,
+          employeeCode: hrm.employeeCode || null,
+          pseudonym: hrm.pseudonym || null,
+        };
+        if (!employeeHasZkPunchesInRange(tungstenCtx, keys, fromDate, toDate)) continue;
+        map[empId] = {
+          employeeId: empId,
+          employeeName: hrm.employeeName || "-",
+          pseudonym: hrm.pseudonym || "-",
+          departmentName: hrm.departmentName || "-",
+          gender: hrm.gender || "",
+          employeeCode: hrm.employeeCode || undefined,
+          byDate: {},
+          dateMeta: {},
+          zkOnlyCard: true,
+        };
+      }
+    }
 
     Object.values(map).forEach((employee) => {
       Object.keys(employee.byDate).forEach((dateKey) => {
@@ -2017,6 +2137,7 @@ export default function MonthlyAttendancePage() {
     toDate,
     statusOverrides,
     statusOverridesByAttendanceId,
+    tungstenCtx,
   ]);
 
   /** Cheap name / pseudo / ID filter — deferred so typing does not block the input */
@@ -2052,14 +2173,17 @@ export default function MonthlyAttendancePage() {
       const allRecords = recordsByEmployeeId.get(empId) || [];
       out.set(
         empId,
+        // Invent ZK-only T.Punch rows when forgot HRM clock-in; status stays Absent/etc.
         buildEmployeeReportSessions(
-          emp.employeeName,
+          matchKeysForEmployee(emp),
           allRecords,
           tungstenCtx,
           todayKey,
           pairingNow,
           zkFrom,
           zkTo,
+          (sessionDate) => resolveShiftForEmployee(empId, sessionDate, allRecords),
+          true,
         ),
       );
     });
@@ -2073,6 +2197,7 @@ export default function MonthlyAttendancePage() {
     fromDate,
     toDate,
     pairingNow,
+    shiftByEmployeeId,
   ]);
 
   // Narrow search → auto-expand matched employees so results are one click less
