@@ -44,6 +44,7 @@ export type HrmEmployeeRef = {
   departmentName: string;
   pseudonym: string;
   gender: string;
+  status?: string;
 };
 
 /** Match Tungsten punches to an HRM employee by PIN (employee_code) and/or name. */
@@ -236,25 +237,27 @@ export function hrmEmployeesFromList(
     department_name?: string | null;
     pseudonym?: string | null;
     gender?: string | null;
+    status?: string | null;
   }[],
 ): HrmEmployeeRef[] {
-  return employees
-    .map((e) => {
-      const employeeId = e.id != null ? String(e.id) : "";
-      if (!employeeId) return null;
-      const first = String(e.first_name ?? "").trim();
-      const last = String(e.last_name ?? "").trim();
-      const employeeName = `${first} ${last}`.trim() || "—";
-      return {
-        employeeId,
-        employeeName,
-        employeeCode: String(e.employee_code ?? "").trim(),
-        departmentName: String(e.department_name ?? "").trim() || "-",
-        pseudonym: String(e.pseudonym ?? "").trim() || "-",
-        gender: String(e.gender ?? "").trim(),
-      };
-    })
-    .filter((e): e is HrmEmployeeRef => e != null);
+  const out: HrmEmployeeRef[] = [];
+  for (const e of employees) {
+    const employeeId = e.id != null ? String(e.id) : "";
+    if (!employeeId) continue;
+    const first = String(e.first_name ?? "").trim();
+    const last = String(e.last_name ?? "").trim();
+    const employeeName = `${first} ${last}`.trim() || "—";
+    out.push({
+      employeeId,
+      employeeName,
+      employeeCode: String(e.employee_code ?? "").trim(),
+      departmentName: String(e.department_name ?? "").trim() || "-",
+      pseudonym: String(e.pseudonym ?? "").trim() || "-",
+      gender: String(e.gender ?? "").trim(),
+      status: String(e.status ?? "").trim() || undefined,
+    });
+  }
+  return out;
 }
 
 export function addDaysToDateKey(dateKey: string, days: number) {

@@ -25,6 +25,7 @@ import {
 import { compareAttendanceRows } from "../../../lib/attendance-sort";
 import {
   deductionForAttendanceStatus,
+  isAllowedMonthlyAttendanceStatus,
   MONTHLY_ATTENDANCE_STATUS_OPTIONS,
   normalizeAttendanceStatus,
   uiStatusTextColor,
@@ -1151,7 +1152,11 @@ export default function MonthlyAttendancePage() {
     }
     const attId = normalizeOverrideAttendanceId(attendanceId);
     const saving = statusSavingKey === statusSaveKey(employeeId, dateKey, attId);
-    const current = normalizeAttendanceStatus(displayStatus);
+    const raw = normalizeAttendanceStatus(displayStatus);
+    // Invalid/empty auto values must not fall through to the first <option> ("On Time").
+    const current = isAllowedMonthlyAttendanceStatus(raw)
+      ? raw
+      : emptyWorkingDayStatus(dateKey, isWorkingDay(dateKey), null).statusLabel;
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
         <select
@@ -1609,7 +1614,10 @@ export default function MonthlyAttendancePage() {
       const leaveDisplay = leaveKind
         ? attendanceFromApprovedLeaveDay(leaveKind)
         : null;
-      const dayAutoStatus = normalizeAttendanceStatus(meta?.autoStatusLabel || "-");
+      const dayAutoStatus = normalizeAttendanceStatus(
+        meta?.autoStatusLabel ||
+          emptyWorkingDayStatus(day.dateKey, isWorkingDay(day.dateKey), null).statusLabel,
+      );
 
       sessionsToExport.forEach(({ session, record }, sessionIndex) => {
         // Match on-screen row: session override → day override → leave/auto.
@@ -1619,12 +1627,27 @@ export default function MonthlyAttendancePage() {
             ? overrideStatusFor(employee.employeeId, day.dateKey, attId)
             : null;
         const effectiveOverride = sessionOverride || dayLevelOverride;
+        const hasHrmClockIn =
+          Boolean(record?.clock_in) ||
+          (session.hrmClockIn != null &&
+            String(session.hrmClockIn).trim() !== "" &&
+            session.hrmClockIn !== "-");
+        const punchesOnlyStatus = emptyWorkingDayStatus(
+          day.dateKey,
+          isWorkingDay(day.dateKey),
+          null,
+        ).statusLabel;
         const statusLabel =
-          effectiveOverride || leaveDisplay?.statusLabel || dayAutoStatus;
+          effectiveOverride ||
+          leaveDisplay?.statusLabel ||
+          (hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus);
         const deduction = effectiveOverride
           ? deductionForAttendanceStatus(effectiveOverride, meta?.runningLate)
           : leaveDisplay?.deduction ||
-            deductionForAttendanceStatus(dayAutoStatus, meta?.runningLate);
+            deductionForAttendanceStatus(
+              hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus,
+              meta?.runningLate,
+            );
         dataRows.push({
           cells: [
             day.weekday,
@@ -2034,6 +2057,10 @@ export default function MonthlyAttendancePage() {
       for (const hrm of tungstenCtx.hrmEmployees || []) {
         const empId = String(hrm.employeeId || "").trim();
         if (!empId || map[empId]) continue;
+        // Auto-card only for active profiles that already have shift + Tungsten punches.
+        const status = String(hrm.status || "").toLowerCase();
+        if (status && status !== "active") continue;
+        if (!shiftByEmployeeId[empId]) continue;
         if (selectedDepartment) {
           const dept = (hrm.departmentName || "").toLowerCase();
           if (dept !== selectedDepartment.toLowerCase()) continue;
@@ -2138,6 +2165,7 @@ export default function MonthlyAttendancePage() {
     statusOverrides,
     statusOverridesByAttendanceId,
     tungstenCtx,
+    shiftByEmployeeId,
   ]);
 
   /** Cheap name / pseudo / ID filter — deferred so typing does not block the input */
@@ -2568,9 +2596,15 @@ export default function MonthlyAttendancePage() {
                           const leaveDisplay = leaveKind
                             ? attendanceFromApprovedLeaveDay(leaveKind)
                             : null;
-                          // Auto only — never meta.statusLabel (may include another session's manual).
+                          // Auto only from HRM clock-in classification. Never invent "On Time"
+                          // from Tungsten punches alone (select value "-" used to look like On Time).
                           const dayAutoStatus = normalizeAttendanceStatus(
-                            meta?.autoStatusLabel || "-",
+                            meta?.autoStatusLabel ||
+                              emptyWorkingDayStatus(
+                                day.dateKey,
+                                isWorkingDay(day.dateKey),
+                                null,
+                              ).statusLabel,
                           );
                           const sessionsToShow = getDaySessionRows(
                             day.dateKey,
@@ -2590,10 +2624,25 @@ export default function MonthlyAttendancePage() {
                                   )
                                 : null;
                             const effectiveOverride = sessionOverride || dayLevelOverride;
+                            const hasHrmClockIn =
+                              Boolean(record?.clock_in) ||
+                              (session.hrmClockIn != null &&
+                                String(session.hrmClockIn).trim() !== "" &&
+                                session.hrmClockIn !== "-");
+                            // Punches-only row: keep Absent/Off until real HRM clock-in exists.
+                            const punchesOnlyStatus = emptyWorkingDayStatus(
+                              day.dateKey,
+                              isWorkingDay(day.dateKey),
+                              null,
+                            ).statusLabel;
                             const rowStatus =
                               effectiveOverride ||
                               leaveDisplay?.statusLabel ||
-                              dayAutoStatus;
+                              (hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus);
+                            const statusForDeduction =
+                              effectiveOverride ||
+                              leaveDisplay?.statusLabel ||
+                              (hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus);
                             const rowDeduction = effectiveOverride
                               ? deductionForAttendanceStatus(
                                   effectiveOverride,
@@ -2601,7 +2650,7 @@ export default function MonthlyAttendancePage() {
                                 )
                               : leaveDisplay?.deduction ||
                                 deductionForAttendanceStatus(
-                                  dayAutoStatus,
+                                  statusForDeduction,
                                   meta?.runningLate,
                                 );
                             const statusIsManual = Boolean(effectiveOverride);
