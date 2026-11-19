@@ -61,7 +61,7 @@ export type PresenceSettings = {
   screenshotScalePercent: number;
   /**
    * HRM base URL agents should use (set on admin page; synced via heartbeat).
-   * Example production: https://hrm.ig.com (staging uses https://192.168.10.6:8443)
+   * Example staging: https://192.168.10.6:8443
    */
   agentHrmBaseUrl: string;
 };
@@ -86,7 +86,7 @@ export const DEFAULT_PRESENCE_SETTINGS: PresenceSettings = {
   /** Low preset defaults — smaller uploads keep staging stable. */
   screenshotJpegQuality: 35,
   screenshotScalePercent: 40,
-  agentHrmBaseUrl: "https://hrm.ig.com",
+  agentHrmBaseUrl: "https://192.168.10.6:8443",
 };
 
 const KEYS = {

@@ -209,11 +209,21 @@
   width: 100%;
   max-width: 560px;
   max-height: 90vh;
-  overflow-y: auto;
+  overflow: hidden;
   background: #fff;
   border-radius: 16px;
   padding: 24px;
   position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.modalBody {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+  margin-bottom: 4px;
 }
 
 .modalTitle {

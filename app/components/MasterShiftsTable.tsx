@@ -41,10 +41,18 @@ export default function MasterShiftsTable() {
   const [success, setSuccess] = useState(false);
   const [editModal, setEditModal] = useState<{ open: boolean; shift: MasterShift | null }>({ open: false, shift: null });
 
-  useEffect(() => {
+  const loadShifts = () => {
     fetch("/api/master-shifts")
       .then((res) => res.json())
-      .then((data: MasterShift[]) => setShifts(data));
+      .then((data) => {
+        if (data?.success && Array.isArray(data.shifts)) {
+          setShifts(data.shifts);
+        }
+      });
+  };
+
+  useEffect(() => {
+    loadShifts();
   }, []);
 
   // Add new shift to DB
@@ -52,23 +60,27 @@ export default function MasterShiftsTable() {
     e.preventDefault();
     setLoading(true);
     setSuccess(false);
-    const res = await fetch("/api/shifts", {
+    const res = await fetch("/api/master-shifts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: shiftName,
-        shift_in: shiftIn,
-        shift_out: shiftOut,
-        shift_out_next_day: shiftOutNextDay
-      })
+        shift_name: shiftName,
+        clock_in_time: shiftIn,
+        clock_out_time: shiftOut,
+        overtime: false,
+        work_days: "Mon-Fri",
+      }),
     });
+    const data = await res.json();
     setLoading(false);
+    if (!data?.success) {
+      return;
+    }
     setSuccess(true);
-    // Get inserted shift id
-    const shiftsRes = await fetch("/api/shifts");
-    const shiftsData = await shiftsRes.json();
-    if (shiftsData.length > 0) {
-      setNewShiftId(shiftsData[shiftsData.length - 1].id);
+    loadShifts();
+    const latest = await fetch("/api/master-shifts").then((r) => r.json());
+    if (latest?.success && Array.isArray(latest.shifts) && latest.shifts.length > 0) {
+      setNewShiftId(latest.shifts[0].id);
     }
   };
 
@@ -80,7 +92,7 @@ export default function MasterShiftsTable() {
       variant: "danger",
     });
     if (!ok) return;
-    await fetch(`/api/shifts?id=${id}`, { method: "DELETE" });
+    await fetch(`/api/master-shifts?id=${id}`, { method: "DELETE" });
     setShifts((prev) => prev.filter((s) => s.id !== id));
   };
 
@@ -93,16 +105,20 @@ export default function MasterShiftsTable() {
   const handleUpdateShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editModal.shift) return;
-    await fetch(`/api/shifts?id=${editModal.shift.id}`, {
+    await fetch("/api/master-shifts", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(editModal.shift)
+      body: JSON.stringify({
+        id: editModal.shift.id,
+        shift_name: editModal.shift.name,
+        clock_in_time: editModal.shift.shift_in,
+        clock_out_time: editModal.shift.shift_out,
+        overtime: Number(editModal.shift.overtime_daily) === 1,
+        work_days: editModal.shift.working_days || "Mon-Fri",
+      }),
     });
     setEditModal({ open: false, shift: null });
-    // Refresh
-    fetch("/api/master-shifts")
-      .then((res) => res.json())
-      .then((data: MasterShift[]) => setShifts(data));
+    loadShifts();
   };
 
   return (

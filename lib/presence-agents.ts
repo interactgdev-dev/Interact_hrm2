@@ -176,7 +176,7 @@ async function backfillPcKeysAndDedupe(): Promise<void> {
   const [rows] = await pool.execute(
     `SELECT id, machine_id, hostname, windows_user, pc_key,
             assigned_employee_id, admin_enabled, idle_seconds, local_employee_id,
-            last_seen_at, assignment_locked
+            last_seen_at
      FROM ${TABLE}
      ORDER BY last_seen_at DESC, id DESC`,
   );
@@ -190,8 +190,6 @@ async function backfillPcKeysAndDedupe(): Promise<void> {
     admin_enabled: number | boolean | null;
     idle_seconds: number | null;
     local_employee_id: string | null;
-    last_seen_at?: Date | string | null;
-    assignment_locked?: number | boolean | null;
   }[];
 
   const byKey = new Map<string, typeof list>();
@@ -208,21 +206,17 @@ async function backfillPcKeysAndDedupe(): Promise<void> {
 
   for (const [, group] of byKey) {
     if (group.length <= 1) continue;
-    // Never drop a locked profile in favor of a newer unlocked clone.
-    let keep = group[0];
-    for (const cand of group.slice(1)) keep = preferDbKeep(keep, cand);
-    const others = group.filter((r) => r.id !== keep.id);
+    const keep = group[0];
+    const others = group.slice(1);
     let assigned = keep.assigned_employee_id;
     let adminOn = asBool(keep.admin_enabled);
     let idle = Number(keep.idle_seconds) > 0 ? Number(keep.idle_seconds) : 120;
     let localId = keep.local_employee_id;
-    let locked = asBool(keep.assignment_locked);
     for (const o of others) {
       if (!assigned && o.assigned_employee_id) assigned = o.assigned_employee_id;
       if (!adminOn && asBool(o.admin_enabled)) adminOn = true;
       if ((!localId || !String(localId).trim()) && o.local_employee_id)
         localId = o.local_employee_id;
-      if (asBool(o.assignment_locked)) locked = true;
       const oi = Number(o.idle_seconds);
       if (oi > 0) idle = oi;
     }
@@ -235,7 +229,6 @@ async function backfillPcKeysAndDedupe(): Promise<void> {
            local_employee_id = ?,
            admin_enabled = ?,
            idle_seconds = ?,
-           assignment_locked = ?,
            pc_key = ?
        WHERE id = ?`,
       [
@@ -243,7 +236,6 @@ async function backfillPcKeysAndDedupe(): Promise<void> {
         localId,
         adminOn ? 1 : 0,
         idle,
-        locked ? 1 : 0,
         computePcKey(keep.hostname, keep.windows_user),
         keep.id,
       ],
@@ -270,27 +262,6 @@ function toIso(v: Date | string | null): string | null {
 
 function asBool(v: unknown): boolean {
   return v === true || v === 1 || v === "1";
-}
-
-/** Prefer locked profile over a newer unlocked clone (same PC / machine). */
-function preferAgentRow(a: PresenceAgentRow, b: PresenceAgentRow): PresenceAgentRow {
-  if (a.assignmentLocked !== b.assignmentLocked) {
-    return a.assignmentLocked ? a : b;
-  }
-  return String(a.lastSeenAt || "") >= String(b.lastSeenAt || "") ? a : b;
-}
-
-function preferDbKeep<T extends { assignment_locked?: unknown; last_seen_at?: unknown; id?: number }>(
-  a: T,
-  b: T,
-): T {
-  const aLock = asBool(a.assignment_locked);
-  const bLock = asBool(b.assignment_locked);
-  if (aLock !== bLock) return aLock ? a : b;
-  const ta = a.last_seen_at ? new Date(String(a.last_seen_at)).getTime() : 0;
-  const tb = b.last_seen_at ? new Date(String(b.last_seen_at)).getTime() : 0;
-  if (ta !== tb) return ta >= tb ? a : b;
-  return Number(a.id || 0) >= Number(b.id || 0) ? a : b;
 }
 
 function mapRow(r: DbRow): PresenceAgentRow {
@@ -737,19 +708,21 @@ export async function listPresenceAgents(): Promise<PresenceAgentRow[]> {
   );
   const mapped = await enrichAssignedNames((rows as DbRow[]).map(mapRow));
 
-  // Collapse clones (same machine_id or same PC). Locked profile always wins
-  // over a newer unlocked heartbeat clone — otherwise Save/Edit look unlocked
-  // while the locked row still rejects PATCH.
+  // Collapse clones (same machine_id or same PC) that mongo upsert used to spawn
   const byMachine = new Map<string, PresenceAgentRow>();
   for (const a of mapped) {
     const prev = byMachine.get(a.machineId);
-    byMachine.set(a.machineId, prev ? preferAgentRow(prev, a) : a);
+    if (!prev || String(a.lastSeenAt || "") > String(prev.lastSeenAt || "")) {
+      byMachine.set(a.machineId, a);
+    }
   }
   const byPc = new Map<string, PresenceAgentRow>();
   for (const a of byMachine.values()) {
     const key = computePcKey(a.hostname, a.windowsUser) || `mid:${a.machineId}`;
     const prev = byPc.get(key);
-    byPc.set(key, prev ? preferAgentRow(prev, a) : a);
+    if (!prev || String(a.lastSeenAt || "") > String(prev.lastSeenAt || "")) {
+      byPc.set(key, a);
+    }
   }
   return Array.from(byPc.values()).sort((a, b) => {
     const ta = a.lastSeenAt ? new Date(a.lastSeenAt).getTime() : 0;
@@ -817,23 +790,10 @@ export async function unlockAgentAssignment(
   await ensurePresenceAgentsTable();
   const mid = String(machineId ?? "").trim();
   if (!mid) throw new Error("machine_id required");
-  const current = await getAgentByMachineId(mid);
-  if (!current) throw new Error("Agent not found");
-
-  // Unlock this row + any same-PC clones so Edit never leaves a locked sibling
-  // that still rejects Save after the UI looks unlocked.
-  const pcKey = computePcKey(current.hostname, current.windowsUser);
-  if (pcKey) {
-    await pool.execute(
-      `UPDATE ${TABLE} SET assignment_locked = 0 WHERE pc_key = ? OR machine_id = ?`,
-      [pcKey, mid],
-    );
-  } else {
-    await pool.execute(
-      `UPDATE ${TABLE} SET assignment_locked = 0 WHERE machine_id = ?`,
-      [mid],
-    );
-  }
+  await pool.execute(
+    `UPDATE ${TABLE} SET assignment_locked = 0 WHERE machine_id = ?`,
+    [mid],
+  );
   return getAgentByMachineId(mid);
 }
 
@@ -978,8 +938,7 @@ export async function mergeDuplicateAgentsForPc(
 
   // Keep WHERE mongo-adapter-friendly (no SUBSTRING_INDEX). Normalize user in JS.
   const [rows] = await pool.execute(
-    `SELECT id, machine_id, hostname, windows_user, assigned_employee_id, admin_enabled,
-            idle_seconds, local_employee_id, assignment_locked, last_seen_at
+    `SELECT id, machine_id, hostname, windows_user, assigned_employee_id, admin_enabled, idle_seconds, local_employee_id
      FROM ${TABLE}
      WHERE LOWER(TRIM(hostname)) = ?
      ORDER BY last_seen_at DESC, id DESC`,
@@ -995,44 +954,28 @@ export async function mergeDuplicateAgentsForPc(
       admin_enabled: number | boolean | null;
       idle_seconds: number | null;
       local_employee_id: string | null;
-      assignment_locked?: number | boolean | null;
-      last_seen_at?: Date | string | null;
     }[]
   ).filter((r) => normalizeWindowsUser(r.windows_user) === user);
   if (list.length <= 1) return 0;
 
-  // Prefer any locked row over the heartbeat's machine_id (unlocked reinstall clone).
-  const lockedRows = list.filter((r) => asBool(r.assignment_locked));
-  let keep =
-    lockedRows.find((r) => r.machine_id === keepMachineId) ||
-    lockedRows[0] ||
-    list.find((r) => r.machine_id === keepMachineId) ||
-    list[0];
-  for (const cand of list) {
-    if (cand.id === keep.id) continue;
-    keep = preferDbKeep(keep, cand);
-  }
+  const keep =
+    list.find((r) => r.machine_id === keepMachineId) || list[0];
   const others = list.filter((r) => r.id !== keep.id);
   if (!others.length) return 0;
 
-  // Preserve best assignment / admin_enabled / lock from any duplicate
+  // Preserve best assignment / admin_enabled from any duplicate
   let assigned = keep.assigned_employee_id;
   let adminOn = asBool(keep.admin_enabled);
   let idle = Number(keep.idle_seconds) > 0 ? Number(keep.idle_seconds) : 120;
   let localId = keep.local_employee_id;
-  let locked = asBool(keep.assignment_locked);
   for (const o of others) {
     if (!assigned && o.assigned_employee_id) assigned = o.assigned_employee_id;
     if (!adminOn && asBool(o.admin_enabled)) adminOn = true;
     if ((!localId || !String(localId).trim()) && o.local_employee_id)
       localId = o.local_employee_id;
-    if (asBool(o.assignment_locked)) locked = true;
     const oi = Number(o.idle_seconds);
     if (oi > 0) idle = oi;
   }
-
-  // If a locked profile exists, keep its machine_id (don't swap to unlocked clone id).
-  const finalMachineId = locked ? keep.machine_id : keepMachineId;
 
   // Delete duplicates one-by-one (mongo adapter IN() is fine, but ids may be mixed types)
   for (const o of others) {
@@ -1047,17 +990,15 @@ export async function mergeDuplicateAgentsForPc(
          local_employee_id = ?,
          admin_enabled = ?,
          idle_seconds = ?,
-         assignment_locked = ?,
          pc_key = ?,
          last_seen_at = NOW()
      WHERE id = ?`,
     [
-      finalMachineId,
+      keepMachineId,
       assigned,
       localId,
       adminOn ? 1 : 0,
       idle,
-      locked ? 1 : 0,
       pcKey,
       keep.id,
     ],

@@ -10,6 +10,7 @@ import styles from "../../break-summary/break-summary.module.css";
 import { AutoClockOutBadge } from "../../components/AutoClockOutBadge";
 import { isAutoClockOutRecord } from "../../../lib/attendance-auto-clock-out";
 import { FaFileExcel } from "react-icons/fa";
+import { BackToDashboard } from "../components/BackToDashboard";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import {
   EmployeeDetailPopup,
@@ -30,6 +31,11 @@ import {
   filterRowsByClockInSessionDate,
   overnightFetchRange,
 } from "@/lib/break-session-date";
+import {
+  buildAllowanceSecondsByEmployeeSession,
+  exceedSecondsOverAllowance,
+  resolveAllowanceSeconds,
+} from "@/lib/break-prayer-allowance";
 
 
 // Helper to format duration in hh:mm:ss
@@ -129,6 +135,8 @@ export default function EmployeeTimePage() {
   const [breaks, setBreaks] = useState<any[]>([]);
   const [prayerBreaks, setPrayerBreaks] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
+  /** Attendance used only to resolve half-day break/prayer allowances. */
+  const [allowanceAttendance, setAllowanceAttendance] = useState<any[]>([]);
   /** Default: current day only — expand range when user picks dates */
   const today = getLocalDateString();
   const [breakFromDate, setBreakFromDate] = useState(today);
@@ -180,15 +188,31 @@ export default function EmployeeTimePage() {
       toDate: range.toDate,
     });
     setLoadingBreaks(true);
-    fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
+    const attParams = new URLSearchParams(params);
+    attParams.set("summary", "1");
+    Promise.all([
+      fetch(`/api/breaks?${params.toString()}`, { cache: "no-store" }).then((r) =>
+        r.json(),
+      ),
+      fetch(`/api/attendance?${attParams.toString()}`, { cache: "no-store" }).then(
+        (r) => r.json(),
+      ),
+    ])
+      .then(([data, attData]) => {
         if (data.success) {
           const list = filterRowsByClockInSessionDate(data.breaks || [], from, to);
           setBreaks(list);
         } else setBreaks([]);
+        setAllowanceAttendance(
+          attData.success && Array.isArray(attData.attendance)
+            ? attData.attendance
+            : [],
+        );
       })
-      .catch(() => setBreaks([]))
+      .catch(() => {
+        setBreaks([]);
+        setAllowanceAttendance([]);
+      })
       .finally(() => setLoadingBreaks(false));
   }, [employeeId, breakFromDate, breakToDate, today]);
 
@@ -203,15 +227,31 @@ export default function EmployeeTimePage() {
       toDate: range.toDate,
     });
     setLoadingPrayer(true);
-    fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
+    const attParams = new URLSearchParams(params);
+    attParams.set("summary", "1");
+    Promise.all([
+      fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" }).then(
+        (r) => r.json(),
+      ),
+      fetch(`/api/attendance?${attParams.toString()}`, { cache: "no-store" }).then(
+        (r) => r.json(),
+      ),
+    ])
+      .then(([data, attData]) => {
         if (data.success) {
           const list = filterRowsByClockInSessionDate(data.prayer_breaks || [], from, to);
           setPrayerBreaks(list);
         } else setPrayerBreaks([]);
+        setAllowanceAttendance(
+          attData.success && Array.isArray(attData.attendance)
+            ? attData.attendance
+            : [],
+        );
       })
-      .catch(() => setPrayerBreaks([]))
+      .catch(() => {
+        setPrayerBreaks([]);
+        setAllowanceAttendance([]);
+      })
       .finally(() => setLoadingPrayer(false));
   }, [employeeId, prayerFromDate, prayerToDate, today]);
 
@@ -280,6 +320,15 @@ export default function EmployeeTimePage() {
     };
   }, [activeTab, fetchBreaks, fetchPrayerBreaks, fetchAttendance]);
 
+  const breakAllowanceMap = useMemo(
+    () => buildAllowanceSecondsByEmployeeSession(allowanceAttendance, "break"),
+    [allowanceAttendance],
+  );
+  const prayerAllowanceMap = useMemo(
+    () => buildAllowanceSecondsByEmployeeSession(allowanceAttendance, "prayer"),
+    [allowanceAttendance],
+  );
+
   const breakRows = useMemo(() => {
     const staticTotals = new Map<string, number>();
     for (const b of breaks) {
@@ -312,7 +361,14 @@ export default function EmployeeTimePage() {
       }
       const key = getSessionGroupingKey(b, "break_start");
       const dailySeconds = liveTotals.get(key) || sessionSeconds;
-      const dailyExceed = dailySeconds > 3600 ? dailySeconds - 3600 : 0;
+      const sessionDate = breakSessionDate(b);
+      const allowance = resolveAllowanceSeconds(breakAllowanceMap, {
+        employeeId: b.employee_id || employeeId,
+        sessionDate,
+        attendanceSessionId: b.attendance_session_id,
+        kind: "break",
+      });
+      const dailyExceed = exceedSecondsOverAllowance(dailySeconds, allowance);
       return {
         ...b,
         break_start_display: b.break_start ? getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE) : "",
@@ -324,11 +380,11 @@ export default function EmployeeTimePage() {
         total_break_time: formatDuration(sessionSeconds),
         total_break_time_today: formatDuration(dailySeconds),
         exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-        date_display: breakSessionDate(b),
+        date_display: sessionDate,
         isRunning,
       };
     });
-  }, [breaks, now]);
+  }, [breaks, now, breakAllowanceMap, employeeId]);
 
   const prayerRows = useMemo(() => {
     const staticTotals = new Map<string, number>();
@@ -364,7 +420,14 @@ export default function EmployeeTimePage() {
       }
       const key = getSessionGroupingKey(p, "prayer_break_start");
       const dailySeconds = liveTotals.get(key) || sessionSeconds;
-      const dailyExceed = dailySeconds > 1800 ? dailySeconds - 1800 : 0;
+      const sessionDate = breakSessionDate(p);
+      const allowance = resolveAllowanceSeconds(prayerAllowanceMap, {
+        employeeId: p.employee_id || employeeId,
+        sessionDate,
+        attendanceSessionId: p.attendance_session_id,
+        kind: "prayer",
+      });
+      const dailyExceed = exceedSecondsOverAllowance(dailySeconds, allowance);
       return {
         ...p,
         prayer_start_display: p.prayer_break_start
@@ -378,11 +441,11 @@ export default function EmployeeTimePage() {
         total_prayer_time: formatDuration(sessionSeconds),
         total_prayer_time_today: formatDuration(dailySeconds),
         exceed_today: dailyExceed > 0 ? formatDuration(dailyExceed) : "",
-        date_display: breakSessionDate(p),
+        date_display: sessionDate,
         isRunning,
       };
     });
-  }, [prayerBreaks, now]);
+  }, [prayerBreaks, now, prayerAllowanceMap, employeeId]);
 
   const closedAttendanceHours = useMemo(() => {
     const map = new Map<string | number, string>();
@@ -472,28 +535,6 @@ export default function EmployeeTimePage() {
     XLSX.writeFile(wb, `my_attendance_summary_${getDateStringInTimeZone(new Date(), SERVER_TIMEZONE)}.xlsx`);
   };
 
-  const tabStyles: React.CSSProperties = {
-    display: "flex",
-    gap: "12px",
-    borderBottom: "2px solid #E2E8F0",
-    marginBottom: "28px",
-    paddingBottom: "0"
-  };
-
-  const tabButtonStyles = (isActive: boolean): React.CSSProperties => ({
-    padding: "12px 20px",
-    border: "none",
-    background: isActive ? "linear-gradient(135deg, #611f69 0%, #007a5a 100%)" : "transparent",
-    cursor: "pointer",
-    fontSize: "14px",
-    fontWeight: isActive ? "600" : "500",
-    color: isActive ? "#fff" : "#64748b",
-    borderRadius: isActive ? "8px 8px 0 0" : "8px 8px 0 0",
-    marginBottom: "-2px",
-    transition: "background 0.15s, color 0.15s",
-    boxShadow: isActive ? "0 -2px 8px rgba(97, 31, 105, 0.15)" : "none",
-  });
-
   const employeePseudonym =
     breaks[0]?.pseudonym ||
     prayerBreaks[0]?.pseudonym ||
@@ -524,30 +565,46 @@ export default function EmployeeTimePage() {
     row?.pseudonym || employeePseudonym || "—";
 
   const loadingBox = (
-    <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
-      Loading...
+    <div style={{ textAlign: "center", padding: "28px", fontSize: "13.5px", color: "#64748b" }}>
+      Loading…
     </div>
   );
 
   return (
-    <div style={{ width: '100%', minHeight: '100vh', background: 'linear-gradient(180deg, #f4f6f9 0%, #eef1f6 100%)', padding: 0, margin: 0 }}>
-      <div style={{ maxWidth: '100%', margin: '0 auto', padding: '0 16px 32px' }}>
-        <h1 style={{ marginTop: "24px", marginBottom: "24px", color: "#0f172a", fontWeight: 700, fontSize: "1.75rem", letterSpacing: "-0.02em" }}>My Time & Attendance</h1>
-
-        <div style={{ ...tabStyles, borderBottom: '2px solid #e2e8f0', background: '#fff', borderRadius: '12px 12px 0 0', padding: '8px 8px 0' }}>
-          <button style={tabButtonStyles(activeTab === "break")} onClick={() => setActiveTab("break")}>
-            Break Summary
-          </button>
-          <button style={tabButtonStyles(activeTab === "prayer")} onClick={() => setActiveTab("prayer")}>
-            Prayer Break Summary
-          </button>
-          <button style={tabButtonStyles(activeTab === "attendance")} onClick={() => setActiveTab("attendance")}>
-            Attendance Summary
-          </button>
-        </div>
+    <div className={styles.empTimePage}>
+      <div className={styles.empTimeInner}>
+        <header className={styles.empTimeHeader}>
+          <div className={styles.empTimeHeaderLeft}>
+            <BackToDashboard />
+            <h1 className={styles.empTimeTitle}>My Time & Attendance</h1>
+          </div>
+          <nav className={styles.empTimeTabs} aria-label="Time summaries">
+            <button
+              type="button"
+              className={`${styles.empTimeTab} ${activeTab === "break" ? styles.empTimeTabActive : ""}`}
+              onClick={() => setActiveTab("break")}
+            >
+              Break Summary
+            </button>
+            <button
+              type="button"
+              className={`${styles.empTimeTab} ${activeTab === "prayer" ? styles.empTimeTabActive : ""}`}
+              onClick={() => setActiveTab("prayer")}
+            >
+              Prayer Break Summary
+            </button>
+            <button
+              type="button"
+              className={`${styles.empTimeTab} ${activeTab === "attendance" ? styles.empTimeTabActive : ""}`}
+              onClick={() => setActiveTab("attendance")}
+            >
+              Attendance Summary
+            </button>
+          </nav>
+        </header>
 
         {activeTab === "break" && (
-          <div className={styles.breakSummaryContainer} style={{ width: '100%' }}>
+          <div className={styles.breakSummaryContainer}>
             <div className={styles.breakSummaryFilters}>
               <input
                 type="date"
@@ -564,7 +621,7 @@ export default function EmployeeTimePage() {
                 placeholder="To Date"
               />
               <button onClick={downloadBreaksCSV} className={styles.breakSummaryXLSButton} title="Download XLS">
-                <FaFileExcel size={20} />
+                <FaFileExcel size={14} />
                 <span>Export XLS</span>
               </button>
             </div>
@@ -642,7 +699,7 @@ export default function EmployeeTimePage() {
         )}
 
         {activeTab === "prayer" && (
-          <div className={styles.breakSummaryContainer} style={{ width: '100%' }}>
+          <div className={styles.breakSummaryContainer}>
             <div className={styles.breakSummaryFilters}>
               <input
                 type="date"
@@ -659,7 +716,7 @@ export default function EmployeeTimePage() {
                 placeholder="To Date"
               />
               <button onClick={downloadPrayerCSV} className={styles.breakSummaryXLSButton} title="Download XLS">
-                <FaFileExcel size={20} />
+                <FaFileExcel size={14} />
                 <span>Export XLS</span>
               </button>
             </div>
@@ -735,7 +792,7 @@ export default function EmployeeTimePage() {
         )}
 
         {activeTab === "attendance" && (
-          <div className={styles.breakSummaryContainer} style={{ width: "100%" }}>
+          <div className={styles.breakSummaryContainer}>
             <div className={styles.breakSummaryFilters}>
               <input
                 type="date"
@@ -752,7 +809,7 @@ export default function EmployeeTimePage() {
                 placeholder="To Date"
               />
               <button onClick={downloadAttendanceCSV} className={styles.breakSummaryXLSButton} title="Download XLS">
-                <FaFileExcel size={20} />
+                <FaFileExcel size={14} />
                 <span>Export XLS</span>
               </button>
             </div>

@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
-import fs from "fs/promises";
-import { v4 as uuidv4 } from "uuid";
 import type { RowDataPacket } from "mysql2";
 import { pool } from "@/lib/db";
-import { EMPLOYEE_FILES_DIR } from "@/lib/document-constants";
-import { buildFormPrintHtml } from "@/lib/form-print-html";
 import { regenerateSubmittedFormDocument } from "@/lib/form-submission";
 import {
   mergeFormDataForAudience,
@@ -15,20 +10,63 @@ import {
   logDocumentAudit,
   parseJsonField,
 } from "@/lib/employee-documents";
+import {
+  buildMedicalBalances,
+  createMedicalBudgetExceedTicket,
+  evaluateClaimAgainstBalance,
+  isMedicalClaimTemplate,
+  loadMedicalAssignments,
+} from "@/lib/medical-benefits";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-async function loadAssignment(id: number) {
+async function loadAssignment(id: number): Promise<Record<string, unknown> | null> {
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT a.*, t.title AS template_title, t.category AS template_category, t.form_schema,
-            CONCAT(e.first_name, ' ', e.last_name) AS employee_name
-     FROM hrm_form_assignments a
-     JOIN hrm_form_templates t ON t.id = a.template_id
-     JOIN hrm_employees e ON e.id = a.employee_id
-     WHERE a.id = ? LIMIT 1`,
+    `SELECT * FROM hrm_form_assignments WHERE id = ? LIMIT 1`,
     [id]
   );
-  return rows[0] ?? null;
+  const a = rows[0] as Record<string, unknown> | undefined;
+  if (!a) return null;
+
+  let template_title: string | null = null;
+  let template_category: string | null = null;
+  let form_schema: unknown = null;
+  let employee_name = `Employee ${a.employee_id}`;
+
+  try {
+    const [tRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT title, category, form_schema FROM hrm_form_templates WHERE id = ? LIMIT 1`,
+      [a.template_id]
+    );
+    if (tRows[0]) {
+      template_title = tRows[0].title != null ? String(tRows[0].title) : null;
+      template_category = tRows[0].category != null ? String(tRows[0].category) : null;
+      form_schema = tRows[0].form_schema;
+    }
+  } catch {
+    /* keep nulls */
+  }
+
+  try {
+    const [eRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT first_name, last_name FROM hrm_employees WHERE id = ? LIMIT 1`,
+      [a.employee_id]
+    );
+    if (eRows[0]) {
+      employee_name =
+        `${eRows[0].first_name || ""} ${eRows[0].last_name || ""}`.trim() || employee_name;
+    }
+  } catch {
+    /* keep fallback name */
+  }
+
+  return {
+    ...a,
+    template_title,
+    template_category,
+    form_schema,
+    employee_name,
+  };
 }
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
@@ -152,52 +190,72 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         return NextResponse.json({ success: false, error: validationError }, { status: 400 });
       }
 
-      const html = buildFormPrintHtml({
-        template: {
-          title: String(row.template_title),
-          category: String(row.template_category),
-        },
-        employeeName: String(row.employee_name),
-        employeeId: String(row.employee_id),
-        formData: mergedEmployee,
-        schema,
-        submittedAt: new Date().toISOString(),
-        hrMessage: row.assigned_note ? String(row.assigned_note) : null,
-        audience: "all",
-      });
+      let budgetTicket: { ticketId: number; ticketNumber: string } | null = null;
+      const submitData: Record<string, unknown> = { ...mergedEmployee };
 
-      const uploadRoot = path.join(process.cwd(), "public", "uploads", EMPLOYEE_FILES_DIR);
-      await fs.mkdir(uploadRoot, { recursive: true });
-      const safeTitle = String(row.template_title).replace(/[^\w\-]+/g, "_").slice(0, 40);
-      const fileName = `${safeTitle}-${row.employee_id}-${Date.now()}.html`;
-      const relPath = `/uploads/${EMPLOYEE_FILES_DIR}/${uuidv4()}-${fileName}`;
-      const absPath = path.join(process.cwd(), "public", relPath.replace(/^\//, ""));
-      await fs.writeFile(absPath, html, "utf8");
-      const buf = Buffer.from(html, "utf8");
+      if (isMedicalClaimTemplate(row.template_title, row.template_category)) {
+        try {
+          const existing = await loadMedicalAssignments();
+          const balances = buildMedicalBalances(existing);
+          const check = evaluateClaimAgainstBalance(
+            balances,
+            Number(row.employee_id),
+            submitData
+          );
+          if (check.exceeded) {
+            submitData.budget_exceeded = true;
+            submitData.budget_exceed_message = check.message;
+            submitData.budget_remaining_before = check.remainingBefore;
+            submitData.budget_limit = check.limit;
+            budgetTicket = await createMedicalBudgetExceedTicket({
+              employeeId: Number(row.employee_id),
+              employeeName: String(row.employee_name || ""),
+              check,
+              assignmentId,
+            });
+            if (budgetTicket) {
+              submitData.budget_exceed_ticket = budgetTicket.ticketNumber;
+            }
+          }
+        } catch {
+          // Budget check must not block form submit
+        }
+      }
 
-      const [docResult] = await pool.execute(
-        `INSERT INTO hrm_employee_documents
-          (employee_id, folder_type, source_type, assignment_id, template_id,
-           file_name, file_path, mime_type, file_size, is_readonly)
-         VALUES (?, 'form_submitted', 'form_submission', ?, ?, ?, ?, 'text/html', ?, 1)`,
-        [
-          row.employee_id,
-          assignmentId,
-          row.template_id,
-          fileName,
-          relPath,
-          buf.length,
-        ]
-      );
-      const docId = (docResult as { insertId: number }).insertId;
-
+      // Persist submission first so the form is never lost if file write fails.
       await pool.execute(
         `UPDATE hrm_form_assignments
-         SET status = 'submitted', form_data = ?, submitted_at = NOW(),
-             result_document_id = ?, updated_at = NOW()
+         SET status = 'submitted', form_data = ?, submitted_at = NOW(), updated_at = NOW()
          WHERE id = ?`,
-        [JSON.stringify(mergedEmployee), docId, assignmentId]
+        [JSON.stringify(submitData), assignmentId]
       );
+
+      let docId: number | null = null;
+      try {
+        docId = await regenerateSubmittedFormDocument({
+          assignmentId,
+          employeeId: Number(row.employee_id),
+          templateTitle: String(row.template_title || "Form"),
+          templateCategory: String(row.template_category || ""),
+          employeeName: String(row.employee_name || ""),
+          formData: submitData,
+          schema,
+          submittedAt: new Date().toISOString(),
+          hrMessage: row.assigned_note ? String(row.assigned_note) : null,
+          resultDocumentId: row.result_document_id != null ? Number(row.result_document_id) : null,
+        });
+        if (docId) {
+          await pool.execute(
+            `UPDATE hrm_form_assignments
+             SET result_document_id = ?, updated_at = NOW()
+             WHERE id = ?`,
+            [docId, assignmentId]
+          );
+        }
+      } catch {
+        // Submission already saved; employee can still open via print/preview.
+        docId = null;
+      }
 
       await logDocumentAudit({
         documentId: docId,
@@ -208,7 +266,12 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         actorId: String(row.employee_id),
       });
 
-      return NextResponse.json({ success: true, documentId: docId });
+      return NextResponse.json({
+        success: true,
+        documentId: docId,
+        budgetExceeded: Boolean(submitData.budget_exceeded),
+        budgetTicket: budgetTicket?.ticketNumber ?? null,
+      });
     }
 
     const status =

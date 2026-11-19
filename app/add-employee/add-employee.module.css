@@ -1,13 +1,14 @@
 :root {
-  --brand-purple: #611f69;
-  --brand-purple-dark: #4a1850;
-  --brand-green: #007a5a;
-  --brand-green-light: #2eb67d;
+  --brand-teal: #0f766e;
+  --brand-teal-dark: #0d5f59;
+  --brand-teal-light: #14b8a6;
+  --brand-green: #0f766e;
+  --brand-green-light: #14b8a6;
   --color-text: #0f172a;
   --color-muted: #64748b;
   --color-border: #e8edf3;
   --radius-card: 18px;
-  --shadow-card: 0 8px 32px rgba(97, 31, 105, 0.08);
+  --shadow-card: 0 8px 32px rgba(15, 23, 42, 0.06);
   --font-main: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -39,7 +40,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--brand-purple);
+  color: var(--brand-teal);
   border-bottom: 1px solid #f1f5f9;
 }
 
@@ -67,16 +68,16 @@
 }
 
 .navItem:hover {
-  background: #ede9fe;
-  color: #4a1850;
+  background: #ecfdf8;
+  color: #0f766e;
 }
 
 .navItemActive,
 .navItemActive:hover {
-  background: #611f69 !important;
+  background: #0f766e !important;
   color: #ffffff !important;
   font-weight: 600;
-  box-shadow: 0 4px 14px rgba(97, 31, 105, 0.28);
+  box-shadow: 0 4px 14px rgba(15, 118, 110, 0.28);
 }
 
 .formPanel {
@@ -132,18 +133,19 @@
 }
 
 .sessionHint strong {
-  color: var(--brand-purple);
+  color: var(--brand-teal);
 }
 
 .newEmployeeBtn {
+  border: none;
   border-radius: 8px;
   padding: 8px 14px;
   font-weight: 600;
   font-size: 0.9rem;
   cursor: pointer;
   background: #fff;
-  color: var(--brand-green);
-  border: 1.5px solid #a7f3d0;
+  color: var(--brand-teal);
+  border: 1.5px solid #99f6e4;
 }
 
 .newEmployeeBtn:hover {
@@ -162,21 +164,21 @@
 
 .templateBtn {
   background: #fff;
-  color: var(--brand-purple);
-  border: 1.5px solid #d8b4de;
+  color: var(--brand-teal);
+  border: 1.5px solid #99f6e4;
 }
 
 .templateBtn:hover {
-  background: #faf5fb;
+  background: #ecfdf8;
 }
 
 .importBtn {
-  background: var(--brand-purple);
+  background: var(--brand-teal);
   color: #fff;
 }
 
 .importBtn:hover {
-  background: var(--brand-purple-dark);
+  background: var(--brand-teal-dark);
 }
 
 .importBtn:disabled,
@@ -217,8 +219,8 @@
   margin-bottom: 16px;
   padding: 8px 14px;
   border-radius: 999px;
-  background: #f3e8f5;
-  color: var(--brand-purple);
+  background: #ecfdf8;
+  color: var(--brand-teal);
   font-size: 13px;
   font-weight: 600;
 }
@@ -236,7 +238,7 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--brand-purple);
+  color: var(--brand-teal);
 }
 
 .row {
@@ -276,8 +278,8 @@
 .input:focus,
 .select:focus {
   outline: none;
-  border-color: var(--brand-purple);
-  box-shadow: 0 0 0 3px rgba(97, 31, 105, 0.12);
+  border-color: var(--brand-teal-light);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.18);
 }
 
 .input::placeholder {
@@ -295,8 +297,8 @@
   align-items: center;
   gap: 20px;
   padding: 18px;
-  background: linear-gradient(135deg, #faf5ff 0%, #f0fdf8 100%);
-  border: 1px solid #ede9fe;
+  background: linear-gradient(135deg, #ecfdf8 0%, #f0fdfa 55%, #f8fafc 100%);
+  border: 1px solid #ccfbf1;
   border-radius: 14px;
 }
 
@@ -306,7 +308,7 @@
   height: 100px;
   border-radius: 50%;
   overflow: hidden;
-  border: 3px solid var(--brand-purple);
+  border: 3px solid var(--brand-teal);
   background: #fff;
   flex-shrink: 0;
 }
@@ -315,7 +317,7 @@
   position: absolute;
   right: 4px;
   bottom: 4px;
-  background: linear-gradient(135deg, var(--brand-purple) 0%, var(--brand-green) 100%);
+  background: linear-gradient(135deg, var(--brand-teal) 0%, var(--brand-teal-light) 100%);
   color: #fff;
   border-radius: 50%;
   width: 30px;
@@ -356,7 +358,7 @@
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  accent-color: var(--brand-purple);
+  accent-color: var(--brand-teal);
   cursor: pointer;
 }
 
@@ -395,25 +397,28 @@
 
 .actionsLeft {
   display: flex;
+  gap: 12px;
   justify-content: flex-end;
   margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid #f1f5f9;
 }
 
 .closeBtn {
   padding: 10px 22px;
   border-radius: 10px;
-  border: none;
-  background: #dc2626;
-  color: #fff;
-  font-weight: 700;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  font-weight: 600;
   font-size: 14px;
   cursor: pointer;
   font-family: var(--font-main);
-  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.22);
 }
 
 .closeBtn:hover {
-  background: #b91c1c;
+  background: #f8fafc;
+  border-color: #cbd5e1;
 }
 
 .cancelBtn {
@@ -436,13 +441,13 @@
   padding: 10px 24px;
   border-radius: 10px;
   border: none;
-  background: linear-gradient(135deg, var(--brand-green) 0%, var(--brand-green-light) 100%);
+  background: linear-gradient(135deg, var(--brand-teal) 0%, var(--brand-teal-light) 100%);
   color: #fff;
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
   font-family: var(--font-main);
-  box-shadow: 0 4px 14px rgba(0, 122, 90, 0.22);
+  box-shadow: 0 4px 14px rgba(15, 118, 110, 0.22);
 }
 
 .saveBtn:hover {
@@ -473,7 +478,7 @@
 }
 
 .radioLabelActive {
-  color: var(--brand-purple);
+  color: var(--brand-teal);
 }
 
 @media (max-width: 900px) {

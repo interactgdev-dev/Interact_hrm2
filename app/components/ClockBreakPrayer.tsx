@@ -42,6 +42,11 @@ import {
 import { useBiometricGate, type VerifyModalCloseReason } from "../../lib/useBiometricGate";
 import type { BiometricAction } from "@/lib/face-types";
 import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
+import {
+  FULL_BREAK_ALLOWANCE_SECONDS,
+  breakAllowanceFromAttendanceRow,
+  exceedSecondsOverAllowance,
+} from "@/lib/break-prayer-allowance";
 
 /** When clocked in across midnight, breaks span multiple calendar days; use session range, not date=today only. */
 function buildBreaksListUrl(employeeId: string, attendanceRows: any[]): string {
@@ -308,8 +313,8 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
   }, [prayerTimerPaused]);
 
   const syncPrayerBreakFromServer = React.useCallback(() => {
-    if (prayerTimerPaused) return;
-    void forceSyncPrayerBreakState(
+    if (prayerTimerPaused) return Promise.resolve();
+    return forceSyncPrayerBreakState(
       employeeId,
       setIsPrayerOn,
       setPrayerBreakTimer,
@@ -371,18 +376,15 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
     [handleVerifyOpen, handleVerifyClose]
   );
 
-  const { runWithVerify, gateModal, bioStatusLoading } = useBiometricGate(
+  const { runWithVerify, gateModal } = useBiometricGate(
     employeeId,
     employeeName,
     biometricGateOptions
   );
 
-  // Buttons are only disabled during the quick bio-status fetch. We deliberately
-  // do NOT block on full face-model load: on a remote server the weights take a
-  // few seconds to download, and the verify modal already loads them in parallel
-  // with the camera. Blocking here left buttons stuck on "Preparing…" for too
-  // long.
-  const verifyPreparing = bioStatusLoading;
+  // Never pass bioStatusLoading into button disabled/labels — buttons must show
+  // immediately. runWithVerify toasts if status is still loading; verify modal
+  // loads face models in parallel with the camera.
 
   const isBiometricGateError = (error: unknown) =>
     String(error || "").toLowerCase().includes("face verification");
@@ -401,8 +403,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
     if (breakIntervalId) clearInterval(breakIntervalId);
     if (prayerBreakIntervalId) clearInterval(prayerBreakIntervalId);
     
-    // Sync clock state from backend
-    // Custom sync to always use server timezone for timer
+    // Clock first — break/prayer/meeting syncs staggered so reload isn't an API storm.
     forceSyncClockState(
       employeeId,
       setIsClockedIn,
@@ -431,21 +432,20 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
       setLoadingAttendance,
       setIntervalId
     );
-    
-    // Sync break state from backend
-    forceSyncBreakState(employeeId, setIsOnBreak, setBreakTimer, setLoadingBreak, setBreakIntervalId);
 
-    // Sync prayer break state from backend
-    forceSyncPrayerBreakState(
-      employeeId,
-      setIsPrayerOn,
-      setPrayerBreakTimer,
-      setLoadingPrayerBreak,
-      setPrayerBreakIntervalId,
-      setPrayerStart
-    );
-    refreshmentWidget.forceSync();
-    meetingWidget.forceSync();
+    const secondarySyncId = window.setTimeout(() => {
+      forceSyncBreakState(employeeId, setIsOnBreak, setBreakTimer, setLoadingBreak, setBreakIntervalId);
+      forceSyncPrayerBreakState(
+        employeeId,
+        setIsPrayerOn,
+        setPrayerBreakTimer,
+        setLoadingPrayerBreak,
+        setPrayerBreakIntervalId,
+        setPrayerStart
+      );
+      refreshmentWidget.forceSync();
+      meetingWidget.forceSync();
+    }, 180);
     
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -470,6 +470,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
     document.addEventListener('visibilitychange', handleVisibility);
     
     return () => {
+      window.clearTimeout(secondarySyncId);
       document.removeEventListener('visibilitychange', handleVisibility);
       clearClockSyncInterval(employeeId);
       if (breakIntervalId) clearInterval(breakIntervalId);
@@ -584,8 +585,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
   ) => {
     if (clockActionPending) return;
     const now = new Date();
-    // A badge only for explicit auto clock-out — grace-expired manual out must not set the flag.
-    const useAutoClockOut = Boolean(options?.autoClockOut);
+    const useAutoClockOut = Boolean(options?.autoClockOut || graceExpiredForClockOutRef.current);
     try {
       setClockActionPending(true);
       const res = await fetch("/api/attendance", {
@@ -651,8 +651,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
     setShowClockOutConfirm(false);
     if (!confirmed) return;
     if (graceExpiredForClockOutRef.current) {
-      // Skip face after grace; server must not stamp auto_clock_out for this path.
-      void performClockOut(null);
+      void performClockOut(null, { autoClockOut: true });
       return;
     }
     runWithVerify("clock_out", (token) => performClockOut(token));
@@ -685,7 +684,15 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
         setBreakTimer(0);
         breakStartMsRef.current = startTime.getTime();
         setLoadingBreak(false);
-        forceSyncBreakState(employeeId, setIsOnBreak, setBreakTimer, setLoadingBreak, setBreakIntervalId);
+        await forceSyncBreakState(
+          employeeId,
+          setIsOnBreak,
+          setBreakTimer,
+          setLoadingBreak,
+          setBreakIntervalId
+        );
+        // Keep started UI even if sync briefly misses the new row
+        setIsOnBreak(true);
         notifyBreakDataChanged();
         toastSuccess("Your break has started.", "Break started");
       } else if (res.status === 403 && isBiometricGateError(data.error)) {
@@ -827,15 +834,14 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           <div style={{ fontWeight: 600, fontSize: "1.1rem", color: "#27ae60", marginBottom: 10 }}>Clock In</div>
         )}
         {isSlack && isClockedIn && <span className={slackStyles.clockRing} aria-hidden />}
-        {(!loadingAttendance || isTodayStatus) && (
-          <>
+        <>
             <button
               onClick={
                 isClockedIn
                   ? handleClockOut
                   : () => runWithVerify("clock_in", (token) => handleClockIn(token))
               }
-              disabled={clockActionPending || verifyPreparing || (isTodayStatus && loadingAttendance)}
+              disabled={clockActionPending}
               className={isSlack ? `${slackStyles.btn} ${isClockedIn ? slackStyles.btnClockOut : slackStyles.btnClockIn}` : undefined}
               style={isSlack ? undefined : {
                 background: isClockedIn ? "#e74c3c" : "#27ae60",
@@ -843,15 +849,15 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
                 border: "none",
                 borderRadius: 8,
                 padding: "8px 18px",
-                fontSize: "1.1rem",
+                fontSize: "1rem",
                 fontWeight: 600,
-                cursor: clockActionPending || verifyPreparing ? "not-allowed" : "pointer",
-                opacity: clockActionPending || verifyPreparing ? 0.6 : 1,
+                cursor: clockActionPending ? "not-allowed" : "pointer",
+                opacity: clockActionPending ? 0.6 : 1,
                 boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
                 transition: "background 0.2s"
               }}
             >
-              {verifyPreparing ? "Preparing…" : isClockedIn ? "Clock Out" : "Clock In"}
+              {isClockedIn ? "Clock Out" : "Clock In"}
             </button>
             {isClockedIn && (
               isSlack ? (
@@ -868,8 +874,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
                 </div>
               )
             )}
-          </>
-        )}
+        </>
       </div>
 
       {/* Break Widget */}
@@ -895,34 +900,30 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
             <div style={{ fontWeight: 600, fontSize: "1.1rem", color: "#e67e22", marginBottom: 10 }}>Break</div>
           )}
           <button
+            type="button"
+            data-action={isOnBreak ? "end-break" : "start-break"}
             onClick={
               isOnBreak
                 ? () => runWithVerify("break_end", (token) => handleBreakEnd(token))
                 : () => runWithVerify("break_start", (token) => handleBreakStart(token))
             }
-            disabled={isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing}
+            disabled={isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending}
             className={isSlack ? `${slackStyles.btn} ${isOnBreak ? slackStyles.btnBreakEnd : slackStyles.btnBreak}` : undefined}
             style={isSlack ? undefined : {
-              background: isOnBreak ? "#e74c3c" : "#16a34a",
+              background: isOnBreak ? "#e74c3c" : "#e67e22",
               color: "#fff",
               border: "none",
               borderRadius: 8,
               padding: "8px 18px",
-              fontSize: "1.1rem",
+              fontSize: "1rem",
               fontWeight: 600,
-              cursor: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing ? "not-allowed" : "pointer",
-              opacity: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending || verifyPreparing ? 0.6 : 1,
+              cursor: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending ? "not-allowed" : "pointer",
+              opacity: isPrayerOn || refreshmentWidget.isOn || meetingWidget.isOn || breakActionPending ? 0.6 : 1,
               boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
               transition: "background 0.2s"
             }}
           >
-            {verifyPreparing
-              ? "Preparing…"
-              : isOnBreak
-                ? variant === "todayStatus"
-                  ? `End Break · ${formatTime(breakTimer)}`
-                  : "End Break"
-                : "Start Break"}
+            {isOnBreak ? "End Break" : "Start Break"}
           </button>
           {isOnBreak && !isSlack ? (
             <div style={{ marginTop: 12, background: "#fff", borderRadius: 12, boxShadow: "0 2px 8px rgba(230,126,34,0.10)", padding: "8px 12px", minWidth: 120 }}>
@@ -958,7 +959,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           onPrayerStateChanged={syncPrayerBreakFromServer}
           disabled={isOnBreak || refreshmentWidget.isOn || meetingWidget.isOn}
           runWithVerify={runWithVerify}
-          bioStatusLoading={verifyPreparing}
+          bioStatusLoading={false}
           onClearServerPrayerInterval={() => clearPrayerBreakSyncInterval(employeeId)}
           variant={variant}
         />
@@ -982,7 +983,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           notifyDataChanged={notifyRefreshmentDataChanged}
           disabled={isOnBreak || isPrayerOn || meetingWidget.isOn}
           runWithVerify={runWithVerify}
-          bioStatusLoading={verifyPreparing}
+          bioStatusLoading={false}
           onClearServerBreakInterval={refreshmentWidget.clearServerInterval}
           variant={variant}
         />
@@ -1006,7 +1007,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
           notifyDataChanged={notifyMeetingDataChanged}
           disabled={isOnBreak || isPrayerOn || refreshmentWidget.isOn}
           runWithVerify={runWithVerify}
-          bioStatusLoading={verifyPreparing}
+          bioStatusLoading={false}
           onClearServerBreakInterval={meetingWidget.clearServerInterval}
           variant={variant}
         />
@@ -1022,13 +1023,17 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
               aria-label="Confirm clock out"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className={modalStyles.title}>Are you sure you want to clock out?</div>
+              <span className={modalStyles.eyebrow}>Time & attendance</span>
+              <div className={modalStyles.title}>Clock out for today?</div>
+              <p className={modalStyles.subtitle}>
+                Your session will end and hours for today will be locked.
+              </p>
               <div className={modalStyles.actions}>
                 <button type="button" className={modalStyles.btnYes} onClick={() => confirmClockOut(true)}>
-                  Yes
+                  Yes, clock out
                 </button>
                 <button type="button" className={modalStyles.btnNo} onClick={() => confirmClockOut(false)}>
-                  No
+                  Stay clocked in
                 </button>
               </div>
             </div>
@@ -1046,7 +1051,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
               aria-label={activeBreakTitle}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className={modalStyles.warnIcon} aria-hidden>⚠️</div>
+              <div className={modalStyles.warnIcon} aria-hidden>!</div>
               <div className={modalStyles.titleDanger}>{activeBreakTitle}</div>
               <div className={modalStyles.message}>{activeBreakErrorMsg}</div>
               <button
@@ -1054,7 +1059,7 @@ export const ClockBreakPrayerWidget = React.memo(function ClockBreakPrayerWidget
                 className={modalStyles.btnOk}
                 onClick={() => setShowActiveBreakModal(false)}
               >
-                OK
+                Got it
               </button>
             </div>
           </div>,
@@ -1080,12 +1085,17 @@ function BreakSummary({
   const isSlack = variant === "slack" || variant === "todayStatus";
   const slackStyles = variant === "todayStatus" ? todayStyles : slackStylesDefault;
   const [completedBreakSeconds, setCompletedBreakSeconds] = React.useState(0);
+  const [breakAllowanceSeconds, setBreakAllowanceSeconds] = React.useState(
+    FULL_BREAK_ALLOWANCE_SECONDS,
+  );
   // Removed prayer totals from BreakSummary; shown in Prayer widget instead
 
   const displayTotalSeconds =
     completedBreakSeconds + (isOnBreak ? Math.max(0, liveBreakSeconds) : 0);
-  const displayExceedSeconds =
-    displayTotalSeconds > 3600 ? displayTotalSeconds - 3600 : 0;
+  const displayExceedSeconds = exceedSecondsOverAllowance(
+    displayTotalSeconds,
+    breakAllowanceSeconds,
+  );
 
   const refreshTotals = React.useCallback(async () => {
     try {
@@ -1127,6 +1137,10 @@ function BreakSummary({
         sortedAttendance.find((a: any) => a.clock_in && !a.clock_out) ||
         sortedAttendance[0] ||
         null;
+
+      setBreakAllowanceSeconds(
+        breakAllowanceFromAttendanceRow(activeOrLatestAttendance),
+      );
 
       const activeAttendanceId =
         activeOrLatestAttendance?.id !== undefined &&
@@ -1212,17 +1226,10 @@ function BreakSummary({
     return (
       <div className={slackStyles.summaryBox}>
         <div className={slackStyles.summaryBoxInner}>
-          <div className={slackStyles.summaryLabel + (isOnBreak && variant === "todayStatus" ? ` ${slackStyles.summaryLabelActive}` : "")}>Total Break</div>
+          <div className={slackStyles.summaryLabel}>Total Break</div>
           <div
-            className={
-              slackStyles.summaryValue +
-              (isOnBreak && variant === "todayStatus" ? ` ${slackStyles.summaryValueActive}` : "")
-            }
-            style={
-              displayTotalSeconds > 3600 && !(isOnBreak && variant === "todayStatus")
-                ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" }
-                : undefined
-            }
+            className={slackStyles.summaryValue}
+            style={displayExceedSeconds > 0 ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" } : undefined}
           >
             {formatDuration(displayTotalSeconds)}
           </div>
@@ -1237,7 +1244,7 @@ function BreakSummary({
   return (
     <div style={{ marginTop: 12, background: "#fff", borderRadius: 12, boxShadow: "0 2px 8px rgba(230,126,34,0.10)", padding: "8px 12px", minWidth: 120 }}>
       <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e67e22", marginBottom: 6 }}>Today's Total Break</div>
-      <div style={{ fontSize: "1rem", fontWeight: 500, color: displayTotalSeconds > 3600 ? "#e74c3c" : "#2d3436" }}>{formatDuration(displayTotalSeconds)}</div>
+      <div style={{ fontSize: "1rem", fontWeight: 500, color: displayExceedSeconds > 0 ? "#e74c3c" : "#2d3436" }}>{formatDuration(displayTotalSeconds)}</div>
       {displayExceedSeconds > 0 && (
         <div style={{ fontSize: "0.9rem", color: "#e74c3c", marginTop: 4 }}>Exceed: {formatDuration(displayExceedSeconds)}</div>
       )}

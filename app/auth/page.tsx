@@ -4,7 +4,10 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 import { persistSavedLogin } from "@/lib/saved-login-client";
-import { markAdminPortal, markEmployeePortal } from "@/lib/access-control/employee-shell";
+import {
+  markAdminPortal,
+  markEmployeePortal,
+} from "@/lib/access-control/employee-shell";
 import {
   employeeDisplayNameFromRecord,
   sanitizeEmployeeDisplayName,
@@ -56,7 +59,7 @@ export default function LoginPage() {
             data.slides.map((s: { id: number; url: string }) => ({
               id: s.id,
               url: s.url,
-            }))
+            })),
           );
         }
       } catch {
@@ -73,14 +76,15 @@ export default function LoginPage() {
       if (!rememberMe) return;
       await persistSavedLogin(id, pass);
     },
-    [rememberMe]
+    [rememberMe],
   );
 
   const performLogin = useCallback(
     async (rawLoginId: string, rawPassword: string) => {
       setError("");
       setLoading(true);
-      const id = rawLoginId.trim().toLowerCase();
+      const trimmedLoginId = rawLoginId.trim();
+      const id = trimmedLoginId.toLowerCase();
       const isAdminId =
         id === "admin@interact.com" || id === "interactadmin" || id === "admin";
 
@@ -88,15 +92,20 @@ export default function LoginPage() {
         const adminRes = await fetch("/api/admin-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loginId: rawLoginId, password: rawPassword }),
+          body: JSON.stringify({ loginId: trimmedLoginId, password: rawPassword }),
         });
         const adminData = await adminRes.json();
         if (adminData.success) {
           if (typeof window !== "undefined") {
-            localStorage.setItem("loginId", rawLoginId.trim());
+            localStorage.setItem("loginId", trimmedLoginId);
             markAdminPortal();
+            try {
+              window.dispatchEvent(new Event("hrm-auth-changed"));
+            } catch {
+              /* ignore */
+            }
           }
-          await persistCredentials(rawLoginId, rawPassword);
+          await persistCredentials(trimmedLoginId, rawPassword);
           router.push("/dashboard");
           setLoading(false);
           return;
@@ -110,17 +119,14 @@ export default function LoginPage() {
         const res = await fetch("/api/employee-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loginId: rawLoginId, password: rawPassword }),
+          body: JSON.stringify({ loginId: trimmedLoginId, password: rawPassword }),
         });
         const data = await res.json();
         if (data.success) {
           if (typeof window !== "undefined") {
-            const trimmedLoginId = rawLoginId.trim();
             localStorage.setItem("loginId", trimmedLoginId);
             localStorage.setItem("userRole", data.role || data.employee?.role || "Officer");
-            const empId = String(
-              data.employee?.id ?? data.employee?.employee_id ?? "",
-            ).trim();
+            const empId = String(data.employee?.id ?? data.employee?.employee_id ?? "").trim();
             const empName = sanitizeEmployeeDisplayName(
               data.display_name || employeeDisplayNameFromRecord(data.employee),
               "Employee",
@@ -129,32 +135,6 @@ export default function LoginPage() {
             localStorage.setItem("employeeName", empName);
             if (empId && /^\d+$/.test(empId)) {
               localStorage.setItem("employeeId", empId);
-              // Warm permission menu before dashboard mounts
-              void fetch(
-                `/api/access-control/me?employeeId=${encodeURIComponent(empId)}`,
-                { cache: "no-store" },
-              )
-                .then((r) => r.json())
-                .then((me) => {
-                  if (!me?.success) return;
-                  const menu = Array.isArray(me.menu) ? me.menu : [];
-                  const permissions = Array.isArray(me.permissions) ? me.permissions : [];
-                  localStorage.setItem(
-                    "employeeAccessMenuCache",
-                    JSON.stringify({
-                      employeeId: empId,
-                      menu,
-                      permissions,
-                      roleSlug: String(me.role?.slug || ""),
-                    }),
-                  );
-                  localStorage.setItem("accessPermissions", JSON.stringify(permissions));
-                  localStorage.setItem(
-                    "accessRoleSlug",
-                    String(me.role?.slug || ""),
-                  );
-                })
-                .catch(() => undefined);
             } else {
               localStorage.removeItem("employeeId");
             }
@@ -164,7 +144,7 @@ export default function LoginPage() {
               /* ignore */
             }
           }
-          await persistCredentials(rawLoginId, rawPassword);
+          await persistCredentials(trimmedLoginId, rawPassword);
           router.push("/employee-dashboard");
         } else {
           setError(data.error || "Invalid credentials. Please try again.");
@@ -174,7 +154,7 @@ export default function LoginPage() {
       }
       setLoading(false);
     },
-    [persistCredentials, router]
+    [persistCredentials, router],
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -260,31 +240,33 @@ export default function LoginPage() {
                   type="text"
                   name="username"
                   autoComplete="username"
-                  placeholder="Email or Username"
+                  placeholder="Email, username, or employee ID"
                   className={styles.input}
                   value={loginId}
                   onChange={(e) => setLoginId(e.target.value)}
                   required
                 />
-                <div className={styles.passwordWrapper}>
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    name="password"
-                    autoComplete="current-password"
-                    placeholder="Password"
-                    className={styles.input}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                  <button
-                    type="button"
-                    className={styles.togglePasswordBtn}
-                    onClick={() => setShowPassword(!showPassword)}
-                    aria-label="Toggle password visibility"
-                  >
-                    {showPassword ? <FaEyeSlash /> : <FaEye />}
-                  </button>
+                <div className={styles.passwordBlock}>
+                  <div className={styles.passwordWrapper}>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      name="password"
+                      autoComplete="current-password"
+                      placeholder="Password"
+                      className={styles.input}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                    />
+                    <button
+                      type="button"
+                      className={styles.togglePasswordBtn}
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label="Toggle password visibility"
+                    >
+                      {showPassword ? <FaEyeSlash /> : <FaEye />}
+                    </button>
+                  </div>
                 </div>
                 <div className={styles.rowBetween}>
                   <label className={styles.remember}>

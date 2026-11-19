@@ -716,6 +716,7 @@ export function FaceVerifyModal({
           .filter(Boolean)
           .join(" ")}
       >
+        <p className={modalStyles.eyebrow}>Secure check</p>
         <div className={modalStyles.title}>Face Verification</div>
         <div
           className={[modalStyles.subtitle, verifySuccess ? modalStyles.subtitleSuccess : ""]
@@ -767,15 +768,8 @@ export function FaceVerifyModal({
         ) : null}
 
         <div className={modalStyles.actions}>
-          {!presenceCheck &&
-          !verifySuccess &&
-          status === PROMPT.failed ? (
-            <button
-              type="button"
-              onClick={retryAfterFail}
-              className={modalStyles.cancelBtn}
-              style={{ borderColor: "#86efac", color: "#166534", background: "#f0fdf4" }}
-            >
+          {!presenceCheck && !verifySuccess && status === PROMPT.failed ? (
+            <button type="button" onClick={retryAfterFail} className={modalStyles.retryBtn}>
               Retry
             </button>
           ) : null}

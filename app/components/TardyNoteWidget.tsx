@@ -140,11 +140,11 @@ export function TardyNoteWidget({
         <div className={styles.header}>
           <span className={styles.badge}>Late today</span>
           <h2 id="tardy-note-title" className={styles.title}>
-            Reason for late arrival
+            Why were you late?
           </h2>
           <p id="tardy-note-desc" className={styles.subtitle}>
-            You clocked in late. Please select a reason before continuing.{" "}
-            <span className={styles.required}>Response required.</span>
+            Select a reason to continue.{" "}
+            <span className={styles.required}>Required</span>
           </p>
         </div>
 
@@ -188,8 +188,8 @@ export function TardyNoteWidget({
                 setOtherText(e.target.value);
                 setMessage("");
               }}
-              placeholder="Write your reason here…"
-              rows={4}
+              placeholder="Write your reason…"
+              rows={3}
               maxLength={2500}
               aria-required="true"
             />
@@ -209,9 +209,9 @@ export function TardyNoteWidget({
           onClick={handleSubmit}
           disabled={!canSubmit}
         >
-          {submitting ? "Submitting…" : "Submit reason"}
+          {submitting ? "Submitting…" : "Submit"}
         </button>
-        <p className={styles.hint}>This window cannot be closed until you submit a reason.</p>
+        <p className={styles.hint}>Cannot close until a reason is submitted.</p>
       </div>
     </div>
   );

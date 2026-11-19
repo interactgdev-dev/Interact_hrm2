@@ -78,51 +78,15 @@ export async function resolveActivityActor(opts: {
   };
 }
 
-function normalizeIp(ip: string | null | undefined): string {
-  let addr = String(ip || "").trim();
-  if (!addr) return "";
-  // X-Forwarded-For / Node may send IPv4-mapped IPv6 (::ffff:192.168.x.x)
-  if (addr.toLowerCase().startsWith("::ffff:")) {
-    addr = addr.slice(7);
-  }
-  return addr;
-}
-
 async function lookupHostnameByIp(ip: string | null | undefined): Promise<string | null> {
-  const addr = normalizeIp(ip);
+  const addr = String(ip || "").trim();
   if (!addr || addr === "127.0.0.1" || addr === "::1") return null;
-  const mapped = `::ffff:${addr}`;
   try {
     const [rows]: any = await query(
       `SELECT hostname FROM presence_agents
-       WHERE hostname IS NOT NULL AND TRIM(hostname) <> ''
-         AND (
-           last_ip = ?
-           OR last_ip = ?
-           OR last_ip LIKE ?
-         )
+       WHERE last_ip = ? AND hostname IS NOT NULL AND TRIM(hostname) <> ''
        ORDER BY last_seen_at DESC LIMIT 1`,
-      [addr, mapped, `%${addr}`],
-    );
-    const host = rows?.[0]?.hostname;
-    return typeof host === "string" && host.trim() ? host.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
-async function lookupHostnameByEmployee(
-  employeeId: string | null | undefined,
-): Promise<string | null> {
-  const eid = String(employeeId || "").trim();
-  if (!eid) return null;
-  try {
-    const [rows]: any = await query(
-      `SELECT hostname FROM presence_agents
-       WHERE CAST(employee_id AS CHAR) = ?
-         AND hostname IS NOT NULL AND TRIM(hostname) <> ''
-       ORDER BY last_seen_at DESC LIMIT 1`,
-      [eid],
+      [addr],
     );
     const host = rows?.[0]?.hostname;
     return typeof host === "string" && host.trim() ? host.trim() : null;
@@ -214,18 +178,13 @@ export async function appendAdminActivity(event: Record<string, unknown>) {
           : null;
 
     const ip =
-      event.ip != null
-        ? normalizeIp(String(event.ip)).slice(0, 64) || null
-        : null;
+      event.ip != null ? String(event.ip).trim().slice(0, 64) || null : null;
     let hostname =
       String(event.hostname || event.machine_name || event.pc_name || "")
         .trim()
         .slice(0, 255) || null;
     if (!hostname) {
       hostname = await lookupHostnameByIp(ip);
-    }
-    if (!hostname) {
-      hostname = await lookupHostnameByEmployee(actor.employee_id || employeeIdHint);
     }
 
     const row = {

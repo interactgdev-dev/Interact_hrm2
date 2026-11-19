@@ -15,6 +15,7 @@ export async function GET() {
       {
         success: true,
         settings: {
+          agentsRetired: settings.agentsRetired,
           presenceEnabled: settings.presenceEnabled,
           idleWarningSeconds: settings.idleWarningSeconds,
           popupCountdownSeconds: settings.popupCountdownSeconds,

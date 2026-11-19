@@ -637,7 +637,7 @@ function buildDateMetaFromImportedDays(
           runningLate = "";
         }
         lateMinutes = lateCountsForStatus(statusLabel)
-          ? late.lateMinutes
+          ? late.excessLateMinutes
           : 0;
       }
     } else {

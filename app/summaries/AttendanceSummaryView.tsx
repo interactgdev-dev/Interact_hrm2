@@ -2,6 +2,7 @@
 
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import styles from "../break-summary/break-summary.module.css";
+import leaveStyles from "../leave/leave.module.css";
 import { EmployeeTableNameCell } from "../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../components/use-employee-detail-popup";
 import { FaFileExcel } from "react-icons/fa";
@@ -320,49 +321,74 @@ export default function AttendanceSummaryView() {
       <div className={styles.breakSummaryContainer}>
         <h1 className={styles.pageTitle}>Attendance Summary</h1>
         {showingImported && (
-          <p style={{ color: "#611f69", fontSize: "0.85rem", marginBottom: 12, fontWeight: 600 }}>
+          <p className={leaveStyles.subtitle} style={{ color: "#611f69", fontWeight: 600, marginBottom: 12 }}>
             Showing imported Excel data for {filterMonth} (sheet values as-is)
           </p>
         )}
-        <div className={styles.breakSummaryFilters}>
-          <input
-            type="text"
-            placeholder="Search by name or pseudo name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className={styles.breakSummaryInput}
-            style={{ width: 220 }}
-          />
-          <select value={department} onChange={(e) => setDepartment(e.target.value)} className={styles.breakSummaryDate} style={{ width: 200 }}>
+        <div className={leaveStyles.toolbar}>
+          <div className={leaveStyles.searchWrap}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="search"
+              className={leaveStyles.toolbarSearch}
+              placeholder="Search by name or pseudo name"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <select
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            className={leaveStyles.toolbarSelect}
+            aria-label="Filter by department"
+          >
             <option value="">
               {viewerScope.mode === "all" ? "All Departments" : "All (your departments)"}
             </option>
             {scopedDepartments.map((dept: any) => (
-              <option key={dept.id} value={dept.name}>{dept.name}</option>
+              <option key={dept.id} value={dept.name}>
+                {dept.name}
+              </option>
             ))}
           </select>
           <input
             type="date"
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
-            className={styles.breakSummaryDate}
-            placeholder="From Date"
+            className={leaveStyles.toolbarSelect}
+            aria-label="From date"
           />
           <input
             type="date"
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
-            className={styles.breakSummaryDate}
-            placeholder="To Date"
+            className={leaveStyles.toolbarSelect}
+            aria-label="To date"
           />
-          <button onClick={downloadAttendanceCSV} className={styles.breakSummaryXLSButton} title="Download XLS">
-            <FaFileExcel size={20} />
-            <span>Export XLS</span>
-          </button>
-          <button onClick={handleImportClick} className={styles.breakSummaryXLSButton} title="Import XLS">
-            <FaFileExcel size={20} />
-            <span>Import XLS</span>
-          </button>
+          <div className={leaveStyles.toolbarActions}>
+            <button
+              type="button"
+              onClick={downloadAttendanceCSV}
+              className={styles.breakSummaryXLSButton}
+              title="Download XLS"
+            >
+              <FaFileExcel size={14} />
+              <span>Export XLS</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleImportClick}
+              className={`${styles.breakSummaryXLSButton} ${styles.breakSummaryXLSButtonSecondary}`}
+              title="Import XLS"
+            >
+              <FaFileExcel size={14} />
+              <span>Import XLS</span>
+            </button>
+          </div>
           <input
             ref={importInputRef}
             type="file"
@@ -372,120 +398,128 @@ export default function AttendanceSummaryView() {
           />
         </div>
 
-        <div className={styles.breakSummaryTableWrapper}>
-          {loading && !showingImported ? (
-            <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
-              Loading...
-            </div>
-          ) : (
-          <table className={styles.breakSummaryTable}>
-            <thead>
-              <tr>
-                <th>Id</th>
-                <th>Full Name</th>
-                <th>P.Name</th>
-                <th>Department</th>
-                <th>Date</th>
-                <th>Clock In</th>
-                <th>Clock Out</th>
-                <th>Total Hours</th>
-                <th>Late</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className={styles.breakSummaryNoRecords}>No records found.</td>
-                </tr>
-              ) : (
-                rows.map((a: any, idx) => {
-                  if (showingImported) {
-                    const isRunning =
-                      !a.clockOut ||
-                      a.clockOut.toLowerCase() === "running..." ||
-                      a.clockOut.toLowerCase() === "running";
-                    return (
-                      <tr key={a.id || idx}>
-                        <td className={styles.cellMuted}>{a.employeeId}</td>
-                        <td>
-                          <EmployeeTableNameCell
-                            name={a.employeeName || ""}
-                            employeeId={a.employeeId}
-                            photo={getPhoto(a.employeeId)}
-                            onOpen={() =>
-                              openFromRow({
-                                employee_id: a.employeeId,
-                                employee_name: a.employeeName,
-                                pseudonym: a.pseudonym,
-                                department_name: a.departmentName,
-                              })
-                            }
-                          />
-                        </td>
-                        <td>{a.pseudonym}</td>
-                        <td>{a.departmentName}</td>
-                        <td>{a.dateDisplay}</td>
-                        <td>{a.clockIn}</td>
-                        <td>
-                          {isRunning ? (
-                            <span style={{ color: "#e67e22", fontWeight: 600 }}>Running...</span>
-                          ) : (
-                            a.clockOut
-                          )}
-                        </td>
-                        <td>{a.totalHours}</td>
-                        <td
-                          style={{
-                            color: a.lateIsNegative ? "#e74c3c" : "#27ae60",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {a.late}
-                        </td>
-                      </tr>
-                    );
-                  }
-                  const rowKey = a.id ?? `${a.employee_id}-${a.clock_in}`;
-                  const isOpen = Boolean(a.clock_in && !a.clock_out);
-                  const totalHours = isOpen
-                    ? formatTotalHours(a.clock_in, "", now)
-                    : closedDisplay.get(rowKey) || formatTotalHours(a.clock_in, a.clock_out);
-                  return (
-                    <tr key={a.id || idx}>
-                      <td className={styles.cellMuted}>{a.employee_id}</td>
-                      <td>
-                        <EmployeeTableNameCell
-                          name={a.employee_name || ""}
-                          employeeId={a.employee_id}
-                          photo={getPhoto(a.employee_id)}
-                          onOpen={() => openFromRow(a)}
-                        />
-                      </td>
-                      <td>{a.pseudonym || "-"}</td>
-                      <td>{a.department_name || "-"}</td>
-                      <td>{attendanceSessionDate(a) || formatDateOnly(a.clock_in || a.clock_out || a.date)}</td>
-                      <td>{a.clock_in ? getTimeStringInTimeZone(a.clock_in, SERVER_TIMEZONE) : ""}</td>
-                      <td>
-                        {a.clock_out ? (
-                          <>
-                            {getTimeStringInTimeZone(a.clock_out, SERVER_TIMEZONE)}
-                            {isAutoClockOutRecord(a.auto_clock_out) ? <AutoClockOutBadge /> : null}
-                          </>
-                        ) : (
-                          <span style={{ color: "#e67e22", fontWeight: 600 }}>Running...</span>
-                        )}
-                      </td>
-                      <td>{totalHours}</td>
-                      <td style={{ color: a.is_late ? "#e74c3c" : "#27ae60", fontWeight: 600 }}>
-                        {a.is_late ? `Late ${formatLateTime(a.late_minutes || 0)}` : "On Time"}
+        <div className={leaveStyles.reqTableShell}>
+          <div className={`${leaveStyles.reqTableScroll} ${styles.attTableScroll}`}>
+            {loading && !showingImported ? (
+              <div className={leaveStyles.loading}>Loading attendance…</div>
+            ) : (
+              <table className={`${leaveStyles.reqTable} ${styles.attTableFit}`}>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Full Name</th>
+                    <th>P.Name</th>
+                    <th>Department</th>
+                    <th>Date</th>
+                    <th>Clock In</th>
+                    <th>Clock Out</th>
+                    <th>Total Hours</th>
+                    <th>Late</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className={leaveStyles.reqEmpty}>
+                        No records found.
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-          )}
+                  ) : (
+                    rows.map((a: any, idx) => {
+                      if (showingImported) {
+                        const isRunning =
+                          !a.clockOut ||
+                          a.clockOut.toLowerCase() === "running..." ||
+                          a.clockOut.toLowerCase() === "running";
+                        return (
+                          <tr key={a.id || idx}>
+                            <td className={leaveStyles.reqId}>{a.employeeId}</td>
+                            <td>
+                              <EmployeeTableNameCell
+                                name={a.employeeName || ""}
+                                employeeId={a.employeeId}
+                                photo={getPhoto(a.employeeId)}
+                                onOpen={() =>
+                                  openFromRow({
+                                    employee_id: a.employeeId,
+                                    employee_name: a.employeeName,
+                                    pseudonym: a.pseudonym,
+                                    department_name: a.departmentName,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td title={a.pseudonym || ""}>{a.pseudonym || "—"}</td>
+                            <td title={a.departmentName || ""}>{a.departmentName || "—"}</td>
+                            <td>{a.dateDisplay}</td>
+                            <td>{a.clockIn}</td>
+                            <td>
+                              {isRunning ? (
+                                <span className={styles.attRunning}>Running...</span>
+                              ) : (
+                                a.clockOut
+                              )}
+                            </td>
+                            <td>{a.totalHours}</td>
+                            <td className={a.lateIsNegative ? styles.attLate : styles.attOnTime}>
+                              {a.late}
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const rowKey = a.id ?? `${a.employee_id}-${a.clock_in}`;
+                      const isOpen = Boolean(a.clock_in && !a.clock_out);
+                      const totalHours = isOpen
+                        ? formatTotalHours(a.clock_in, "", now)
+                        : closedDisplay.get(rowKey) || formatTotalHours(a.clock_in, a.clock_out);
+                      return (
+                        <tr key={a.id || idx}>
+                          <td className={leaveStyles.reqId}>{a.employee_id}</td>
+                          <td>
+                            <EmployeeTableNameCell
+                              name={a.employee_name || ""}
+                              employeeId={a.employee_id}
+                              photo={getPhoto(a.employee_id)}
+                              onOpen={() => openFromRow(a)}
+                            />
+                          </td>
+                          <td title={a.pseudonym || ""}>{a.pseudonym || "—"}</td>
+                          <td title={a.department_name || ""}>{a.department_name || "—"}</td>
+                          <td>
+                            {attendanceSessionDate(a) ||
+                              formatDateOnly(a.clock_in || a.clock_out || a.date)}
+                          </td>
+                          <td>
+                            {a.clock_in
+                              ? getTimeStringInTimeZone(a.clock_in, SERVER_TIMEZONE)
+                              : ""}
+                          </td>
+                          <td>
+                            {a.clock_out ? (
+                              <>
+                                {getTimeStringInTimeZone(a.clock_out, SERVER_TIMEZONE)}
+                                {isAutoClockOutRecord(a.auto_clock_out) ? (
+                                  <AutoClockOutBadge />
+                                ) : null}
+                              </>
+                            ) : (
+                              <span className={styles.attRunning}>Running...</span>
+                            )}
+                          </td>
+                          <td>{totalHours}</td>
+                          <td className={a.is_late ? styles.attLate : styles.attOnTime}>
+                            {a.is_late
+                              ? `Late ${formatLateTime(a.late_minutes || 0)}`
+                              : "On Time"}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
       {popup}

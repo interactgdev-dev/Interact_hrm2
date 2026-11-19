@@ -88,8 +88,6 @@ function parseSelectSql(raw: string): {
   orderSql: string | null;
   limit?: number;
   offsetN: number;
-  limitFromParam?: boolean;
-  offsetFromParam?: boolean;
 } | null {
   if (!/^SELECT\b/i.test(raw)) return null;
   const fromAt = indexOfTopLevelKeyword(raw, "FROM");
@@ -110,8 +108,6 @@ function parseSelectSql(raw: string): {
   let orderSql: string | null = null;
   let limit: number | undefined;
   let offsetN = 0;
-  let limitFromParam = false;
-  let offsetFromParam = false;
 
   if (whereAt >= 0) {
     const endCandidates = [orderAt, limitAt, offsetAt].filter((i) => i > whereAt);
@@ -130,30 +126,15 @@ function parseSelectSql(raw: string): {
       .trim();
   }
   if (limitAt >= 0) {
-    const limChunk = rest.slice(limitAt).match(/^\s*LIMIT\s+(\d+|\?)/i);
-    if (limChunk) {
-      if (limChunk[1] === "?") limitFromParam = true;
-      else limit = Number(limChunk[1]);
-    }
+    const limChunk = rest.slice(limitAt).match(/^\s*LIMIT\s+(\d+)/i);
+    if (limChunk) limit = Number(limChunk[1]);
   }
   if (offsetAt >= 0) {
-    const offChunk = rest.slice(offsetAt).match(/^\s*OFFSET\s+(\d+|\?)/i);
-    if (offChunk) {
-      if (offChunk[1] === "?") offsetFromParam = true;
-      else offsetN = Number(offChunk[1]);
-    }
+    const offChunk = rest.slice(offsetAt).match(/^\s*OFFSET\s+(\d+)/i);
+    if (offChunk) offsetN = Number(offChunk[1]);
   }
 
-  return {
-    selectSql,
-    fromChunk,
-    whereSql,
-    orderSql,
-    limit,
-    offsetN,
-    limitFromParam,
-    offsetFromParam,
-  };
+  return { selectSql, fromChunk, whereSql, orderSql, limit, offsetN };
 }
 
 /** Pull correlated "latest shift as of date" JOIN out of FROM chunk. */
@@ -213,6 +194,11 @@ function attachLatestShift(
         }
       }
     }
+    // Mid-month assign: if no as-of-date row, still use latest known shift
+    // so OT / status can use timing + allow_overtime for earlier days.
+    if (!best && list.length) {
+      best = list[list.length - 1];
+    }
     if (!best) return row;
     return {
       ...row,
@@ -223,6 +209,10 @@ function attachLatestShift(
       start_time: best.start_time ?? row.start_time,
       end_time: best.end_time ?? row.end_time,
       assigned_date: best.assigned_date ?? row.assigned_date,
+      allow_overtime:
+        best.allow_overtime !== undefined && best.allow_overtime !== null
+          ? best.allow_overtime
+          : row.allow_overtime,
     };
   });
 }
@@ -377,8 +367,8 @@ function buildFilterFromWhere(
       return buildFilterFromWhere(inner, params, paramOffset, aliasMap);
     }
 
-    // Tautologies used by many list APIs: WHERE 1=1 AND …
-    if (/^(1\s*=\s*1|0\s*=\s*0|true)$/i.test(s)) {
+    // Tautologies used by dynamic SQL builders (e.g. WHERE 1=1 AND …)
+    if (/^1\s*=\s*1$/.test(s) || /^true$/i.test(s)) {
       return {};
     }
 
@@ -403,6 +393,32 @@ function buildFilterFromWhere(
       }
     }
 
+    // NOT IN (?, ?) — must be before IN (otherwise "NOT IN" never matches)
+    m = s.match(/^([\w.`]+)\s+NOT\s+IN\s*\(([^)]*)\)\s*$/i);
+    if (m) {
+      const ref = fieldRef(m[1]);
+      const qCount = (m[2].match(/\?/g) || []).length;
+      const vals: any[] = [];
+      if (qCount) {
+        for (let i = 0; i < qCount; i++) {
+          const v = take();
+          vals.push(v);
+          if (typeof v === "string" && /^\d+$/.test(v)) vals.push(Number(v));
+          else if (typeof v === "number") vals.push(String(v));
+        }
+      } else {
+        for (const part of m[2].split(",")) {
+          const p = part.trim();
+          if (!p) continue;
+          const lit = /^\d+$/.test(p) ? Number(p) : p.replace(/^'|'$/g, "");
+          vals.push(lit);
+          if (typeof lit === "number") vals.push(String(lit));
+          else if (typeof lit === "string" && /^\d+$/.test(lit)) vals.push(Number(lit));
+        }
+      }
+      return { [ref.field]: { $nin: vals } };
+    }
+
     // IN (?, ?)
     m = s.match(/^([\w.`]+)\s+IN\s*\(([^)]*)\)\s*$/i);
     if (m) {
@@ -410,12 +426,21 @@ function buildFilterFromWhere(
       const qCount = (m[2].match(/\?/g) || []).length;
       const vals: any[] = [];
       if (qCount) {
-        for (let i = 0; i < qCount; i++) vals.push(take());
+        for (let i = 0; i < qCount; i++) {
+          const v = take();
+          vals.push(v);
+          // Flex id: "97" and 97 both match (same as `=` handler)
+          if (typeof v === "string" && /^\d+$/.test(v)) vals.push(Number(v));
+          else if (typeof v === "number") vals.push(String(v));
+        }
       } else {
         for (const part of m[2].split(",")) {
           const p = part.trim();
           if (!p) continue;
-          vals.push(/^\d+$/.test(p) ? Number(p) : p.replace(/^'|'$/g, ""));
+          const lit = /^\d+$/.test(p) ? Number(p) : p.replace(/^'|'$/g, "");
+          vals.push(lit);
+          if (typeof lit === "number") vals.push(String(lit));
+          else if (typeof lit === "string" && /^\d+$/.test(lit)) vals.push(Number(lit));
         }
       }
       return { [ref.field]: { $in: vals } };
@@ -568,7 +593,13 @@ function buildFilterFromWhere(
   }
   const ands = splitAnd(whereSql);
   if (ands.length === 1) return parseAtom(ands[0]);
-  return { $and: ands.map(parseAtom) };
+  // Drop empty tautologies ({}) so WHERE 1=1 AND status=… becomes a clean filter
+  const parts = ands
+    .map(parseAtom)
+    .filter((p) => p && Object.keys(p).length > 0 && !(p as any).__unsupported_where);
+  if (parts.length === 0) return {};
+  if (parts.length === 1) return parts[0];
+  return { $and: parts };
 }
 
 function parseSelectList(selectSql: string): { star: boolean; cols: { expr: string; as: string }[] } {
@@ -636,9 +667,20 @@ function formatDateTimeSql(v: any): string | null {
 
 function getByPath(row: Document, expr: string): any {
   const clean = expr.replace(/`/g, "").trim();
-  const df = clean.match(/^DATE_FORMAT\s*\(\s*([\w.`]+)\s*,/i);
+  const df = clean.match(/^DATE_FORMAT\s*\(\s*([\w.`]+)\s*,\s*'([^']*)'\s*\)/i);
   if (df) {
-    return formatDateTimeSql(getByPath(row, df[1]));
+    const raw = getByPath(row, df[1]);
+    const fmt = df[2] || "";
+    // Date-only formats must stay YYYY-MM-DD (Monthly Attendance overrides keys).
+    if (/^%Y-%m-%d$/.test(fmt) || fmt === "%Y-%m-%d") {
+      return toDateKey(raw) || (typeof raw === "string" ? raw.slice(0, 10) : null);
+    }
+    return formatDateTimeSql(raw);
+  }
+  const dfLoose = clean.match(/^DATE_FORMAT\s*\(\s*([\w.`]+)\s*,/i);
+  if (dfLoose) {
+    const raw = getByPath(row, dfLoose[1]);
+    return toDateKey(raw) || formatDateTimeSql(raw);
   }
   const dateOnly = clean.match(/^DATE\s*\(\s*(.+)\s*\)$/i);
   if (dateOnly) {
@@ -662,12 +704,11 @@ async function nextNumericId(db: Db, collection: string): Promise<number> {
   return typeof max === "number" ? max + 1 : 1;
 }
 
-function sqlNow(): Date {
-  // Real UTC instant — Mongo stores BSON Date; UI formats in Asia/Karachi.
-  return new Date();
+function sqlNow(): string {
+  return new Date().toISOString().slice(0, 19).replace("T", " ");
 }
 
-function addInterval(base: any, amount: number, unit: string): Date | string {
+function addInterval(base: any, amount: number, unit: string): string {
   const parsed = parseUtcWallDateTime(base);
   const d = parsed ? new Date(parsed.getTime()) : null;
   if (!d) {
@@ -676,13 +717,13 @@ function addInterval(base: any, amount: number, unit: string): Date | string {
     if (u.startsWith("DAY")) today.setUTCDate(today.getUTCDate() + amount);
     else if (u.startsWith("HOUR")) today.setUTCHours(today.getUTCHours() + amount);
     else if (u.startsWith("MINUTE")) today.setUTCMinutes(today.getUTCMinutes() + amount);
-    return today;
+    return sqlNow();
   }
   const u = unit.toUpperCase();
   if (u.startsWith("DAY")) d.setUTCDate(d.getUTCDate() + amount);
   else if (u.startsWith("HOUR")) d.setUTCHours(d.getUTCHours() + amount);
   else if (u.startsWith("MINUTE")) d.setUTCMinutes(d.getUTCMinutes() + amount);
-  return d;
+  return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
 const UPSERT_KEYS: Record<string, string[]> = {
@@ -693,10 +734,15 @@ const UPSERT_KEYS: Record<string, string[]> = {
   hrm_saved_logins: ["device_key", "login_id"],
   hrm_tardy_notes: ["attendance_id"],
   monthly_payroll_adjustments: ["employee_id", "month"],
+  salary_disbursements: ["employee_id", "month"],
+  monthly_payroll_final_salaries: ["employee_id", "month"],
+  monthly_attendance_status_overrides: ["employee_id", "attendance_date"],
   employee_leave_allowances: ["employee_id"],
   company_calendar_days: ["date"],
   loan_records: ["employee_id", "month"],
   employee_commissions: ["employee_id", "year", "month_number"],
+  // Must be machine_id only — inferred keys included first_seen_at and spawned a new row every heartbeat
+  presence_agents: ["machine_id"],
 };
 
 function uniqueKeyFields(table: string, insertCols: string[], updateFields: string[]): string[] {
@@ -934,16 +980,8 @@ export async function mongoExecute(
   // SELECT (paren-aware — subquery WHERE must not win)
   const parsedSelect = parseSelectSql(raw);
   if (parsedSelect) {
-    let {
-      selectSql,
-      fromChunk,
-      whereSql,
-      orderSql,
-      limit,
-      offsetN,
-      limitFromParam,
-      offsetFromParam,
-    } = parsedSelect;
+    let { selectSql, fromChunk, whereSql, orderSql, limit, offsetN } =
+      parsedSelect;
 
     const shiftExtract = extractLatestShiftJoin(fromChunk);
     fromChunk = shiftExtract.fromChunk;
@@ -967,15 +1005,6 @@ export async function mongoExecute(
     const filter = buildFilterFromWhere(whereSql, p, offset, {
       [from.alias]: from.table,
     });
-
-    if (limitFromParam) {
-      const v = p[offset.i++];
-      if (v != null && v !== "") limit = Number(v);
-    }
-    if (offsetFromParam) {
-      const v = p[offset.i++];
-      if (v != null && v !== "") offsetN = Number(v);
-    }
 
     let baseFilter: Filter<Document> = filter;
     const whereUsesOtherAlias =
@@ -1027,20 +1056,10 @@ export async function mongoExecute(
     }
 
     const needsJoinWork = joins.length > 0 || !!shiftDateField;
-    // Mixed Date|string datetime columns (common after MySQL→Mongo import) sort
-    // incorrectly in Mongo — force in-memory compare before LIMIT.
-    const needsMemoryDateSort = Object.keys(sort).some((f) =>
-      /(_at|date|time)$/i.test(f) ||
-      /^(requested_at|updated_at|created_at|resolved_at|clock_in|clock_out|event_time|imported_at)$/i.test(
-        f,
-      ),
-    );
-    const useMemorySort = needsJoinWork || needsMemoryDateSort;
-
     let cursor = db.collection(from.table).find(baseFilter);
-    if (Object.keys(sort).length && !useMemorySort) cursor = cursor.sort(sort);
-    if (!useMemorySort && offsetN) cursor = cursor.skip(offsetN);
-    if (!useMemorySort && limit != null) cursor = cursor.limit(limit);
+    if (Object.keys(sort).length && !needsJoinWork) cursor = cursor.sort(sort);
+    if (!needsJoinWork && offsetN) cursor = cursor.skip(offsetN);
+    if (!needsJoinWork && limit != null) cursor = cursor.limit(limit);
 
     let rows = (await cursor.toArray()).map(normalizeDocDates);
 
@@ -1049,18 +1068,38 @@ export async function mongoExecute(
       const rightRows = (await db.collection(join.table).find({}).toArray()).map(
         normalizeDocDates,
       );
-      const rightKey = fieldRef(join.right).field;
-      const leftKey = fieldRef(join.left).field;
+      // ON clause sides may be written either way (t.id = a.template_id OR a.template_id = t.id).
+      // Map each side to the joined table vs the current left/base rows.
+      const sideA = fieldRef(join.left);
+      const sideB = fieldRef(join.right);
+      const sideAIsJoined =
+        sideA.alias === join.alias ||
+        (!sideA.alias && sideB.alias === from.alias) ||
+        (sideA.alias !== from.alias && sideB.alias === from.alias);
+      const joinedField = sideAIsJoined ? sideA.field : sideB.field;
+      const baseField = sideAIsJoined ? sideB.field : sideA.field;
       const index = new Map<string, Document[]>();
       for (const r of rightRows) {
-        const k = String(r[rightKey] ?? "");
+        const k = String(r[joinedField] ?? "");
         if (!index.has(k)) index.set(k, []);
         index.get(k)!.push(r);
+        // Also index numeric/string twin so "96" matches 96
+        if (k && /^\d+$/.test(k)) {
+          const n = String(Number(k));
+          if (n !== k) {
+            if (!index.has(n)) index.set(n, []);
+            index.get(n)!.push(r);
+          }
+        }
       }
       const joined: Document[] = [];
       for (const left of rows) {
-        const lk = String(left[leftKey] ?? "");
-        const matches = index.get(lk) || [];
+        const rawLk = left[baseField];
+        const lk = String(rawLk ?? "");
+        const matches =
+          index.get(lk) ||
+          (lk && /^\d+$/.test(lk) ? index.get(String(Number(lk))) : undefined) ||
+          [];
         if (!matches.length) {
           if (join.type === "LEFT") {
             joined.push({ ...left });
@@ -1080,6 +1119,11 @@ export async function mongoExecute(
               if (k === "first_name" || k === "last_name" || k === "pseudonym" || k === "gender") {
                 merged[k] = v;
               }
+            }
+            if (join.table === "hrm_form_templates") {
+              if (k === "title") merged.template_title = v;
+              if (k === "category") merged.template_category = v;
+              if (k === "form_schema") merged.form_schema = v;
             }
           }
           joined.push(merged);
@@ -1111,7 +1155,7 @@ export async function mongoExecute(
       }
     }
 
-    if (useMemorySort && Object.keys(sort).length) {
+    if (needsJoinWork && Object.keys(sort).length) {
       const entries = Object.entries(sort);
       rows.sort((a, b) => {
         for (const [field, dir] of entries) {
@@ -1131,8 +1175,8 @@ export async function mongoExecute(
         return 0;
       });
     }
-    if (useMemorySort && offsetN) rows = rows.slice(offsetN);
-    if (useMemorySort && limit != null) rows = rows.slice(0, limit);
+    if (needsJoinWork && offsetN) rows = rows.slice(offsetN);
+    if (needsJoinWork && limit != null) rows = rows.slice(0, limit);
 
     // Project columns
     if (!select.star) {
@@ -1198,8 +1242,6 @@ function matchFilter(row: Document, filter: Filter<Document>): boolean {
   }
   for (const [k, v] of Object.entries(filter)) {
     if (k.startsWith("$")) continue;
-    // Ignore unsupported-atom markers so AND(1=1, realFilter) still matches.
-    if (k === "__unsupported_where") continue;
     const hasKey = Object.prototype.hasOwnProperty.call(row, k);
     const rv = hasKey ? row[k] : undefined;
     if (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {

@@ -70,6 +70,27 @@ async function loadEmployeesWithDept(): Promise<EmpDeptRow[]> {
   return rows as EmpDeptRow[];
 }
 
+/** Single-row lookup — avoids loading the whole company for CEO/HR/Finance early-outs. */
+async function loadSelfEmployee(eid: string): Promise<EmpDeptRow | null> {
+  const [rows] = await pool.execute(
+    `
+    SELECT
+      e.id,
+      e.role,
+      j.department_id,
+      d.name AS department_name
+    FROM hrm_employees e
+    LEFT JOIN employee_jobs j ON e.id = j.employee_id
+    LEFT JOIN departments d ON j.department_id = d.id
+    WHERE CAST(e.id AS CHAR) = ?
+    LIMIT 1
+  `,
+    [eid],
+  );
+  const list = rows as EmpDeptRow[];
+  return list[0] || null;
+}
+
 function collectDeptNamesForChip(
   all: EmpDeptRow[],
   chip: string | null,
@@ -159,8 +180,9 @@ export async function resolveViewerDataScope(
     return emptyScope();
   }
 
-  const all = await loadEmployeesWithDept();
-  const self = all.find((e) => String(e.id) === eid);
+  // Fast path: resolve self only. Company-wide roles skip the full employee scan
+  // (was the main cost of /api/access-control/me on every dashboard load).
+  const self = await loadSelfEmployee(eid);
   const orgRole = self?.role ? String(self.role) : null;
   const selfDeptName = self?.department_name ? String(self.department_name).trim() : null;
 
@@ -203,13 +225,16 @@ export async function resolveViewerDataScope(
     return emptyScope(orgRole);
   }
 
+  // Only scan the full employee list when department/team scope filtering is needed.
+  const all = await loadEmployeesWithDept();
+
   const orgChip = orgDeptChipLabel(selfDeptName);
 
   const departmentNames = collectDeptNamesForChip(all, orgChip, selfDeptName);
   const idSet = new Set<string>();
   idSet.add(eid);
   for (const e of all) {
-    if (inOrgFamily(e, orgChip, self)) idSet.add(String(e.id));
+    if (inOrgFamily(e, orgChip, self ?? undefined)) idSet.add(String(e.id));
   }
 
   try {

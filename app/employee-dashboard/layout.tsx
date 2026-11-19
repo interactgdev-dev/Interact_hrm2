@@ -1,9 +1,8 @@
 "use client";
 import React from "react";
-import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EmployeeShellProvider, markEmployeePortal } from "@/lib/access-control/employee-shell";
 import {
   employeeDisplayNameFromRecord,
@@ -16,9 +15,15 @@ import {
   FaUsers,
   FaSearch,
   FaTicketAlt,
+  FaInbox,
   FaClipboardList,
   FaCalendarAlt,
-  FaDollarSign,
+  FaWallet,
+  FaChartLine,
+  FaCreditCard,
+  FaHandshake,
+  FaNotesMedical,
+  FaLandmark,
   FaCog,
   FaCoffee,
   FaFileAlt,
@@ -33,42 +38,52 @@ import { EmployeeProfileMenu } from "./components/EmployeeProfileMenu";
 import { MedicalPackageBadge } from "./components/MedicalPackageBadge";
 import { InteractGlobeLogo } from "./components/InteractGlobeLogo";
 import { syncInteractGuardBind } from "./sync-interact-guard";
-import { GuardPresenceFaceHost } from "./GuardPresenceFaceHost";
 import {
   normalizeMedicalPackage,
   type MedicalPackageId,
 } from "@/lib/medical-package";
-import {
-  ensureFaceModelsLoaded,
-  prefetchFaceModelAssets,
-  preloadFaceRuntime,
-} from "@/lib/face-client-engine";
+import { fetchAccessControlMe } from "@/lib/access-control/me-client-cache";
 
-/** Heavy clock/biometric UI — load only when dashboard home needs it. */
-const ClockBreakPrayerWidget = dynamic(
+/** Guard face challenge host — keep off the first-paint JS graph. */
+const GuardPresenceFaceHost = dynamic(
   () =>
-    import("../components/ClockBreakPrayer").then((m) => m.ClockBreakPrayerWidget),
-  { ssr: false }
+    import("./GuardPresenceFaceHost").then((m) => m.GuardPresenceFaceHost),
+  { ssr: false, loading: () => null },
 );
+
+/** Mount face host only after idle so home clock buttons stay snappy on refresh. */
+function DeferredGuardPresence({
+  employeeId,
+  employeeName,
+}: {
+  employeeId: string;
+  employeeName: string;
+}) {
+  const [ready, setReady] = React.useState(false);
+  React.useEffect(() => {
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const go = () => setReady(true);
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(go, { timeout: 5000 });
+    } else {
+      timeoutId = setTimeout(go, 2000);
+    }
+    return () => {
+      if (idleId !== undefined && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []);
+  if (!ready) return null;
+  return (
+    <GuardPresenceFaceHost employeeId={employeeId} employeeName={employeeName} />
+  );
+}
 
 function greetingLabel() {
   return "Welcome Back";
-}
-
-function formatHeroDateTime() {
-  const d = new Date();
-  const date = d.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-  const time = d.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-  return `${date} | ${time}`;
 }
 
 /** Isolated so typing does not re-render ClockBreakPrayer / dashboard children. */
@@ -92,14 +107,67 @@ function HeroSearch() {
 type NavTab = { name: string; path: string; icon: React.ReactNode };
 type MenuItem = { name?: string; path?: string };
 
-/** Bump when summary menu paths change (?view= → /summaries/break). */
-const ACCESS_MENU_CACHE_KEY = "employeeAccessMenuCache_v2";
+/** Match sidebar tab — summaries use distinct paths (/summaries/break). */
+function navTabIsActive(
+  pathname: string | null | undefined,
+  searchParams: URLSearchParams | null,
+  tabPath: string,
+): boolean {
+  const path = String(pathname || "");
+  const rawTab = String(tabPath || "");
+  const [tabBaseRaw, tabQuery = ""] = rawTab.split("?");
+  const tabBase = tabBaseRaw || "";
+  if (!tabBase) return false;
+
+  if (tabBase === "/employee-dashboard") {
+    return path === "/employee-dashboard";
+  }
+
+  // Exact path match (Break / Prayer / Attendance each have their own path).
+  if (path === tabBase) return true;
+
+  // Attendance hub root must NOT stay active on /summaries/break|prayer.
+  if (
+    tabBase === "/employee-dashboard/summaries" ||
+    tabBase === "/summaries"
+  ) {
+    if (path === tabBase) {
+      const view = searchParams?.get("view");
+      return !view || view === "attendance";
+    }
+    return false;
+  }
+
+  // Child routes under a more specific tab path.
+  if (path.startsWith(`${tabBase}/`)) return true;
+
+  // Legacy menu cache still using ?view=break while URL is /summaries/break.
+  if (tabQuery) {
+    const want = new URLSearchParams(tabQuery).get("view");
+    if (want && (path === `/employee-dashboard/summaries/${want}` || path === `/summaries/${want}`)) {
+      return true;
+    }
+    if (
+      want &&
+      (path === "/employee-dashboard/summaries" || path === "/summaries")
+    ) {
+      const have = searchParams?.get("view") || "attendance";
+      return have === want;
+    }
+  }
+
+  return false;
+}
+
+/** Bump when menu paths change so stale localStorage links (e.g. ?view=) refresh. */
+const ACCESS_MENU_CACHE_KEY = "employeeAccessMenuCache_v4";
 
 const BASE_EMPLOYEE_TABS: NavTab[] = [
   { name: "Employee Dashboard", path: "/employee-dashboard", icon: <FaTachometerAlt /> },
   { name: "My Info", path: "/employee-dashboard/my-info", icon: <FaUser /> },
   { name: "My Team", path: "/employee-dashboard/my-team", icon: <FaUsers /> },
   { name: "Generate Ticket", path: "/employee-dashboard/generate-ticket", icon: <FaTicketAlt /> },
+  { name: "My Ticket Inbox", path: "/employee-dashboard/my-tickets", icon: <FaInbox /> },
 ];
 
 function buildAccessTabsFromPayload(
@@ -170,15 +238,12 @@ function iconForPath(path: string, name: string): React.ReactNode {
   }
   if (path.includes("break") || path.includes("prayer")) return <FaCoffee />;
   if (path.includes("ticket") || name.includes("Ticket")) return <FaTicketAlt />;
-  if (
-    path.includes("payroll") ||
-    path.includes("commission") ||
-    path.includes("advance") ||
-    path.includes("loan") ||
-    path.includes("financial")
-  ) {
-    return <FaDollarSign />;
-  }
+  if (path.includes("commission")) return <FaChartLine />;
+  if (path.includes("advance")) return <FaCreditCard />;
+  if (path.includes("loan")) return <FaHandshake />;
+  if (path.includes("claims")) return <FaNotesMedical />;
+  if (path.includes("payroll")) return <FaWallet />;
+  if (path.includes("financial")) return <FaLandmark />;
   if (path.includes("system-control")) return <FaCog />;
   if (path.includes("credential") || path.includes("face-enrollment")) return <FaKey />;
   if (path.includes("files") || path.includes("formats")) return <FaFileAlt />;
@@ -197,11 +262,50 @@ const PREFETCH_PATHS = [
   "/employee-dashboard/my-team",
   "/employee-dashboard/my-info",
   "/employee-dashboard/generate-ticket",
-  "/employee-dashboard/tickets",
-  "/employee-dashboard/leave-inbox",
+  "/employee-dashboard/my-tickets",
   "/employee-dashboard/time",
   "/employee-dashboard/attendance",
 ];
+
+function EmployeeSidebarNav({ tabs }: { tabs: NavTab[] }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  return (
+    <nav className={`${styles.nav} ${styles.navEmployee} ${empStyles.sidebarNav}`}>
+      {tabs.map((tab, idx) => {
+        const isActive = navTabIsActive(pathname, searchParams, tab.path);
+        return (
+          <Link
+            key={tab.path || idx}
+            href={tab.path}
+            prefetch={false}
+            className={
+              isActive
+                ? `${styles.navItem} ${styles.navItemActive} ${empStyles.navItemPdf} ${empStyles.navItemPdfActive}`
+                : `${styles.navItem} ${empStyles.navItemPdf}`
+            }
+            onClick={(e) => {
+              // Soft client nav — layout stays mounted so sidebar does not reload.
+              if (isActive) {
+                e.preventDefault();
+              }
+            }}
+          >
+            <span className={`${styles.navIcon} ${empStyles.navIconPdf}`}>{tab.icon}</span>
+            {tab.name === "Employee Dashboard" ? (
+              <span className={`${empStyles.navLabelPdf} ${empStyles.navLabelStacked}`}>
+                <span className={empStyles.navLabelLine}>Employee</span>
+                <span className={empStyles.navLabelLine}>Dashboard</span>
+              </span>
+            ) : (
+              <span className={empStyles.navLabelPdf}>{tab.name}</span>
+            )}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 export default function EmployeeDashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -212,52 +316,43 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   );
   const [employeeId, setEmployeeId] = React.useState<string>("");
   const [employeePseudonym, setEmployeePseudonym] = React.useState<string>("");
-  const [heroDateTime, setHeroDateTime] = React.useState(formatHeroDateTime);
   const isDashboardHome = pathname === "/employee-dashboard";
-  const [todayStatusRoot, setTodayStatusRoot] = React.useState<HTMLElement | null>(null);
   const [accessTabs, setAccessTabs] = React.useState<NavTab[]>([]);
 
+  // Prefetch common routes after first paint — don't contend with clock/menu APIs.
   React.useEffect(() => {
-    const id = window.setInterval(() => setHeroDateTime(formatHeroDateTime()), 30_000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  // Warm face models while employee uses dashboard — idle Guard check skips cold download.
-  React.useEffect(() => {
-    preloadFaceRuntime();
-    prefetchFaceModelAssets();
-    void ensureFaceModelsLoaded().catch(() => undefined);
-  }, []);
-
-  React.useEffect(() => {
-    for (const path of PREFETCH_PATHS) {
-      try {
-        router.prefetch(path);
-      } catch {
-        /* ignore */
+    const idle =
+      typeof window !== "undefined" && "requestIdleCallback" in window
+        ? (
+            window as Window & {
+              requestIdleCallback: (
+                cb: () => void,
+                opts?: { timeout: number },
+              ) => number;
+            }
+          ).requestIdleCallback
+        : null;
+    const run = () => {
+      for (const path of PREFETCH_PATHS) {
+        try {
+          router.prefetch(path);
+        } catch {
+          /* ignore */
+        }
       }
-    }
-  }, [router]);
-
-  React.useLayoutEffect(() => {
-    if (!isDashboardHome) {
-      setTodayStatusRoot(null);
-      return;
-    }
-    let cancelled = false;
-    const sync = () => {
-      if (cancelled) return;
-      const el = document.getElementById("emp-today-status-root");
-      if (el) setTodayStatusRoot((prev) => (prev === el ? prev : el));
     };
-    sync();
-    const obs = new MutationObserver(sync);
-    obs.observe(document.body, { childList: true, subtree: true });
+    // Home clock/attendance first — prefetch only after a longer idle window.
+    const id = idle ? idle(run, { timeout: 8000 }) : window.setTimeout(run, 3500);
     return () => {
-      cancelled = true;
-      obs.disconnect();
+      if (idle && typeof id === "number") {
+        (
+          window as Window & { cancelIdleCallback?: (id: number) => void }
+        ).cancelIdleCallback?.(id);
+      } else {
+        window.clearTimeout(id as number);
+      }
     };
-  }, [isDashboardHome]);
+  }, [router]);
 
   React.useLayoutEffect(() => {
     const loginId = localStorage.getItem("loginId");
@@ -266,19 +361,15 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       return;
     }
     const cachedId = localStorage.getItem("employeeId");
-    const numericId =
-      cachedId && /^\d+$/.test(cachedId)
-        ? cachedId
-        : /^\d+$/.test(loginId)
-          ? loginId
-          : "";
     const cachedName = sanitizeEmployeeDisplayName(
       localStorage.getItem("employeeName"),
       "",
     );
     const cachedPseudo = String(localStorage.getItem("employeePseudonym") || "").trim();
-    // Prefer numeric HR id so permission fetch starts immediately (not email loginId).
-    setEmployeeId(numericId || cachedId || loginId);
+    // Prefer numeric employeeId so home clock mounts immediately on refresh.
+    setEmployeeId(
+      cachedId && /^\d+$/.test(cachedId) ? cachedId : loginId,
+    );
     if (cachedName) setEmployeeName(cachedName);
     if (cachedPseudo) setEmployeePseudonym(cachedPseudo);
   }, []);
@@ -288,22 +379,22 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     const loginId = localStorage.getItem("loginId");
     if (!loginId) return;
 
+    const cachedId = localStorage.getItem("employeeId") || "";
     let apiUrl = "/api/hrm_employees?";
-    if (loginId.includes("@")) {
+    if (cachedId && /^\d+$/.test(cachedId)) {
+      apiUrl += `employeeId=${encodeURIComponent(cachedId)}`;
+    } else if (loginId.includes("@")) {
       apiUrl += `email=${encodeURIComponent(loginId)}`;
     } else if (/^\d+$/.test(loginId)) {
       apiUrl += `employeeId=${encodeURIComponent(loginId)}`;
     } else {
       apiUrl += `username=${encodeURIComponent(loginId)}`;
     }
-    Promise.all([
-      fetch(apiUrl).then((res) => res.json()).catch(() => ({ success: false })),
-      fetch(`/api/hrm_employees?employeeId=${encodeURIComponent(loginId)}`)
-        .then((res) => res.json())
-        .catch(() => ({ success: false })),
-    ])
-      .then(([data1, data2]) => {
-        const data = data1.success ? data1 : data2;
+
+    // Single identity fetch (was dual Promise.all on every reload).
+    fetch(apiUrl, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
         if (data.success && data.employee) {
           const trimmedName = sanitizeEmployeeDisplayName(
             employeeDisplayNameFromRecord(data.employee),
@@ -322,11 +413,6 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
           } catch {
             /* ignore */
           }
-          void syncInteractGuardBind({
-            employeeId: empId,
-            employeeName: trimmedName,
-            pseudonym: pseudo || null,
-          });
         } else {
           setEmployeeName((prev) => sanitizeEmployeeDisplayName(prev, "Employee"));
         }
@@ -336,7 +422,43 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       });
   }, []);
 
-  // Keep Interact Guard agent bound to this logged-in employee (auto id/name/pseudo).
+  // Medical package badge — defer so clock/menu APIs win first paint.
+  React.useEffect(() => {
+    if (!employeeId || !/^\d+$/.test(employeeId)) {
+      setMedicalPackage(null);
+      return;
+    }
+    let cancelled = false;
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const load = () => {
+      fetch(`/api/employee_salaries?employeeId=${encodeURIComponent(employeeId)}`, {
+        cache: "no-store",
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (cancelled) return;
+          setMedicalPackage(normalizeMedicalPackage(data?.salary?.medical_package));
+        })
+        .catch(() => {
+          if (!cancelled) setMedicalPackage(null);
+        });
+    };
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(load, { timeout: 3000 });
+    } else {
+      timeoutId = setTimeout(load, 900);
+    }
+    return () => {
+      cancelled = true;
+      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [employeeId]);
+
+  // Keep Interact Guard agent bound — defer first push so it doesn't fight clock APIs.
   React.useEffect(() => {
     if (!employeeId || !/^\d+$/.test(employeeId)) return;
     const push = () => {
@@ -347,9 +469,12 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
           employeePseudonym || localStorage.getItem("employeePseudonym") || null,
       });
     };
-    push();
+    const timeoutId = window.setTimeout(push, 1200);
     const id = window.setInterval(push, 60_000);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.clearInterval(id);
+    };
   }, [employeeId, employeeName, employeePseudonym]);
 
   // Paint cached permission links immediately (no empty sidebar flash), then refresh.
@@ -369,29 +494,22 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       return;
     }
     let cancelled = false;
-    fetch(`/api/access-control/me?employeeId=${encodeURIComponent(employeeId)}`, {
-      cache: "no-store",
-    })
-      .then((r) => r.json())
+    fetchAccessControlMe(employeeId)
       .then((data) => {
         if (cancelled || !data?.success) return;
         const menu = Array.isArray(data.menu) ? data.menu : [];
         const perms = Array.isArray(data.permissions) ? data.permissions : [];
-        const tabs = buildAccessTabsFromPayload(menu, perms);
+        const tabs = buildAccessTabsFromPayload(
+          menu as MenuItem[],
+          perms as string[],
+        );
         setAccessTabs(tabs);
         writeAccessMenuCache(
           employeeId,
-          menu,
-          perms,
-          String(data.role?.slug || ""),
+          menu as MenuItem[],
+          perms as string[],
+          String((data as { role?: { slug?: string } }).role?.slug || ""),
         );
-        for (const t of tabs) {
-          try {
-            router.prefetch(t.path);
-          } catch {
-            /* ignore */
-          }
-        }
       })
       .catch(() => {
         // Keep cached tabs on network error — don't wipe sidebar.
@@ -404,29 +522,6 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     };
   }, [employeeId, router]);
 
-  // Medical package badge (Silver / Gold / Platinum) next to employee name.
-  React.useEffect(() => {
-    if (!employeeId || !/^\d+$/.test(employeeId)) {
-      setMedicalPackage(null);
-      return;
-    }
-    let cancelled = false;
-    fetch(`/api/employee_salaries?employeeId=${encodeURIComponent(employeeId)}`, {
-      cache: "no-store",
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        setMedicalPackage(normalizeMedicalPackage(data?.salary?.medical_package));
-      })
-      .catch(() => {
-        if (!cancelled) setMedicalPackage(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [employeeId]);
-
   const employeeTabs = React.useMemo(() => {
     const ticketInbox = accessTabs.filter((t) => t.path === "/employee-dashboard/tickets");
     const rest = accessTabs.filter(
@@ -434,13 +529,15 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
         t.path !== "/employee-dashboard/my-team" &&
         t.path !== "/employee-dashboard/tickets",
     );
-    const [home, myInfo, myTeam, generateTicket, ...tail] = BASE_EMPLOYEE_TABS;
-    // Home → My Info → My Team → Generate Ticket → Ticket Inbox (HR) → …
+    const [home, myInfo, myTeam, generateTicket, myTicketInbox, ...tail] =
+      BASE_EMPLOYEE_TABS;
+    // Home → My Info → My Team → Generate Ticket → My Ticket Inbox → Ticket Inbox (HR) → …
     return [
       home,
       myInfo,
       myTeam,
       generateTicket,
+      myTicketInbox,
       ...ticketInbox,
       ...tail,
       ...rest,
@@ -448,7 +545,21 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   }, [accessTabs]);
 
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [navPeek, setNavPeek] = React.useState(false);
+  const [isDesktopNav, setIsDesktopNav] = React.useState(true);
   const [employeeAvatar, setEmployeeAvatar] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 901px)");
+    const sync = () => setIsDesktopNav(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  const sidebarVisible = isDesktopNav ? navPeek : sidebarOpen;
+  const contentPushed = isDesktopNav && navPeek;
 
   React.useEffect(() => {
     if (!employeeId) return;
@@ -490,16 +601,6 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     .slice(0, 2)
     .toUpperCase();
 
-  const clockWidget =
-    employeeId && isDashboardHome ? (
-      <ClockBreakPrayerWidget
-        key="emp-clock-widget"
-        employeeId={employeeId}
-        employeeName={employeeName || "Employee"}
-        variant="todayStatus"
-      />
-    ) : null;
-
   return (
     <EmployeeShellProvider>
     <EmployeeSessionProvider
@@ -509,7 +610,7 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       setEmployeeName={setEmployeeName}
     >
     <div className={`${styles.layout} ${empStyles.noTopbar} ${empStyles.modernShell}`}>
-      {sidebarOpen ? (
+      {sidebarOpen && !isDesktopNav ? (
         <div
           className={styles.sidebarOverlay}
           onClick={() => setSidebarOpen(false)}
@@ -517,61 +618,56 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
         />
       ) : null}
 
-      <aside
-        className={`${styles.sidebar} ${empStyles.sidebarFull} ${empStyles.sidebarPdf} ${sidebarOpen ? styles.sidebarOpen : ""}`}
+      <div
+        className={`${empStyles.sidebarDock} ${sidebarVisible ? empStyles.sidebarDockOpen : ""}`}
+        onMouseEnter={() => {
+          if (isDesktopNav) setNavPeek(true);
+        }}
+        onMouseLeave={() => {
+          if (isDesktopNav) setNavPeek(false);
+        }}
       >
-        <div className={empStyles.sidebarBrand}>
-          <InteractGlobeLogo className={empStyles.sidebarGlobe} />
-          <div className={empStyles.sidebarBrandText}>
-            <span className={empStyles.sidebarBrandName}>INTERACT</span>
-            <span className={empStyles.sidebarBrandSub}>GLOBAL</span>
+        <div className={empStyles.sidebarRail} aria-hidden title="Hover to open menu" />
+        <aside
+          className={`${styles.sidebar} ${empStyles.sidebarFull} ${empStyles.sidebarPdf} ${empStyles.sidebarSlide} ${
+            sidebarVisible ? empStyles.sidebarSlideIn : ""
+          } ${sidebarOpen && !isDesktopNav ? styles.sidebarOpen : ""}`}
+        >
+          <div className={empStyles.sidebarBrand}>
+            <InteractGlobeLogo className={empStyles.sidebarGlobe} />
+            <div className={empStyles.sidebarBrandText}>
+              <span className={empStyles.sidebarBrandName}>INTERACT</span>
+              <span className={empStyles.sidebarBrandSub}>GLOBAL</span>
+            </div>
           </div>
-        </div>
 
-        <nav className={`${styles.nav} ${styles.navEmployee} ${empStyles.sidebarNav}`}>
-          {employeeTabs.map((tab, idx) => {
-            const [tabBase] = String(tab.path || "").split("?");
-            const isActive =
-              tabBase === "/employee-dashboard"
-                ? pathname === tabBase
-                : tabBase === "/employee-dashboard/summaries"
-                  ? pathname === tabBase
-                  : pathname === tabBase ||
-                    pathname === tab.path ||
-                    (pathname?.startsWith(`${tabBase}/`) ?? false);
-            return (
-              <Link
-                key={tab.path || idx}
-                href={tab.path}
-                prefetch
-                className={
-                  isActive
-                    ? `${styles.navItem} ${styles.navItemActive} ${empStyles.navItemPdf} ${empStyles.navItemPdfActive}`
-                    : `${styles.navItem} ${empStyles.navItemPdf}`
-                }
-                onClick={(e) => {
-                  // Soft client nav — layout stays mounted so sidebar does not reload.
-                  if (isActive) {
-                    e.preventDefault();
-                  }
-                }}
-              >
-                <span className={`${styles.navIcon} ${empStyles.navIconPdf}`}>{tab.icon}</span>
-                {tab.name === "Employee Dashboard" ? (
-                  <span className={`${empStyles.navLabelPdf} ${empStyles.navLabelStacked}`}>
-                    <span className={empStyles.navLabelLine}>Employee</span>
-                    <span className={empStyles.navLabelLine}>Dashboard</span>
-                  </span>
-                ) : (
-                  <span className={empStyles.navLabelPdf}>{tab.name}</span>
-                )}
-              </Link>
-            );
-          })}
-        </nav>
-      </aside>
+          <React.Suspense
+            fallback={
+              <nav className={`${styles.nav} ${styles.navEmployee} ${empStyles.sidebarNav}`}>
+                {employeeTabs.map((tab, idx) => (
+                  <Link
+                    key={tab.path || idx}
+                    href={tab.path}
+                    prefetch
+                    className={`${styles.navItem} ${empStyles.navItemPdf}`}
+                  >
+                    <span className={`${styles.navIcon} ${empStyles.navIconPdf}`}>{tab.icon}</span>
+                    <span className={empStyles.navLabelPdf}>{tab.name}</span>
+                  </Link>
+                ))}
+              </nav>
+            }
+          >
+            <EmployeeSidebarNav tabs={employeeTabs} />
+          </React.Suspense>
+        </aside>
+      </div>
 
-      <div className={`${styles.contentArea} ${empStyles.contentFull} ${empStyles.contentModern}`}>
+      <div
+        className={`${styles.contentArea} ${empStyles.contentFull} ${empStyles.contentModern} ${
+          contentPushed ? empStyles.contentPushed : ""
+        }`}
+      >
         {isDashboardHome ? (
           <div className={empStyles.heroStrip}>
             <div className={empStyles.heroStripInner}>
@@ -591,7 +687,6 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
                       <span className={empStyles.heroNameAccent}>{employeeName || "Employee"}!</span>
                       <MedicalPackageBadge packageId={medicalPackage} size="md" />
                     </h1>
-                    <span className={empStyles.heroDate}>{heroDateTime}</span>
                   </div>
                 </div>
 
@@ -632,13 +727,9 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
           </div>
         )}
 
-        {employeeId && isDashboardHome && todayStatusRoot
-          ? createPortal(clockWidget, todayStatusRoot)
-          : null}
-
         <main className={`${styles.main} ${empStyles.employeeMain}`}>{children}</main>
         {employeeId && /^\d+$/.test(employeeId) ? (
-          <GuardPresenceFaceHost
+          <DeferredGuardPresence
             employeeId={employeeId}
             employeeName={employeeName || "Employee"}
           />

@@ -23,6 +23,9 @@ import {
   leaveDurationLabel,
   type LeaveDuration,
 } from "../../../lib/leave-duration";
+import { leaveCategoriesForEmployeeGender } from "../../../lib/leave-categories";
+import { toastSuccess } from "@/lib/app-toast";
+import { BackToDashboard } from "../components/BackToDashboard";
 import styles from "./generate-ticket.module.css";
 
 type TicketRow = {
@@ -62,14 +65,6 @@ function ticketAcknowledgedByLabel(t: TicketRow): string | null {
   return `Acknowledged by ${name}`;
 }
 
-const LEAVE_CATEGORIES = [
-  { value: "annual", label: "Annual" },
-  { value: "casual", label: "Casual" },
-  { value: "sick", label: "Sick" },
-  { value: "bereavement", label: "Bereavement" },
-  { value: "other", label: "Other" },
-];
-
 function statusBadgeClass(status: string) {
   if (status === "in_progress") return styles.badgeProgress;
   if (status === "resolved" || status === "closed") {
@@ -100,6 +95,7 @@ function GenerateTicketPageInner() {
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
   const [leaveCategory, setLeaveCategory] = useState("annual");
+  const [employeeGender, setEmployeeGender] = useState<string>("");
   /** Empty until user picks — submit requires Full / 1st / 2nd half. */
   const [leaveDuration, setLeaveDuration] = useState<LeaveDuration | "">("");
   const [startDate, setStartDate] = useState("");
@@ -116,6 +112,10 @@ function GenerateTicketPageInner() {
   const [leaveBalance, setLeaveBalance] = useState(0);
   const [annualAllowance, setAnnualAllowance] = useState(20);
   const [bereavementBalance, setBereavementBalance] = useState(3);
+  const [maternityBalance, setMaternityBalance] = useState(0);
+  const [maternityAllowance, setMaternityAllowance] = useState(90);
+  const [paternityBalance, setPaternityBalance] = useState(0);
+  const [paternityAllowance, setPaternityAllowance] = useState(5);
   const [employmentStatus, setEmploymentStatus] = useState("Permanent");
   const [documents, setDocuments] = useState<File[]>([]);
   const [issueImages, setIssueImages] = useState<File[]>([]);
@@ -175,7 +175,12 @@ function GenerateTicketPageInner() {
         setLeaveBalance(data.annualBalance ?? 0);
         setAnnualAllowance(data.annualAllowance ?? 20);
         setBereavementBalance(data.bereavementBalance ?? 0);
+        setMaternityBalance(data.maternityBalance ?? 0);
+        setMaternityAllowance(data.maternityAllowance ?? 90);
+        setPaternityBalance(data.paternityBalance ?? 0);
+        setPaternityAllowance(data.paternityAllowance ?? 5);
         setEmploymentStatus(data.employment_status || "Permanent");
+        if (data.gender) setEmployeeGender(String(data.gender).trim());
       }
     } catch {
       /* keep current */
@@ -259,21 +264,54 @@ function GenerateTicketPageInner() {
   }, [fetchHistory]);
 
   useEffect(() => {
+    if (!employeeId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/employee-list", { cache: "no-store" });
+        const data = await res.json();
+        const list = Array.isArray(data?.employees)
+          ? data.employees
+          : Array.isArray(data)
+            ? data
+            : [];
+        const me = list.find(
+          (e: any) => String(e?.id ?? "").trim() === String(employeeId).trim(),
+        );
+        if (!cancelled) {
+          setEmployeeGender(String(me?.gender || "").trim());
+        }
+      } catch {
+        if (!cancelled) setEmployeeGender("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeId]);
+
+  const leaveCategoryOptions = useMemo(
+    () => leaveCategoriesForEmployeeGender(employeeGender),
+    [employeeGender],
+  );
+
+  useEffect(() => {
+    if (!leaveCategoryOptions.some((c) => c.value === leaveCategory)) {
+      setLeaveCategory(leaveCategoryOptions[0]?.value || "annual");
+    }
+  }, [leaveCategoryOptions, leaveCategory]);
+
+  useEffect(() => {
     const openId = searchParams?.get("open");
     if (!openId) {
-      // Allow a future toast deep-link (?open=) to open again after URL is cleared
       consumedOpenIdRef.current = null;
       return;
     }
-    if (history.length === 0) return;
-    // Only auto-open once per ?open= id — do not re-open when history refreshes after creating a ticket
-    if (consumedOpenIdRef.current === openId) return;
-    const match = history.find((t) => String(t.id) === openId);
-    if (match) {
-      consumedOpenIdRef.current = openId;
-      void openTicket(match);
-    }
-  }, [searchParams, history, openTicket]);
+    // Ticket detail lives in My Ticket Inbox now
+    router.replace(
+      `/employee-dashboard/my-tickets?open=${encodeURIComponent(openId)}`,
+    );
+  }, [searchParams, router]);
 
   useEffect(() => {
     if (!employeeId || typeof window === "undefined") return;
@@ -348,7 +386,13 @@ function GenerateTicketPageInner() {
     employmentStatus === "Probation" ? "Leave balance" : "Annual leave balance";
 
   const effectiveLeaveBalance =
-    leaveCategory === "bereavement" ? bereavementBalance : leaveBalance;
+    leaveCategory === "bereavement"
+      ? bereavementBalance
+      : leaveCategory === "maternity"
+        ? maternityBalance
+        : leaveCategory === "paternity"
+          ? paternityBalance
+          : leaveBalance;
   const leaveBalanceExhausted =
     formKind === "leave" && effectiveLeaveBalance <= 0;
   const leaveDaysExceedBalance =
@@ -387,7 +431,13 @@ function GenerateTicketPageInner() {
       if (!description.trim()) throw new Error("Please enter a reason for leave.");
       const days = leaveDaysForDuration(leaveDuration, startDate, effectiveEnd);
       const rem =
-        leaveCategory === "bereavement" ? bereavementBalance : leaveBalance;
+        leaveCategory === "bereavement"
+          ? bereavementBalance
+          : leaveCategory === "maternity"
+            ? maternityBalance
+            : leaveCategory === "paternity"
+              ? paternityBalance
+              : leaveBalance;
       if (rem <= 0) {
         throw new Error("Leave balance is 0. You cannot apply for leave.");
       }
@@ -499,8 +549,20 @@ function GenerateTicketPageInner() {
         setError(data.error || "Could not submit ticket");
         return;
       }
+      const ticketNo = String(data.ticket?.ticket_number || "").trim();
+      const submittedAt = new Date().toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      toastSuccess(
+        "Your Team Lead or Manager will review shortly.",
+        ticketNo ? `Ticket ${ticketNo} sent` : "Ticket sent",
+        6000,
+      );
       setSuccess(
-        `Ticket ${data.ticket?.ticket_number || ""} submitted! Admin will review it shortly.`
+        ticketNo
+          ? `Ticket ${ticketNo} submitted · ${submittedAt}`
+          : `Ticket submitted · ${submittedAt}`,
       );
       setSelectedTicket(null);
       setEmployeeReply("");
@@ -526,16 +588,16 @@ function GenerateTicketPageInner() {
     <div className={styles.page}>
       <div className={styles.inner}>
         <header className={styles.header}>
+          <BackToDashboard />
           <h1 className={styles.title}>Generate ticket</h1>
           <p className={styles.sub}>
-            Select department and request type. All tickets go to the admin HR inbox for review.
+            Select department and request type. Your Team Lead or Manager will review shortly.
           </p>
         </header>
 
         <form className={styles.card} onSubmit={handleSubmit}>
           <h2 className={styles.cardTitle}>New ticket</h2>
           {error ? <div className={styles.alertError}>{error}</div> : null}
-          {success ? <div className={styles.alertSuccess}>{success}</div> : null}
 
           <div className={styles.grid2}>
             <div className={styles.field}>
@@ -655,6 +717,52 @@ function GenerateTicketPageInner() {
                   </p>
                   <p className={styles.leaveBalanceSub}>Days remaining</p>
                 </div>
+                {maternityAllowance > 0 ? (
+                  <div
+                    className={`${styles.leaveBalanceCard} ${styles.leaveBalancePurple}`}
+                    style={
+                      maternityBalance <= 0
+                        ? { outline: "2px solid #dc2626", background: "#fef2f2" }
+                        : undefined
+                    }
+                  >
+                    <p className={styles.leaveBalanceLabel}>Maternity leave</p>
+                    <p
+                      className={styles.leaveBalanceValue}
+                      style={maternityBalance <= 0 ? { color: "#dc2626" } : undefined}
+                    >
+                      {maternityBalance}
+                      <span className={styles.leaveBalanceOf}>
+                        {" "}
+                        / {maternityAllowance}
+                      </span>
+                    </p>
+                    <p className={styles.leaveBalanceSub}>Days remaining</p>
+                  </div>
+                ) : null}
+                {paternityAllowance > 0 ? (
+                  <div
+                    className={`${styles.leaveBalanceCard} ${styles.leaveBalanceGreen}`}
+                    style={
+                      paternityBalance <= 0
+                        ? { outline: "2px solid #dc2626", background: "#fef2f2" }
+                        : undefined
+                    }
+                  >
+                    <p className={styles.leaveBalanceLabel}>Paternity leave</p>
+                    <p
+                      className={styles.leaveBalanceValue}
+                      style={paternityBalance <= 0 ? { color: "#dc2626" } : undefined}
+                    >
+                      {paternityBalance}
+                      <span className={styles.leaveBalanceOf}>
+                        {" "}
+                        / {paternityAllowance}
+                      </span>
+                    </p>
+                    <p className={styles.leaveBalanceSub}>Days remaining</p>
+                  </div>
+                ) : null}
               </div>
               {leaveBalanceExhausted ? (
                 <div className={styles.alertError} role="alert">
@@ -673,7 +781,7 @@ function GenerateTicketPageInner() {
                   value={leaveCategory}
                   onChange={(e) => setLeaveCategory(e.target.value)}
                 >
-                  {LEAVE_CATEGORIES.map((c) => (
+                  {leaveCategoryOptions.map((c) => (
                     <option key={c.value} value={c.value}>
                       {c.label}
                     </option>
@@ -928,64 +1036,13 @@ function GenerateTicketPageInner() {
           >
             {submitting ? "Submitting…" : "Submit ticket"}
           </button>
+          {success ? (
+            <div className={styles.alertSuccess} style={{ marginTop: 14 }} role="status">
+              {success}
+            </div>
+          ) : null}
         </form>
 
-        <section className={styles.card}>
-          <h2 className={styles.cardTitle}>My tickets</h2>
-          {history.length === 0 ? (
-            <div className={styles.empty}>No tickets yet.</div>
-          ) : (
-            <div className={styles.historyList}>
-              {history.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className={styles.historyItem}
-                  onClick={() => void openTicket(t)}
-                >
-                  <div className={styles.historyTop}>
-                    <span className={styles.historyId}>{t.ticket_number}</span>
-                    <span className={`${styles.badge} ${statusBadgeClass(t.status)}`}>
-                      {formatTicketStatusLabel(t.status, t.ticket_type)}
-                    </span>
-                  </div>
-                  <div className={styles.historySubject}>{t.subject}</div>
-                  <div className={styles.historyMeta}>
-                    {categoryLabel(t.category)} · {ticketTypeLabel(t.category, t.ticket_type)} ·{" "}
-                    {new Date(t.requested_at).toLocaleString()}
-                  </div>
-                  {ticketAcknowledgedByLabel(t) ? (
-                    <div
-                      className={styles.historyMeta}
-                      style={{ marginTop: 4, fontWeight: 600, color: "#1d4ed8" }}
-                    >
-                      {ticketAcknowledgedByLabel(t)}
-                    </div>
-                  ) : null}
-                  {ticketDecidedByLabel(t) ? (
-                    <div
-                      className={styles.historyMeta}
-                      style={{
-                        marginTop: 4,
-                        fontWeight: 600,
-                        color: t.status === "rejected" ? "#b91c1c" : "#0f766e",
-                      }}
-                    >
-                      {ticketDecidedByLabel(t)}
-                    </div>
-                  ) : null}
-                  <div className={styles.historyHint}>
-                    {t.ticket_type === "leave"
-                      ? "Leave request · Click to view status"
-                      : isTicketClosed(t.status)
-                        ? "Closed · Click to read conversation"
-                        : "Click to view conversation"}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
       </div>
 
       {selectedTicket ? (

@@ -1,6 +1,6 @@
 import type { FormTemplateRow } from "@/lib/employee-documents";
 import { fieldsForAudience } from "@/lib/form-schema";
-import { formatFieldValueForDisplay } from "@/lib/form-field-options";
+import { formatFieldValueForDisplay, isFileField } from "@/lib/form-field-options";
 
 export function buildFormPrintHtml(params: {
   template: Pick<FormTemplateRow, "title" | "category">;
@@ -20,6 +20,20 @@ export function buildFormPrintHtml(params: {
       const f = raw as { key?: string; label?: string; type?: string; options?: string[] };
       if (!f.key) return "";
       const val = params.formData[f.key];
+      if (isFileField(f)) {
+        const file =
+          val && typeof val === "object"
+            ? (val as { file_name?: string; file_path?: string; documentId?: number })
+            : null;
+        if (!file?.file_path && !file?.documentId) {
+          return `<tr><th>${escapeHtml(f.label || f.key)}</th><td>—</td></tr>`;
+        }
+        const label = escapeHtml(file.file_name || "Open PDF");
+        const href = file.documentId
+          ? `/api/employee-documents/${file.documentId}?action=preview`
+          : escapeHtml(String(file.file_path));
+        return `<tr><th>${escapeHtml(f.label || f.key)}</th><td><a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></td></tr>`;
+      }
       const display = formatFieldValueForDisplay(f, val);
       return `<tr><th>${escapeHtml(f.label || f.key)}</th><td>${escapeHtml(display)}</td></tr>`;
     })

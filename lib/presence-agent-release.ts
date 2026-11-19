@@ -46,6 +46,26 @@ function sanitizeVersion(raw: string | null | undefined): string {
   return v;
 }
 
+function parseVersionParts(raw: string): number[] {
+  const parts = sanitizeVersion(raw).split(".").map((p) => parseInt(p, 10) || 0);
+  while (parts.length < 4) parts.push(0);
+  return parts.slice(0, 4);
+}
+
+/** True when remote published version is newer than the agent's reported version. */
+export function isRemoteVersionNewer(
+  remote: string,
+  local: string | null | undefined
+): boolean {
+  const r = parseVersionParts(remote);
+  const l = parseVersionParts(local ?? "0.0.0");
+  for (let i = 0; i < 4; i++) {
+    if (r[i] > l[i]) return true;
+    if (r[i] < l[i]) return false;
+  }
+  return false;
+}
+
 export async function getPresenceAgentRelease(): Promise<PresenceAgentRelease> {
   const version = sanitizeVersion(await getRaw(KEY));
   let hasBinary = false;

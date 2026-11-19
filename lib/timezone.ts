@@ -2,28 +2,8 @@ export const SERVER_TIMEZONE = "Asia/Karachi";
 
 type DateInput = Date | string | number;
 
-/**
- * Parse to an absolute instant.
- * Attendance / MySQL datetimes are UTC wall ("YYYY-MM-DD HH:mm:ss") — without an
- * offset, append Z so Asia/Karachi process TZ does not treat them as local (−5h).
- * Date-only "YYYY-MM-DD" stays UTC midnight (calendar key).
- */
-export function parseToInstant(value: DateInput): Date {
-  if (value instanceof Date) return value;
-  if (typeof value === "number") return new Date(value);
-  const s = String(value ?? "").trim();
-  if (!s) return new Date(NaN);
-  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(s)) return new Date(s);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(`${s}T00:00:00Z`);
-  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s)) {
-    const iso = (s.includes("T") ? s : s.replace(" ", "T")).replace(/\.\d+$/, "");
-    return new Date(`${iso}Z`);
-  }
-  return new Date(s);
-}
-
 function toDate(value: DateInput) {
-  return parseToInstant(value);
+  return value instanceof Date ? value : new Date(value);
 }
 
 /** Reuse formatters — getParts is called on every clock tick and must stay cheap. */
@@ -143,7 +123,10 @@ export function dateTimeLocalToIsoInTimeZone(
   return Number.isNaN(fallback.getTime()) ? "" : fallback.toISOString();
 }
 
-/** Ticket / inbox timestamps in Asia/Karachi. */
+/**
+ * Format ticket / DB timestamps for UI in Asia/Karachi.
+ * Naive "YYYY-MM-DD HH:mm:ss" from Mongo sqlNow() is UTC wall clock.
+ */
 export function formatDateTimeInServerTz(value: unknown): string {
   if (value == null || value === "") return "—";
   let date: Date;

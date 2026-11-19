@@ -1,0 +1,176 @@
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.monthLabel {
+  font-weight: 750;
+  color: #0b1220;
+  font-size: 1.15rem;
+  margin: 0 8px;
+  letter-spacing: -0.02em;
+}
+
+.weekdayRow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin: 18px 0 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+}
+
+.weekdayCell {
+  text-align: center;
+  padding: 4px;
+}
+
+.daysGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+
+.dayCard {
+  border-radius: 14px;
+  padding: 8px;
+  min-height: 92px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s;
+}
+
+.dayCard:hover {
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+  border-color: rgba(20, 184, 166, 0.45);
+  transform: translateY(-1px);
+}
+
+.dayCardOff {
+  background: linear-gradient(180deg, #fff7ed, #ffedd5);
+  border-color: #fdba74;
+}
+
+.dayTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.dayNum {
+  font-weight: 750;
+  color: #0b1220;
+  font-size: 0.9rem;
+}
+
+.dayPill {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.dayPillOff {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.dayPillWork {
+  background: #ecfdf8;
+  color: #0f766e;
+}
+
+.dayWeek {
+  font-size: 0.68rem;
+  color: #64748b;
+  margin-bottom: 2px;
+}
+
+.daySelect,
+.dayNote {
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  padding: 5px 7px;
+  background: #fff;
+  font-size: 0.72rem;
+  width: 100%;
+  font-family: inherit;
+}
+
+.daySelect {
+  font-weight: 650;
+}
+
+.dayNote {
+  font-weight: 400;
+}
+
+.dayActions {
+  display: flex;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.dayBtnSet {
+  padding: 5px 8px;
+  border-radius: 9px;
+  border: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex: 1;
+  background: linear-gradient(135deg, #14b8a6, #0f766e);
+  color: #042f2e;
+}
+
+.dayBtnSet:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.savingChip {
+  font-size: 0.65rem;
+  color: #64748b;
+  font-style: italic;
+}
+
+.editPanel {
+  position: relative;
+  z-index: 10;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  padding: 8px;
+  margin-top: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+}
+
+@media (max-width: 1100px) {
+  .daysGrid,
+  .weekdayRow {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .daysGrid,
+  .weekdayRow {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .controls {
+    justify-content: center;
+  }
+}

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enforceBiometricOrRespond } from "@/lib/require-biometric";
-import { pool, getDbDriver } from "../../../lib/db";
+import { getDbDriver, pool } from "../../../lib/db";
 import { getDateStringInTimeZone, SERVER_TIMEZONE } from "../../../lib/timezone";
 import { getActiveShiftAssignment } from "../../../lib/get-active-shift";
 import { ensureLegacyEmployeeRow } from "@/lib/ensure-legacy-employee-row";
+import { resolveEmployeeDbId } from "@/lib/resolve-employee-id";
 import {
   mongoDeleteBreak,
   mongoEndBreak,
@@ -14,13 +15,6 @@ import {
 import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 const ATTENDANCE_TABLE = "employee_attendance";
-
-/** YYYY-MM-DD exclusive end bound (same as DATE_ADD(date, INTERVAL 1 DAY)). */
-function exclusiveEndDate(value: string): string {
-  const [y, m, d] = String(value).slice(0, 10).split("-").map(Number);
-  const dt = new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + 1));
-  return dt.toISOString().slice(0, 10);
-}
 
 async function ensureAttendanceTable(conn: any) {
   const createSql = `
@@ -48,10 +42,14 @@ export async function GET(req: NextRequest) {
     const date = searchParams.get("date"); // YYYY-MM-DD format from frontend
     const fromDate = searchParams.get("fromDate");
     const toDate = searchParams.get("toDate");
+
+    // Mongo: complex JOIN+subquery GET fails via SQL adapter — use native helpers
+    // so forceSync can see the open break after a successful start.
     if (getDbDriver() === "mongo") {
       const breaks = await mongoListBreaks({ employeeId, date, fromDate, toDate });
       return NextResponse.json({ success: true, breaks });
     }
+
     conn = await pool.getConnection();
     if (!conn) {
       throw new Error("Failed to get database connection from pool");
@@ -87,18 +85,18 @@ export async function GET(req: NextRequest) {
       params.push(Number(employeeId));
     }
     if (date) {
-      query += " AND b.break_start >= ? AND b.break_start < ?";
-      params.push(date, exclusiveEndDate(date));
+      query += " AND b.break_start >= ? AND b.break_start < DATE_ADD(?, INTERVAL 1 DAY)";
+      params.push(date, date);
     }
     if (fromDate && toDate) {
-      query += " AND b.break_start >= ? AND b.break_start < ?";
-      params.push(fromDate, exclusiveEndDate(toDate));
+      query += " AND b.break_start >= ? AND b.break_start < DATE_ADD(?, INTERVAL 1 DAY)";
+      params.push(fromDate, toDate);
     } else if (fromDate) {
       query += " AND b.break_start >= ?";
       params.push(fromDate);
     } else if (toDate) {
-      query += " AND b.break_start < ?";
-      params.push(exclusiveEndDate(toDate));
+      query += " AND b.break_start < DATE_ADD(?, INTERVAL 1 DAY)";
+      params.push(toDate);
     }
     query += " ORDER BY b.break_start DESC";
     [rows] = await conn.execute(query, params);
@@ -144,6 +142,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (getDbDriver() === "mongo") {
+      const resolved = await resolveEmployeeDbId(String(employee_id));
+      const canonicalEmployeeId = resolved || String(employee_id);
+
       if (break_start) {
         const bioBlock = await enforceBiometricOrRespond(
           biometric_token,
@@ -152,8 +153,9 @@ export async function POST(req: NextRequest) {
           employee_name
         );
         if (bioBlock) return bioBlock;
+
         const result = await mongoStartBreak({
-          employeeId: employee_id,
+          employeeId: canonicalEmployeeId,
           employeeName: employee_name,
           date: formattedDate,
           breakStart: break_start,
@@ -161,7 +163,19 @@ export async function POST(req: NextRequest) {
         if (!result.ok) {
           return NextResponse.json({ success: false, error: result.error }, { status: 400 });
         }
-      } else if (break_end) {
+        void logServerEmployeeActivity(req, {
+          type: "break_start",
+          employeeId: canonicalEmployeeId,
+          employeeName: employee_name,
+          detail: `Started Break`,
+          page: "/employee-dashboard",
+          method: "POST",
+          url: "/api/breaks",
+        });
+        return NextResponse.json({ success: true });
+      }
+
+      if (break_end) {
         const bioBlock = await enforceBiometricOrRespond(
           biometric_token,
           String(employee_id),
@@ -169,23 +183,27 @@ export async function POST(req: NextRequest) {
           employee_name
         );
         if (bioBlock) return bioBlock;
-        const result = await mongoEndBreak({ employeeId: employee_id, breakEnd: break_end });
+
+        const result = await mongoEndBreak({
+          employeeId: canonicalEmployeeId,
+          breakEnd: break_end,
+        });
         if (!result.ok) {
           return NextResponse.json({ success: false, error: result.error }, { status: 400 });
         }
-      } else {
-        return NextResponse.json({ success: false, error: "Invalid break action." }, { status: 400 });
+        void logServerEmployeeActivity(req, {
+          type: "break_end",
+          employeeId: canonicalEmployeeId,
+          employeeName: employee_name,
+          detail: `Ended Break`,
+          page: "/employee-dashboard",
+          method: "POST",
+          url: "/api/breaks",
+        });
+        return NextResponse.json({ success: true });
       }
-      void logServerEmployeeActivity(req, {
-        type: break_start ? "break_start" : "break_end",
-        employeeId: String(employee_id),
-        employeeName: employee_name,
-        detail: break_start ? "Started Break" : "Ended Break",
-        page: "/employee-dashboard",
-        method: "POST",
-        url: "/api/breaks",
-      });
-      return NextResponse.json({ success: true });
+
+      return NextResponse.json({ success: false, error: "Invalid break action." }, { status: 400 });
     }
 
     conn = await pool.getConnection();
@@ -205,16 +223,14 @@ export async function POST(req: NextRequest) {
       );
       if (bioBlock) return bioBlock;
 
-      if (getDbDriver() === "mysql") {
-        lockName = `break_start_emp_${canonicalEmployeeId}`;
-        const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
-        const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
-        if (gotLock !== 1) {
-          return NextResponse.json(
-            { success: false, error: "Could not acquire break lock. Please try again." },
-            { status: 409 }
-          );
-        }
+      lockName = `break_start_emp_${canonicalEmployeeId}`;
+      const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
+      const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
+      if (gotLock !== 1) {
+        return NextResponse.json(
+          { success: false, error: "Could not acquire break lock. Please try again." },
+          { status: 409 }
+        );
       }
 
       // Get active shift assignment for this employee at break start time
@@ -301,31 +317,6 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing required fields: id or employee_id" }, { status: 400 });
     }
 
-    if (getDbDriver() === "mongo") {
-      const formattedDate = date
-        ? /^\d{4}-\d{2}-\d{2}$/.test(String(date))
-          ? String(date)
-          : getDateStringInTimeZone(date, SERVER_TIMEZONE)
-        : null;
-      const formattedBreakStart = break_start ? new Date(break_start).toISOString().slice(0, 19).replace('T', ' ') : null;
-      const formattedBreakEnd = break_end ? new Date(break_end).toISOString().slice(0, 19).replace('T', ' ') : null;
-      let breakDuration = null;
-      if (formattedBreakStart && formattedBreakEnd) {
-        breakDuration = Math.floor((new Date(break_end).getTime() - new Date(break_start).getTime()) / 1000);
-      }
-      await mongoUpdateBreak({
-        id,
-        employeeName: employee_name,
-        date: formattedDate,
-        breakStart: formattedBreakStart,
-        breakEnd: formattedBreakEnd,
-        duration: breakDuration,
-      });
-      return NextResponse.json({ success: true, message: 'Break updated successfully' });
-    }
-
-    conn = await pool.getConnection();
-
     const formattedDate = date
       ? /^\d{4}-\d{2}-\d{2}$/.test(String(date))
         ? String(date)
@@ -341,6 +332,20 @@ export async function PUT(req: NextRequest) {
       const endTime = new Date(break_end).getTime();
       breakDuration = Math.floor((endTime - startTime) / 1000); // Duration in seconds
     }
+
+    if (getDbDriver() === "mongo") {
+      await mongoUpdateBreak({
+        id,
+        employeeName: employee_name,
+        date: formattedDate,
+        breakStart: formattedBreakStart,
+        breakEnd: formattedBreakEnd,
+        duration: breakDuration,
+      });
+      return NextResponse.json({ success: true, message: 'Break updated successfully' });
+    }
+
+    conn = await pool.getConnection();
 
     await conn.execute(
       `UPDATE breaks 

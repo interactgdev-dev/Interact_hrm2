@@ -3,6 +3,8 @@
  * Half day → 0.5 leave-balance days; full day → calendar days (usually 1+).
  */
 
+import { employeeIdKeys, lookupByEmployeeId } from "@/lib/employee-id-keys";
+
 export type LeaveDuration = "full" | "first_half" | "second_half";
 
 export type ApprovedLeaveDayKind = "full" | "first_half" | "second_half";
@@ -141,13 +143,18 @@ export function buildApprovedLeavesMap(
       opts.normalizeDateKey(String(leave.end_date || "")) || startDateKey;
     if (!startDateKey || !endDateKey) continue;
     const kind = approvedLeaveKindFromRow(leave);
-    if (!leavesMap[empId]) leavesMap[empId] = {};
+    const idKeys = employeeIdKeys(empId);
+    for (const idKey of idKeys) {
+      if (!leavesMap[idKey]) leavesMap[idKey] = {};
+    }
     let currentDateKey = startDateKey;
     while (currentDateKey <= endDateKey) {
       // Full-day leave wins over half if both exist on same day.
-      const prev = leavesMap[empId][currentDateKey];
-      if (prev !== "full") {
-        leavesMap[empId][currentDateKey] = kind;
+      for (const idKey of idKeys) {
+        const prev = leavesMap[idKey][currentDateKey];
+        if (prev !== "full") {
+          leavesMap[idKey][currentDateKey] = kind;
+        }
       }
       currentDateKey = opts.addDays(currentDateKey, 1);
     }
@@ -160,7 +167,11 @@ export function approvedLeaveOnDay(
   employeeId: string,
   dateKey: string,
 ): ApprovedLeaveDayKind | null {
-  const cell = map[String(employeeId)]?.[dateKey];
+  const byEmp = lookupByEmployeeId(
+    map as Record<string, Record<string, ApprovedLeaveDayKind | boolean>>,
+    employeeId,
+  );
+  const cell = byEmp?.[dateKey];
   if (!cell) return null;
   if (cell === true) return "full";
   if (cell === "full" || cell === "first_half" || cell === "second_half") return cell;

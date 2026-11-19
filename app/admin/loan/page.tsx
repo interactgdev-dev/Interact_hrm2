@@ -4,7 +4,7 @@ import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import { FaSave, FaTrash } from "react-icons/fa";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
-import fh from "../employee-financial-history/financial-history.module.css";
+import fh from "./loan.module.css";
 
 type Employee = {
   id: number;
@@ -30,11 +30,27 @@ type LoanRecord = {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-const money = (n: number) =>
-  Number(n || 0).toLocaleString(undefined, {
+const safeNum = (n: unknown, fallback = 0) => {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : fallback;
+};
+
+const money = (n: unknown) =>
+  safeNum(n).toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
+
+/** Paid column: never show NaN; if Paid status but amount missing, use payable. */
+function displayPaidAmount(loan: LoanRecord) {
+  const paid = safeNum(loan.paid_amount, NaN);
+  if (Number.isFinite(paid) && paid > 0) return paid;
+  const st = String(loan.status || "").toLowerCase();
+  if (st === "paid") {
+    return safeNum(loan.payable_this_month ?? loan.original_amount);
+  }
+  return Number.isFinite(paid) ? paid : 0;
+}
 
 export default function LoanManagementPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -260,9 +276,9 @@ export default function LoanManagementPage() {
     let paidCount = 0;
     for (const loan of filteredLoans) {
       const st = String(loan.status || "pending").toLowerCase();
-      const p = Number(loan.payable_this_month ?? loan.original_amount) || 0;
+      const p = safeNum(loan.payable_this_month ?? loan.original_amount);
       payable += p;
-      paid += Number(loan.paid_amount) || 0;
+      paid += displayPaidAmount(loan);
       if (st === "paid") paidCount += 1;
       else if (st === "pending") pending += 1;
     }
@@ -283,411 +299,431 @@ export default function LoanManagementPage() {
     setMonthFilter("");
   };
 
-  const statusSelectStyle = (status: string): React.CSSProperties => {
+  function statusSelectClass(status: string) {
     const s = String(status || "pending").toLowerCase();
-    if (s === "paid") {
-      return {
-        width: 110,
-        fontSize: 13,
-        padding: "6px 8px",
-        fontWeight: 700,
-        borderRadius: 8,
-        border: "1px solid #86efac",
-        background: "#dcfce7",
-        color: "#166534",
-      };
-    }
-    if (s === "stop") {
-      return {
-        width: 110,
-        fontSize: 13,
-        padding: "6px 8px",
-        fontWeight: 700,
-        borderRadius: 8,
-        border: "1px solid #fca5a5",
-        background: "#fee2e2",
-        color: "#b91c1c",
-      };
-    }
-    return {
-      width: 110,
-      fontSize: 13,
-      padding: "6px 8px",
-      fontWeight: 700,
-      borderRadius: 8,
-      border: "1px solid #fde68a",
-      background: "#fef9c3",
-      color: "#a16207",
-    };
-  };
+    if (s === "paid") return `${fh.statusSelect} ${fh.statusPaidSelect}`;
+    if (s === "stop") return `${fh.statusSelect} ${fh.statusStop}`;
+    return `${fh.statusSelect} ${fh.statusPending}`;
+  }
+
+  const pendingHint = summary.pending;
 
   return (
     <OptionalAdminShell>
-      <div className={fh.page}>
-        <div className={fh.hero}>
-          <h1 className={fh.heroTitle}>Loan Management</h1>
-          <p className={fh.heroSub}>
-            Create loan schedules, adjust payable installments, and track Pending / Paid / Stop
-            status. Filter by name, pseudo name, department, month, or status.
-          </p>
+      <div className={`${fh.page} loanPageCritical`}>
+        <header className={fh.topBar}>
+          <div className={fh.topLeft}>
+            <p className={fh.eyebrow}>
+              <span className={fh.eyebrowDot} aria-hidden />
+              Interact Loan
+            </p>
+            <h1 className={fh.heroTitle}>Loan management</h1>
+            <p className={fh.heroSub}>
+              Add loan schedules, adjust payable installments, then mark Pending,
+              Paid, or Stop.
+            </p>
+          </div>
+          <div className={fh.topRight}>
+            <button
+              type="button"
+              className={fh.clearBtn}
+              onClick={() => void loadLoans()}
+            >
+              {loading ? "…" : "Refresh"}
+            </button>
+          </div>
+        </header>
+
+        <div className={fh.metricStrip}>
+          <div className={`${fh.metric} ${fh.metricAccent}`}>
+            <div className={fh.metricLabel}>Installments</div>
+            <div className={fh.metricValue}>{summary.rows}</div>
+          </div>
+          <div className={fh.metric}>
+            <div className={fh.metricLabel}>Pending</div>
+            <div className={fh.metricValue}>{summary.pending}</div>
+          </div>
+          <div className={fh.metric}>
+            <div className={fh.metricLabel}>Payable total</div>
+            <div className={fh.metricValue}>{money(summary.payable)}</div>
+          </div>
+          <div className={fh.metric}>
+            <div className={fh.metricLabel}>Paid amount</div>
+            <div className={fh.metricValue}>{money(summary.paid)}</div>
+          </div>
+        </div>
+
+        {formSuccess ? <p className={fh.toast}>{formSuccess}</p> : null}
+        {error ? <p className={fh.error}>{error}</p> : null}
+
+        <div className={fh.panel}>
+          <div className={fh.panelHead}>
+            <div className={fh.panelHeadLeft}>
+              <h2 className={fh.panelTitle}>Add loan</h2>
+              <p className={fh.panelHint}>
+                Select employee, amount, installments and start month
+              </p>
+            </div>
+          </div>
+          <div className={fh.panelBody}>
+            <form onSubmit={handleAddLoan} className={fh.formGridLoan}>
+              <label className={fh.field}>
+                <span className={fh.label}>Employee</span>
+                <select
+                  value={selectedEmployee}
+                  onChange={(e) => setSelectedEmployee(e.target.value)}
+                  required
+                  className={fh.select}
+                >
+                  <option value="">Select employee</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.employee_code ? `[${emp.employee_code}] ` : ""}
+                      {emp.first_name} {emp.last_name}
+                      {emp.pseudonym ? ` (${emp.pseudonym})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fh.field}>
+                <span className={fh.label}>Loan amount</span>
+                <input
+                  type="number"
+                  value={loanAmount}
+                  onChange={(e) => setLoanAmount(e.target.value)}
+                  required
+                  min={1}
+                  className={fh.input}
+                  placeholder="0"
+                />
+              </label>
+              <label className={fh.field}>
+                <span className={fh.label}>Installments</span>
+                <input
+                  type="number"
+                  value={installments}
+                  onChange={(e) => setInstallments(e.target.value)}
+                  required
+                  min={1}
+                  className={fh.input}
+                  placeholder="Months"
+                />
+              </label>
+              <label className={fh.field}>
+                <span className={fh.label}>Start month</span>
+                <input
+                  type="month"
+                  value={startMonth}
+                  onChange={(e) => setStartMonth(e.target.value)}
+                  required
+                  className={fh.input}
+                />
+              </label>
+              <button type="submit" disabled={formLoading} className={fh.addBtn}>
+                {formLoading ? "Adding…" : "Add loan"}
+              </button>
+            </form>
+          </div>
         </div>
 
         <div className={fh.panel}>
-          <div className={fh.filters} style={{ gridTemplateColumns: "minmax(160px,1fr) minmax(140px,1fr) minmax(150px,1fr) 140px 150px auto" }}>
-            <div className={fh.field}>
-              <label className={fh.label}>Search by name</label>
-              <input
-                type="text"
-                placeholder="Name, ID or code"
-                value={nameSearch}
-                onChange={(e) => setNameSearch(e.target.value)}
-                className={fh.input}
-              />
-            </div>
-            <div className={fh.field}>
-              <label className={fh.label}>Pseudo name</label>
-              <input
-                type="text"
-                placeholder="P.Name"
-                value={pseudoSearch}
-                onChange={(e) => setPseudoSearch(e.target.value)}
-                className={fh.input}
-              />
-            </div>
-            <div className={fh.field}>
-              <label className={fh.label}>Department</label>
-              <select
-                value={departmentFilter}
-                onChange={(e) => setDepartmentFilter(e.target.value)}
-                className={fh.select}
-              >
-                <option value="">All departments</option>
-                {departments.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={fh.field}>
-              <label className={fh.label}>Status</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className={fh.select}
-              >
-                <option value="">All</option>
-                <option value="pending">Pending</option>
-                <option value="paid">Paid</option>
-                <option value="stop">Stop</option>
-              </select>
-            </div>
-            <div className={fh.field}>
-              <label className={fh.label}>Month</label>
-              <input
-                type="month"
-                value={monthFilter}
-                onChange={(e) => setMonthFilter(e.target.value)}
-                className={fh.input}
-              />
+          <div className={fh.panelHead}>
+            <div className={fh.panelHeadLeft}>
+              <h2 className={fh.panelTitle}>Loan installments</h2>
+              <p className={fh.panelHint}>
+                Filter, adjust payable, then save or update status
+              </p>
             </div>
             <button type="button" className={fh.clearBtn} onClick={clearFilters}>
               Clear filters
             </button>
           </div>
-        </div>
-
-        {formSuccess ? (
-          <div className={fh.selectedBar} style={{ borderColor: "#a7f3d0", background: "#ecfdf5" }}>
-            <div className={fh.selectedText} style={{ color: "#065f46" }}>
-              {formSuccess}
+          <div className={fh.panelBody}>
+            <div className={fh.filtersLoan}>
+              <label className={fh.field}>
+                <span className={fh.label}>Search</span>
+                <input
+                  type="text"
+                  placeholder="Name, ID or code…"
+                  value={nameSearch}
+                  onChange={(e) => setNameSearch(e.target.value)}
+                  className={fh.input}
+                />
+              </label>
+              <label className={fh.field}>
+                <span className={fh.label}>Pseudo</span>
+                <input
+                  type="text"
+                  placeholder="P.Name…"
+                  value={pseudoSearch}
+                  onChange={(e) => setPseudoSearch(e.target.value)}
+                  className={fh.input}
+                />
+              </label>
+              <label className={fh.field}>
+                <span className={fh.label}>Department</span>
+                <select
+                  value={departmentFilter}
+                  onChange={(e) => setDepartmentFilter(e.target.value)}
+                  className={fh.select}
+                >
+                  <option value="">All</option>
+                  {departments.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fh.field}>
+                <span className={fh.label}>Status</span>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className={fh.select}
+                >
+                  <option value="">All</option>
+                  <option value="pending">Pending</option>
+                  <option value="paid">Paid</option>
+                  <option value="stop">Stop</option>
+                </select>
+              </label>
+              <label className={fh.field}>
+                <span className={fh.label}>Month</span>
+                <input
+                  type="month"
+                  value={monthFilter}
+                  onChange={(e) => setMonthFilter(e.target.value)}
+                  className={fh.input}
+                />
+              </label>
+              <div />
             </div>
-          </div>
-        ) : null}
-        {error ? <div className={fh.error}>{error}</div> : null}
 
-        <div className={fh.cards}>
-          <div className={fh.card}>
-            <div className={fh.cardLabel}>Installments shown</div>
-            <div className={fh.cardValue}>{summary.rows}</div>
-            <div className={fh.cardMeta}>After filters</div>
-          </div>
-          <div className={fh.card}>
-            <div className={fh.cardLabel}>Payable total</div>
-            <div className={fh.cardValue}>{money(summary.payable)}</div>
-            <div className={fh.cardMeta}>This view</div>
-          </div>
-          <div className={fh.card}>
-            <div className={fh.cardLabel}>Paid installments</div>
-            <div className={fh.cardValue}>{summary.paidCount}</div>
-            <div className={fh.cardMeta}>Amount {money(summary.paid)}</div>
-          </div>
-          <div className={fh.card}>
-            <div className={fh.cardLabel}>Pending</div>
-            <div className={fh.cardValue}>{summary.pending}</div>
-            <div className={fh.cardMeta}>Still open</div>
-          </div>
-        </div>
+            <div className={fh.bulkBar} style={{ marginTop: 14 }}>
+              <div className={fh.selectedText}>
+                {pendingHint > 0
+                  ? `${pendingHint} pending — adjust payable or mark Paid`
+                  : summary.rows > 0
+                    ? `${summary.rows} installment${summary.rows === 1 ? "" : "s"} in this view`
+                    : "No loan installments for this filter"}
+              </div>
+            </div>
 
-        <div className={fh.panel}>
-          <div className={fh.selectedText} style={{ marginBottom: 12 }}>
-            Add new loan
-          </div>
-          <form
-            onSubmit={handleAddLoan}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(200px,1.4fr) 140px 120px 160px auto",
-              gap: 12,
-              alignItems: "end",
-            }}
-          >
-            <div className={fh.field}>
-              <label className={fh.label}>Employee</label>
-              <select
-                value={selectedEmployee}
-                onChange={(e) => setSelectedEmployee(e.target.value)}
-                required
-                className={fh.select}
-              >
-                <option value="">Select Employee</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.employee_code ? `[${emp.employee_code}] ` : ""}
-                    {emp.first_name} {emp.last_name}
-                    {emp.pseudonym ? ` (${emp.pseudonym})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={fh.field}>
-              <label className={fh.label}>Loan amount</label>
-              <input
-                type="number"
-                value={loanAmount}
-                onChange={(e) => setLoanAmount(e.target.value)}
-                required
-                min={1}
-                className={fh.input}
-                placeholder="Amount"
-              />
-            </div>
-            <div className={fh.field}>
-              <label className={fh.label}>Installments</label>
-              <input
-                type="number"
-                value={installments}
-                onChange={(e) => setInstallments(e.target.value)}
-                required
-                min={1}
-                className={fh.input}
-                placeholder="Months"
-              />
-            </div>
-            <div className={fh.field}>
-              <label className={fh.label}>Start month</label>
-              <input
-                type="month"
-                value={startMonth}
-                onChange={(e) => setStartMonth(e.target.value)}
-                required
-                className={fh.input}
-              />
-            </div>
-            <button type="submit" disabled={formLoading} className={fh.primaryBtn}>
-              {formLoading ? "Adding..." : "Add Loan"}
-            </button>
-          </form>
-        </div>
+            {loading ? <p className={fh.loading}>Loading loan records…</p> : null}
 
-        {loading ? <div className={fh.loading}>Loading loan records...</div> : null}
-
-        <div className={fh.panel}>
-          <div className={fh.tableWrap}>
-            <table className={fh.table}>
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>P.Name</th>
-                  <th>Department</th>
-                  <th>Month</th>
-                  <th>Per installment</th>
-                  <th>Payable this month</th>
-                  <th>Paid amount</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
+            <div className={fh.tableWrap}>
+              <table className={fh.table}>
+                <thead>
                   <tr>
-                    <td colSpan={9}>
-                      <div className={fh.empty}>Loading...</div>
-                    </td>
+                    <th>Employee</th>
+                    <th>Pseudo</th>
+                    <th>Dept</th>
+                    <th>Month</th>
+                    <th>Per installment</th>
+                    <th>Payable</th>
+                    <th>Paid</th>
+                    <th>Status</th>
+                    <th>Actions</th>
                   </tr>
-                ) : filteredLoans.length === 0 ? (
-                  <tr>
-                    <td colSpan={9}>
-                      <div className={fh.empty}>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td colSpan={9} className={fh.empty}>
+                        Loading…
+                      </td>
+                    </tr>
+                  ) : filteredLoans.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className={fh.empty}>
                         No loan records match the current filters.
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredLoans.map((loan) => {
-                    const emp = getEmployeeRecord(loan.employee_id);
-                    const empName = getEmployeeName(loan.employee_id);
-                    return (
-                      <tr key={loan.loan_key ?? `${loan.employee_id}-${loan.month}`}>
-                        <td>
-                          <EmployeeTableNameCell
-                            name={empName}
-                            employeeId={loan.employee_id}
-                            photo={getPhoto(loan.employee_id)}
-                            onOpen={() =>
-                              openFromRow({
-                                employee_id: loan.employee_id,
-                                employee_name: empName,
-                                first_name: emp?.first_name,
-                                last_name: emp?.last_name,
-                                pseudonym: emp?.pseudonym,
-                                department_name: emp?.department_name,
-                              })
-                            }
-                          />
-                        </td>
-                        <td>{emp?.pseudonym || "--"}</td>
-                        <td>{emp?.department_name || "--"}</td>
-                        <td>{loan.month}</td>
-                        <td>{money(loan.original_amount)}</td>
-                        <td>
-                          <input
-                            type="number"
-                            value={loan.payable_this_month ?? loan.original_amount}
-                            onChange={(e) => {
-                              const v = parseFloat(e.target.value);
-                              if (!isNaN(v) && v >= 0) {
-                                setLoans((prev) => {
-                                  const allLoans = prev
-                                    .filter((l) => l.employee_id === loan.employee_id)
-                                    .sort((a, b) => a.month.localeCompare(b.month));
-                                  const origTotal = allLoans.reduce(
-                                    (sum, l) => sum + (l.original_amount ?? 0),
-                                    0,
-                                  );
-                                  const idx = allLoans.findIndex((l) => l.month === loan.month);
-                                  const paidSoFar =
-                                    allLoans
-                                      .slice(0, idx)
-                                      .reduce(
-                                        (sum, l) =>
-                                          sum + (l.payable_this_month ?? l.original_amount ?? 0),
-                                        0,
-                                      ) + v;
-                                  const remaining = origTotal - paidSoFar;
-                                  const afterIdx = allLoans.slice(idx + 1);
-                                  const perInstall =
-                                    afterIdx.length > 0
-                                      ? Math.floor((remaining / afterIdx.length) * 100) / 100
-                                      : 0;
-                                  let distributed = 0;
-                                  return prev.map((l) => {
-                                    if (l.employee_id !== loan.employee_id) return l;
-                                    if (l.month === loan.month) {
-                                      return { ...l, payable_this_month: v };
-                                    }
-                                    const afterIdxIndex = afterIdx.findIndex(
-                                      (a) => a.month === l.month,
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLoans.map((loan) => {
+                      const emp = getEmployeeRecord(loan.employee_id);
+                      const empName = getEmployeeName(loan.employee_id);
+                      const rowBusy =
+                        savingRowKey === `${loan.employee_id}-${loan.month}`;
+                      return (
+                        <tr
+                          key={loan.loan_key ?? `${loan.employee_id}-${loan.month}`}
+                        >
+                          <td>
+                            <EmployeeTableNameCell
+                              name={empName}
+                              employeeId={loan.employee_id}
+                              photo={getPhoto(loan.employee_id)}
+                              onOpen={() =>
+                                openFromRow({
+                                  employee_id: loan.employee_id,
+                                  employee_name: empName,
+                                  first_name: emp?.first_name,
+                                  last_name: emp?.last_name,
+                                  pseudonym: emp?.pseudonym,
+                                  department_name: emp?.department_name,
+                                })
+                              }
+                            />
+                          </td>
+                          <td>{emp?.pseudonym || "—"}</td>
+                          <td>{emp?.department_name || "—"}</td>
+                          <td>{loan.month}</td>
+                          <td>
+                            <strong>{money(loan.original_amount)}</strong>
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              value={
+                                loan.payable_this_month ?? loan.original_amount
+                              }
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value);
+                                if (!isNaN(v) && v >= 0) {
+                                  setLoans((prev) => {
+                                    const allLoans = prev
+                                      .filter(
+                                        (l) => l.employee_id === loan.employee_id,
+                                      )
+                                      .sort((a, b) =>
+                                        a.month.localeCompare(b.month),
+                                      );
+                                    const origTotal = allLoans.reduce(
+                                      (sum, l) => sum + (l.original_amount ?? 0),
+                                      0,
                                     );
-                                    if (afterIdxIndex === -1) return l;
-                                    if (afterIdxIndex === afterIdx.length - 1) {
+                                    const idx = allLoans.findIndex(
+                                      (l) => l.month === loan.month,
+                                    );
+                                    const paidSoFar =
+                                      allLoans
+                                        .slice(0, idx)
+                                        .reduce(
+                                          (sum, l) =>
+                                            sum +
+                                            (l.payable_this_month ??
+                                              l.original_amount ??
+                                              0),
+                                          0,
+                                        ) + v;
+                                    const remaining = origTotal - paidSoFar;
+                                    const afterIdx = allLoans.slice(idx + 1);
+                                    const perInstall =
+                                      afterIdx.length > 0
+                                        ? Math.floor(
+                                            (remaining / afterIdx.length) * 100,
+                                          ) / 100
+                                        : 0;
+                                    let distributed = 0;
+                                    return prev.map((l) => {
+                                      if (l.employee_id !== loan.employee_id)
+                                        return l;
+                                      if (l.month === loan.month) {
+                                        return { ...l, payable_this_month: v };
+                                      }
+                                      const afterIdxIndex = afterIdx.findIndex(
+                                        (a) => a.month === l.month,
+                                      );
+                                      if (afterIdxIndex === -1) return l;
+                                      if (
+                                        afterIdxIndex ===
+                                        afterIdx.length - 1
+                                      ) {
+                                        return {
+                                          ...l,
+                                          payable_this_month: Math.max(
+                                            0,
+                                            Math.round(
+                                              (remaining - distributed) * 100,
+                                            ) / 100,
+                                          ),
+                                        };
+                                      }
+                                      distributed =
+                                        Math.round(
+                                          (distributed + perInstall) * 100,
+                                        ) / 100;
                                       return {
                                         ...l,
                                         payable_this_month: Math.max(
                                           0,
-                                          Math.round((remaining - distributed) * 100) / 100,
+                                          perInstall,
                                         ),
                                       };
-                                    }
-                                    distributed = Math.round((distributed + perInstall) * 100) / 100;
-                                    return {
-                                      ...l,
-                                      payable_this_month: Math.max(0, perInstall),
-                                    };
+                                    });
                                   });
-                                });
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const v = parseFloat(e.target.value);
+                                if (!isNaN(v) && v >= 0) {
+                                  void handleSave(
+                                    loan,
+                                    v,
+                                    (loan.status || "pending").toLowerCase(),
+                                  );
+                                }
+                              }}
+                              min={0}
+                              step={0.01}
+                              className={`${fh.input} ${fh.compactInput}`}
+                            />
+                          </td>
+                          <td>
+                            <strong>{money(displayPaidAmount(loan))}</strong>
+                          </td>
+                          <td>
+                            <select
+                              value={(loan.status || "pending").toLowerCase()}
+                              onChange={(e) =>
+                                void handleStatusChange(loan, e.target.value)
                               }
-                            }}
-                            onBlur={(e) => {
-                              const v = parseFloat(e.target.value);
-                              if (!isNaN(v) && v >= 0) {
-                                handleSave(loan, v, (loan.status || "pending").toLowerCase());
+                              className={statusSelectClass(loan.status)}
+                              disabled={rowBusy}
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="paid">Paid</option>
+                              <option value="stop">Stop</option>
+                            </select>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleSave(
+                                  loan,
+                                  loan.payable_this_month ??
+                                    loan.original_amount,
+                                  (loan.status || "pending").toLowerCase(),
+                                )
                               }
-                            }}
-                            min={0}
-                            step={0.01}
-                            className={fh.input}
-                            style={{ width: 110, padding: "6px 8px" }}
-                          />
-                        </td>
-                        <td>{money(loan.paid_amount)}</td>
-                        <td>
-                          <select
-                            value={(loan.status || "pending").toLowerCase()}
-                            onChange={(e) => handleStatusChange(loan, e.target.value)}
-                            style={statusSelectStyle(loan.status)}
-                          >
-                            <option value="pending">Pending</option>
-                            <option value="paid">Paid</option>
-                            <option value="stop">Stop</option>
-                          </select>
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleSave(
-                                loan,
-                                loan.payable_this_month ?? loan.original_amount,
-                                (loan.status || "pending").toLowerCase(),
-                              )
-                            }
-                            title="Save"
-                            disabled={savingRowKey === `${loan.employee_id}-${loan.month}`}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              padding: 4,
-                              color: "#611f69",
-                              opacity:
-                                savingRowKey === `${loan.employee_id}-${loan.month}` ? 0.6 : 1,
-                            }}
-                          >
-                            <FaSave size={18} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(loan.employee_id, loan.month)}
-                            title="Delete"
-                            style={{
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              padding: 4,
-                              color: "#e53e3e",
-                              marginLeft: 8,
-                            }}
-                          >
-                            <FaTrash size={18} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                              title="Save"
+                              disabled={rowBusy}
+                              className={fh.iconBtn}
+                              style={{ opacity: rowBusy ? 0.6 : 1 }}
+                            >
+                              <FaSave size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleDelete(loan.employee_id, loan.month)
+                              }
+                              title="Delete"
+                              className={fh.iconBtnDanger}
+                            >
+                              <FaTrash size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>

@@ -23,7 +23,12 @@
 }
 
 .avatarBtn:hover {
-  transform: scale(1.06);
+  transform: scale(1.03);
+}
+
+/* Keep purple ring fully visible inside tight table cells */
+.avatarBtn :global(*) {
+  box-sizing: border-box;
 }
 
 .avatarBtn:focus-visible {
@@ -32,12 +37,13 @@
 }
 
 .name {
+  display: block;
   font-weight: 600;
   color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
+  max-width: 100%;
 }
 
 .nameBtn {
@@ -47,6 +53,9 @@
   cursor: pointer;
   text-align: left;
   font: inherit;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .nameBtn:hover .name {

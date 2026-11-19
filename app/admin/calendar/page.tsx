@@ -3,6 +3,7 @@
 import React from "react";
 import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../admin-page.module.css";
+import cal from "./calendar.module.css";
 
 interface CalendarDayOverride {
   date: string;
@@ -117,179 +118,37 @@ export default function AdminCalendarPage() {
 
   return (
     <OptionalAdminShell>
-      <style>{`
-        .calendar-controls {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-top: 16px;
-          flex-wrap: wrap;
-        }
-        .calendar-month-label {
-          font-weight: 700;
-          color: #0f172a;
-          font-size: 1.1rem;
-          margin: 0 8px;
-        }
-        .weekday-row {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 6px;
-          margin: 16px 0 8px;
-          font-weight: 600;
-          color: #64748b;
-          text-transform: uppercase;
-          font-size: 0.7rem;
-          letter-spacing: 0.5px;
-        }
-        .weekday-cell {
-          text-align: center;
-          padding: 4px;
-        }
-        .days-grid {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 6px;
-        }
-        .day-card {
-          border-radius: 10px;
-          padding: 6px;
-          min-height: 85px;
-          border: 1px solid #e8edf3;
-          background: #fff;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          transition: all 0.2s;
-        }
-        .day-card:hover {
-          box-shadow: 0 2px 8px rgba(97, 31, 105, 0.12);
-          border-color: #611f69;
-        }
-        .day-card.off {
-          background: #fff7ed;
-          border-color: #fed7aa;
-        }
-        .day-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 2px;
-        }
-        .day-num {
-          font-weight: 700;
-          color: #0f172a;
-          font-size: 0.85rem;
-        }
-        .day-pill {
-          padding: 2px 6px;
-          border-radius: 999px;
-          font-size: 0.6rem;
-          font-weight: 700;
-          text-transform: uppercase;
-        }
-        .day-pill.off {
-          background: #fff7ed;
-          color: #c2410c;
-        }
-        .day-pill.work {
-          background: #ecfdf5;
-          color: #047857;
-        }
-        .day-week {
-          font-size: 0.65rem;
-          color: #64748b;
-          margin-bottom: 2px;
-        }
-        .day-select, .day-note {
-          border-radius: 8px;
-          border: 1px solid #e2e8f0;
-          padding: 4px 6px;
-          background: #f8fafc;
-          font-size: 0.7rem;
-          width: 100%;
-          font-family: inherit;
-        }
-        .day-select {
-          font-weight: 600;
-        }
-        .day-note {
-          font-weight: 400;
-          resize: none;
-        }
-        .day-note:disabled {
-          background: #f8fafc;
-          color: #64748b;
-        }
-        .day-actions {
-          display: flex;
-          gap: 3px;
-          margin-top: 2px;
-        }
-        .day-btn {
-          padding: 3px 6px;
-          border-radius: 8px;
-          border: none;
-          font-size: 0.65rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-          flex: 1;
-        }
-        .day-btn.set {
-          background: linear-gradient(135deg, #611f69 0%, #4a1850 100%);
-          color: white;
-        }
-        .day-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-        .saving-chip {
-          font-size: 0.65rem;
-          color: #64748b;
-          font-style: italic;
-        }
-        @media (max-width: 1100px) {
-          .days-grid, .weekday-row {
-            grid-template-columns: repeat(5, 1fr);
-          }
-        }
-        @media (max-width: 768px) {
-          .days-grid, .weekday-row {
-            grid-template-columns: repeat(3, 1fr);
-          }
-          .calendar-controls {
-            justify-content: center;
-          }
-        }
-      `}</style>
       <div className={styles.page}>
         <div className={styles.inner}>
-          <h1 className={styles.title}>Calendar Management</h1>
-          <p className={styles.subtitle}>Set company off days and working days with notes.</p>
+          <h1 className={styles.title}>Leave calendar</h1>
+          <p className={styles.subtitle}>Mark company off days and working days, with optional notes.</p>
 
           <div className={styles.card}>
-            <div className="calendar-controls">
+            <div className={cal.controls}>
               <button type="button" onClick={handlePrevMonth} className={styles.btnSecondary}>
                 Prev
               </button>
-              <div className="calendar-month-label">{formatMonthLabel(currentMonth)}</div>
+              <div className={cal.monthLabel}>{formatMonthLabel(currentMonth)}</div>
               <button type="button" onClick={handleNextMonth} className={styles.btnPrimary}>
                 Next
               </button>
             </div>
 
             {loading ? (
-              <p className={styles.muted} style={{ padding: 12 }}>Loading...</p>
+              <p className={styles.muted} style={{ padding: 12 }}>
+                Loading…
+              </p>
             ) : (
               <div>
-                <div className="weekday-row">
+                <div className={cal.weekdayRow}>
                   {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-                    <div key={d} className="weekday-cell">{d}</div>
+                    <div key={d} className={cal.weekdayCell}>
+                      {d}
+                    </div>
                   ))}
                 </div>
 
-                <div className="days-grid">
+                <div className={cal.daysGrid}>
                   {Array.from({ length: firstDay }).map((_, idx) => (
                     <div key={`empty-${idx}`} />
                   ))}
@@ -303,19 +162,31 @@ export default function AdminCalendarPage() {
                     const isEditing = editingNote[iso] === true;
 
                     return (
-                      <div key={iso} className={`day-card ${isOff ? "off" : ""}`}>
-                        <div className="day-top">
-                          <div className="day-num">{day.getDate()}</div>
-                          <span className={`day-pill ${isOff ? "off" : "work"}`}>{statusLabel}</span>
+                      <div
+                        key={iso}
+                        className={`${cal.dayCard} ${isOff ? cal.dayCardOff : ""}`}
+                      >
+                        <div className={cal.dayTop}>
+                          <div className={cal.dayNum}>{day.getDate()}</div>
+                          <span
+                            className={`${cal.dayPill} ${isOff ? cal.dayPillOff : cal.dayPillWork}`}
+                          >
+                            {statusLabel}
+                          </span>
                         </div>
-                        <div className="day-week">{day.toLocaleString("en-US", { weekday: "short" })}</div>
+                        <div className={cal.dayWeek}>
+                          {day.toLocaleString("en-US", { weekday: "short" })}
+                        </div>
                         {!isEditing && (
                           <button
                             type="button"
                             onClick={() => {
                               setEditingNote((prev) => ({ ...prev, [iso]: true }));
                               if (noteDrafts[iso] === undefined) {
-                                setNoteDrafts((prev) => ({ ...prev, [iso]: overrides[iso]?.note ?? "" }));
+                                setNoteDrafts((prev) => ({
+                                  ...prev,
+                                  [iso]: overrides[iso]?.note ?? "",
+                                }));
                               }
                             }}
                             className={styles.btnGreen}
@@ -330,47 +201,37 @@ export default function AdminCalendarPage() {
                               gap: 6,
                             }}
                           >
-                            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a4 4 0 01-1.414.828l-4.243 1.414 1.414-4.243a4 4 0 01.828-1.414z" />
-                            </svg>
-                            Edit Day
+                            Edit day
                           </button>
                         )}
                         {isEditing && (
-                          <div
-                            style={{
-                              position: "relative",
-                              zIndex: 10,
-                              background: "#fff",
-                              border: "1px solid #e8edf3",
-                              borderRadius: 10,
-                              padding: 8,
-                              marginTop: 6,
-                              boxShadow: "0 4px 16px rgba(15, 23, 42, 0.08)",
-                            }}
-                          >
+                          <div className={cal.editPanel}>
                             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
                               <button
                                 type="button"
                                 aria-label="Close"
-                                onClick={() => setEditingNote((prev) => ({ ...prev, [iso]: false }))}
+                                onClick={() =>
+                                  setEditingNote((prev) => ({ ...prev, [iso]: false }))
+                                }
                                 style={{
                                   background: "none",
                                   border: "none",
                                   cursor: "pointer",
                                   padding: 2,
+                                  fontWeight: 700,
+                                  color: "#64748b",
                                 }}
                               >
-                                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#0f172a" strokeWidth="2">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l8 8M6 14L14 6" />
-                                </svg>
+                                ✕
                               </button>
                             </div>
                             <select
                               value={status}
-                              onChange={(e) => updateDay(day, e.target.value as "off" | "working", noteValue)}
+                              onChange={(e) =>
+                                updateDay(day, e.target.value as "off" | "working", noteValue)
+                              }
                               disabled={isSaving}
-                              className="day-select"
+                              className={cal.daySelect}
                             >
                               <option value="working">Working</option>
                               <option value="off">Off</option>
@@ -384,12 +245,12 @@ export default function AdminCalendarPage() {
                                 setNoteDrafts((prev) => ({ ...prev, [iso]: next }));
                               }}
                               placeholder="Note"
-                              className="day-note"
+                              className={cal.dayNote}
                               style={{ marginTop: 4 }}
                             />
-                            <div className="day-actions">
+                            <div className={cal.dayActions}>
                               <button
-                                className="day-btn set"
+                                className={cal.dayBtnSet}
                                 type="button"
                                 disabled={!isEditing || isSaving}
                                 onClick={() => {
@@ -400,7 +261,7 @@ export default function AdminCalendarPage() {
                                 Set
                               </button>
                             </div>
-                            {isSaving && <div className="saving-chip">Saving...</div>}
+                            {isSaving ? <div className={cal.savingChip}>Saving…</div> : null}
                           </div>
                         )}
                       </div>

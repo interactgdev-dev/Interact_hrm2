@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import AddEmployeeForm from "./AddEmployeeForm";
-import LayoutDashboard from "../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import adminStyles from "../admin/admin-page.module.css";
 
 export default function AddEmployeePage() {
@@ -11,7 +11,7 @@ export default function AddEmployeePage() {
   const [formKey, setFormKey] = useState(0);
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <AddEmployeeForm
           key={formKey}
@@ -19,6 +19,6 @@ export default function AddEmployeePage() {
           onRequestNew={() => setFormKey((k) => k + 1)}
         />
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

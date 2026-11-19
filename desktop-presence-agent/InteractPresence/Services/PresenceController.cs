@@ -61,11 +61,10 @@ public sealed class PresenceController : IDisposable
                 ? $"Active — idle {_settings.IdleWarningSeconds}s; camera={(_settings.CameraVerificationEnabled ? "on" : "off")}"
                 : "Presence disabled by admin (waiting for settings)");
         _ = _api.FlushQueueAsync();
-        // Immediate settings pull + update check
+        // Settings + heartbeat on start — no automatic exe updates (manual tray only).
         _ = Task.Run(async () =>
         {
             await ForceSyncSettingsAsync().ConfigureAwait(false);
-            await AgentUpdater.CheckAndUpdateAsync(_settings, force: true).ConfigureAwait(false);
         });
     }
 
@@ -85,6 +84,12 @@ public sealed class PresenceController : IDisposable
     {
         // Pull admin settings from HRM periodically (~every 30s)
         MaybeRefreshRemoteSettings();
+
+        if (_settings.AgentsRetired)
+        {
+            MaybePermanentShutdownIfRetired();
+            return;
+        }
 
         if (!_settings.PresenceEnabled)
         {
@@ -168,8 +173,11 @@ public sealed class PresenceController : IDisposable
         {
             _lastSettingsFetch = DateTime.UtcNow;
             var applied = await _api.TryApplyPresenceSettingsAsync(_settings, ct).ConfigureAwait(false);
-            await _api.TrySendHeartbeatAsync(_settings, ct).ConfigureAwait(false);
+            var hb = await _api.TrySendHeartbeatAsync(_settings, ct).ConfigureAwait(false);
+            await HandleRemoteCommandAsync(hb?.Command).ConfigureAwait(false);
+            MaybePermanentShutdownIfRetired();
             if (ct.IsCancellationRequested) return false;
+            if (applied) MaybeEnsureAutoStartIfActive();
             await WpfApp.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (applied)
@@ -196,6 +204,62 @@ public sealed class PresenceController : IDisposable
         }
     }
 
+    private async Task HandleRemoteCommandAsync(string? command)
+    {
+        if (_settings.AgentsRetired)
+        {
+            await WpfApp.Current.Dispatcher.InvokeAsync(() => PermanentShutdown("Admin retired all agents"));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(command)) return;
+        var c = command.Trim().ToLowerInvariant();
+        await WpfApp.Current.Dispatcher.InvokeAsync(() =>
+        {
+            if (c == "restart")
+            {
+                StatusChanged?.Invoke("Admin requested restart…");
+                AgentCommands.Restart();
+            }
+            else if (c == "start")
+            {
+                StatusChanged?.Invoke("Admin requested start — re-enabling auto-start…");
+                AutoStartHelper.EnsureEnabled();
+                DesktopNotify.Success("Presence agent active (admin start).");
+            }
+            else if (c == "exit")
+            {
+                StatusChanged?.Invoke("Admin requested exit…");
+                if (_settings.AgentsRetired)
+                    PermanentShutdown("Admin requested permanent exit");
+                else
+                {
+                    Stop();
+                    AgentCommands.Exit();
+                }
+            }
+        });
+    }
+
+    private void PermanentShutdown(string reason)
+    {
+        StatusChanged?.Invoke(reason);
+        Stop();
+        AgentCommands.PermanentExit();
+    }
+
+    private void MaybePermanentShutdownIfRetired()
+    {
+        if (!_settings.AgentsRetired) return;
+        PermanentShutdown("Agents retired by admin");
+    }
+
+    private void MaybeEnsureAutoStartIfActive()
+    {
+        if (_settings.AgentsRetired) return;
+        AutoStartHelper.EnsureEnabled();
+    }
+
     private bool IsEmployeeAllowed()
     {
         var list = _settings.EnabledEmployeeIds;
@@ -207,16 +271,19 @@ public sealed class PresenceController : IDisposable
 
     private void MaybeRefreshRemoteSettings()
     {
-        if ((DateTime.UtcNow - _lastSettingsFetch).TotalSeconds < 15) return;
+        if ((DateTime.UtcNow - _lastSettingsFetch).TotalSeconds < 5) return;
         _lastSettingsFetch = DateTime.UtcNow;
         _ = Task.Run(async () =>
         {
             try
             {
                 var applied = await _api.TryApplyPresenceSettingsAsync(_settings).ConfigureAwait(false);
-                await _api.TrySendHeartbeatAsync(_settings).ConfigureAwait(false);
+                var hb = await _api.TrySendHeartbeatAsync(_settings).ConfigureAwait(false);
+                await HandleRemoteCommandAsync(hb?.Command).ConfigureAwait(false);
+                MaybePermanentShutdownIfRetired();
                 if (applied)
                 {
+                    MaybeEnsureAutoStartIfActive();
                     await WpfApp.Current.Dispatcher.InvokeAsync(() =>
                     {
                         StatusChanged?.Invoke(
@@ -235,7 +302,6 @@ public sealed class PresenceController : IDisposable
                             $"Cannot reach HRM settings at {_settings.HrmBaseUrl}. Password/settings will not update.");
                     });
                 }
-                await AgentUpdater.CheckAndUpdateAsync(_settings).ConfigureAwait(false);
             }
             catch
             {

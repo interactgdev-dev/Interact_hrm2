@@ -355,12 +355,12 @@
 }
 
 .editButton {
-  background: #eff6ff;
-  color: #2563eb;
+  background: #ecfdf5;
+  color: #0f766e;
 }
 
 .editButton:hover {
-  background: #dbeafe;
+  background: #d1fae5;
 }
 
 .deleteButton {

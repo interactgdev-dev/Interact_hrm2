@@ -4,6 +4,12 @@ import {
   getLeaveCycleStartYmd,
   leaveDateToYmd,
 } from "../../../lib/leave-cycle";
+import {
+  BEREAVEMENT_ALLOWANCE,
+  MATERNITY_ALLOWANCE,
+  PATERNITY_ALLOWANCE,
+  normalizeEmployeeGender,
+} from "../../../lib/leave-categories";
 
 function parseLeaveDays(value: unknown): number {
   const n = Number(value);
@@ -17,18 +23,36 @@ function roundLeaveDays(value: unknown): number {
   return Math.round(n * 2) / 2;
 }
 
-/** Fixed policy — compute in JS (Mongo SQL adapter drops CASE / literal aliases). */
 function annualAllowanceForStatus(employmentStatus: unknown): number {
   return String(employmentStatus || "").trim() === "Probation" ? 3 : 20;
 }
 
-const BEREAVEMENT_ALLOWANCE = 3;
+type UsedBucket = {
+  annual_used: number;
+  bereavement_used: number;
+  maternity_used: number;
+  paternity_used: number;
+};
 
-// GET: Fetch all employees with their leave allowances
+function bumpUsed(bucket: UsedBucket, category: string, days: number) {
+  const c = String(category || "").toLowerCase();
+  if (c === "bereavement") bucket.bereavement_used += days;
+  else if (c === "maternity") bucket.maternity_used += days;
+  else if (c === "paternity") bucket.paternity_used += days;
+  else bucket.annual_used += days;
+}
+
+// GET: Fetch employees with leave allowances (scoped by viewer hierarchy)
 export async function GET(req: NextRequest) {
   let conn;
   try {
     conn = await pool.getConnection();
+
+    const viewerId =
+      req.headers.get("x-hrm-employee-id") ||
+      req.headers.get("x-employee-id") ||
+      req.nextUrl.searchParams.get("viewerId") ||
+      "";
 
     const [rows]: any = await conn.execute(`
       SELECT 
@@ -37,18 +61,43 @@ export async function GET(req: NextRequest) {
         e.last_name,
         e.employee_code,
         e.employment_status,
+        e.gender,
         j.joined_date,
+        d.name AS department_name,
         COALESCE(ela.annual_balance_adjustment, 0) as annual_balance_adjustment,
         COALESCE(ela.bereavement_balance_adjustment, 0) as bereavement_balance_adjustment,
+        COALESCE(ela.maternity_balance_adjustment, 0) as maternity_balance_adjustment,
+        COALESCE(ela.paternity_balance_adjustment, 0) as paternity_balance_adjustment,
         ela.updated_at as allowance_updated_at
       FROM hrm_employees e
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
+      LEFT JOIN departments d ON j.department_id = d.id
       LEFT JOIN employee_leave_allowances ela ON e.id = ela.employee_id
       WHERE e.status IN ('enabled', 'active')
       ORDER BY e.id
     `);
 
-    const employeeIds = rows.map((r: any) => r.id).filter((id: any) => id != null);
+    let scopedRows = Array.isArray(rows) ? rows : [];
+    if (viewerId.trim()) {
+      try {
+        const { resolveViewerDataScope, rowInViewerScope } = await import(
+          "@/lib/access-control/data-scope"
+        );
+        const scope = await resolveViewerDataScope(viewerId.trim());
+        if (scope.mode !== "all") {
+          scopedRows = scopedRows.filter((r: any) =>
+            rowInViewerScope(scope, {
+              employeeId: r.id,
+              departmentName: r.department_name,
+            }),
+          );
+        }
+      } catch {
+        /* keep full list if scope helper fails */
+      }
+    }
+
+    const employeeIds = scopedRows.map((r: any) => r.id).filter((id: any) => id != null);
     let leaveRows: any[] = [];
     if (employeeIds.length > 0) {
       const placeholders = employeeIds.map(() => "?").join(",");
@@ -61,11 +110,16 @@ export async function GET(req: NextRequest) {
       leaveRows = Array.isArray(leaves) ? leaves : [];
     }
 
-    const usedByEmployee = new Map<number, { annual_used: number; bereavement_used: number }>();
+    const usedByEmployee = new Map<number, UsedBucket>();
     const cycleStartByEmployee = new Map<number, string | null>();
-    rows.forEach((emp: any) => {
+    scopedRows.forEach((emp: any) => {
       const empId = Number(emp.id);
-      usedByEmployee.set(empId, { annual_used: 0, bereavement_used: 0 });
+      usedByEmployee.set(empId, {
+        annual_used: 0,
+        bereavement_used: 0,
+        maternity_used: 0,
+        paternity_used: 0,
+      });
       cycleStartByEmployee.set(empId, getLeaveCycleStartYmd(emp.joined_date || null));
     });
 
@@ -82,50 +136,78 @@ export async function GET(req: NextRequest) {
 
       const days = Number(leave.total_days || 0);
       if (!Number.isFinite(days) || days <= 0) return;
-
-      if (String(leave.leave_category || "").toLowerCase() === "bereavement") {
-        current.bereavement_used += days;
-      } else {
-        current.annual_used += days;
-      }
+      bumpUsed(current, leave.leave_category, days);
     });
 
-    const employeesWithBalance = rows.map((emp: any) => {
+    const employeesWithBalance = scopedRows.map((emp: any) => {
       const empId = Number(emp.id);
-      const annualUsed = usedByEmployee.get(empId)?.annual_used || 0;
-      const bereavementUsed = usedByEmployee.get(empId)?.bereavement_used || 0;
+      const used = usedByEmployee.get(empId) || {
+        annual_used: 0,
+        bereavement_used: 0,
+        maternity_used: 0,
+        paternity_used: 0,
+      };
       const cycleStart = cycleStartByEmployee.get(empId) || null;
       const annualAdjustment = Number(emp.annual_balance_adjustment || 0);
       const bereavementAdjustment = Number(emp.bereavement_balance_adjustment || 0);
+      const maternityAdjustment = Number(emp.maternity_balance_adjustment || 0);
+      const paternityAdjustment = Number(emp.paternity_balance_adjustment || 0);
       const annualAllowance = annualAllowanceForStatus(emp.employment_status);
       const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
+      const maternityAllowance = MATERNITY_ALLOWANCE;
+      const paternityAllowance = PATERNITY_ALLOWANCE;
+      const genderNorm = normalizeEmployeeGender(emp.gender);
 
       return {
         ...emp,
+        gender: emp.gender || null,
         annual_allowance: annualAllowance,
         bereavement_allowance: bereavementAllowance,
-        annual_used: annualUsed,
-        bereavement_used: bereavementUsed,
+        maternity_allowance: genderNorm === "female" ? maternityAllowance : 0,
+        paternity_allowance: genderNorm === "male" ? paternityAllowance : 0,
+        annual_used: used.annual_used,
+        bereavement_used: used.bereavement_used,
+        maternity_used: used.maternity_used,
+        paternity_used: used.paternity_used,
         annual_balance_adjustment: annualAdjustment,
         bereavement_balance_adjustment: bereavementAdjustment,
+        maternity_balance_adjustment: maternityAdjustment,
+        paternity_balance_adjustment: paternityAdjustment,
         leave_cycle_start: cycleStart,
-        annual_current_balance: roundLeaveDays(annualAllowance - annualUsed + annualAdjustment),
-        bereavement_current_balance: roundLeaveDays(
-          bereavementAllowance - bereavementUsed + bereavementAdjustment
+        annual_current_balance: roundLeaveDays(
+          annualAllowance - used.annual_used + annualAdjustment,
         ),
+        bereavement_current_balance: roundLeaveDays(
+          bereavementAllowance - used.bereavement_used + bereavementAdjustment,
+        ),
+        maternity_current_balance:
+          genderNorm === "female"
+            ? roundLeaveDays(
+                maternityAllowance - used.maternity_used + maternityAdjustment,
+              )
+            : 0,
+        paternity_current_balance:
+          genderNorm === "male"
+            ? roundLeaveDays(
+                paternityAllowance - used.paternity_used + paternityAdjustment,
+              )
+            : 0,
       };
     });
 
     return NextResponse.json({
       success: true,
-      employees: employeesWithBalance
+      employees: employeesWithBalance,
     });
   } catch (error) {
     console.error("Error fetching employee leave allowances:", error);
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : String(error)
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    );
   } finally {
     if (conn) conn.release();
   }
@@ -135,88 +217,196 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   let conn;
   try {
-    const { employee_id, annual_current_balance, bereavement_current_balance } = await req.json();
+    const body = await req.json();
+    const {
+      employee_id,
+      annual_current_balance,
+      bereavement_current_balance,
+      maternity_current_balance,
+      paternity_current_balance,
+    } = body;
 
     if (!employee_id) {
-      return NextResponse.json({
-        success: false,
-        error: "employee_id is required"
-      }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "employee_id is required" },
+        { status: 400 },
+      );
     }
 
     conn = await pool.getConnection();
 
-    const [empRows]: any = await conn.execute(`
+    const [empRows]: any = await conn.execute(
+      `
       SELECT 
         e.id,
         e.employment_status,
-        j.joined_date
+        e.gender,
+        j.joined_date,
+        d.name AS department_name
       FROM hrm_employees e
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
+      LEFT JOIN departments d ON j.department_id = d.id
       WHERE e.id = ?
-    `, [employee_id]);
+    `,
+      [employee_id],
+    );
 
     if (empRows.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: "Employee not found"
-      }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: "Employee not found" },
+        { status: 404 },
+      );
     }
 
     const emp = empRows[0];
+
+    const viewerId =
+      req.headers.get("x-hrm-employee-id") ||
+      req.headers.get("x-employee-id") ||
+      String(body?.viewerId || "").trim() ||
+      "";
+    const isAdminViewer =
+      String(req.headers.get("x-hrm-portal") || "").toLowerCase() === "admin" ||
+      String(body?.portal || "").toLowerCase() === "admin";
+
+    if (!viewerId && !isAdminViewer) {
+      return NextResponse.json(
+        { success: false, error: "viewerId is required" },
+        { status: 401 },
+      );
+    }
+    try {
+      if (viewerId && !isAdminViewer) {
+        const { getEmployeeAccessPayload } = await import(
+          "@/lib/access-control/store"
+        );
+        const { permissionSetHas } = await import(
+          "@/lib/access-control/permission-scope"
+        );
+        const access = await getEmployeeAccessPayload(viewerId);
+        const perms = Array.isArray(access?.permissions) ? access.permissions : [];
+        if (!permissionSetHas(perms, "leave.balances.edit")) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Only HR Admin can edit leave balances",
+            },
+            { status: 403 },
+          );
+        }
+        const { resolveViewerDataScope, rowInViewerScope } = await import(
+          "@/lib/access-control/data-scope"
+        );
+        const scope = await resolveViewerDataScope(viewerId);
+        if (
+          scope.mode !== "all" &&
+          !rowInViewerScope(scope, {
+            employeeId: emp.id,
+            departmentName: emp.department_name,
+          })
+        ) {
+          return NextResponse.json(
+            { success: false, error: "Out of scope" },
+            { status: 403 },
+          );
+        }
+      }
+    } catch (err) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: err instanceof Error ? err.message : "Permission check failed",
+        },
+        { status: 403 },
+      );
+    }
+    const genderNorm = normalizeEmployeeGender(emp.gender);
     const cycleStart = getLeaveCycleStartYmd(emp.joined_date || null);
     const annualTarget = parseLeaveDays(annual_current_balance);
     const bereavementTarget = parseLeaveDays(bereavement_current_balance);
+    const maternityTarget = parseLeaveDays(maternity_current_balance);
+    const paternityTarget = parseLeaveDays(paternity_current_balance);
     const annualAllowance = annualAllowanceForStatus(emp.employment_status);
     const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
+    const maternityAllowance = MATERNITY_ALLOWANCE;
+    const paternityAllowance = PATERNITY_ALLOWANCE;
 
     const [leaveRows]: any = await conn.execute(
       `SELECT leave_category, total_days, start_date
        FROM employee_leaves
        WHERE employee_id = ? AND status = 'approved'`,
-      [employee_id]
+      [employee_id],
     );
 
-    let annualUsed = 0;
-    let bereavementUsed = 0;
+    const used: UsedBucket = {
+      annual_used: 0,
+      bereavement_used: 0,
+      maternity_used: 0,
+      paternity_used: 0,
+    };
     (Array.isArray(leaveRows) ? leaveRows : []).forEach((leave: any) => {
       const startYmd = leaveDateToYmd(leave?.start_date);
       if (cycleStart && startYmd && startYmd < cycleStart) return;
       const days = Number(leave.total_days || 0);
       if (!Number.isFinite(days) || days <= 0) return;
-      if (String(leave.leave_category || "").toLowerCase() === "bereavement") {
-        bereavementUsed += days;
-      } else {
-        annualUsed += days;
-      }
+      bumpUsed(used, leave.leave_category, days);
     });
 
-    const annualAdjustment = roundLeaveDays(annualTarget - (annualAllowance - annualUsed));
-    const bereavementAdjustment = roundLeaveDays(
-      bereavementTarget - (bereavementAllowance - bereavementUsed)
+    const annualAdjustment = roundLeaveDays(
+      annualTarget - (annualAllowance - used.annual_used),
     );
+    const bereavementAdjustment = roundLeaveDays(
+      bereavementTarget - (bereavementAllowance - used.bereavement_used),
+    );
+    const maternityAdjustment =
+      genderNorm === "female"
+        ? roundLeaveDays(
+            maternityTarget - (maternityAllowance - used.maternity_used),
+          )
+        : 0;
+    const paternityAdjustment =
+      genderNorm === "male"
+        ? roundLeaveDays(
+            paternityTarget - (paternityAllowance - used.paternity_used),
+          )
+        : 0;
 
     await conn.execute(
       `INSERT INTO employee_leave_allowances
-        (employee_id, annual_balance_adjustment, bereavement_balance_adjustment, annual_allowance, bereavement_allowance, casual_allowance, sick_allowance, updated_at)
-      VALUES (?, ?, ?, ?, ?, 10, 15, NOW())
+        (employee_id, annual_balance_adjustment, bereavement_balance_adjustment,
+         maternity_balance_adjustment, paternity_balance_adjustment,
+         annual_allowance, bereavement_allowance, maternity_allowance, paternity_allowance,
+         casual_allowance, sick_allowance, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 10, 15, NOW())
       ON DUPLICATE KEY UPDATE
         annual_balance_adjustment = ?,
         bereavement_balance_adjustment = ?,
+        maternity_balance_adjustment = ?,
+        paternity_balance_adjustment = ?,
         annual_allowance = ?,
         bereavement_allowance = ?,
+        maternity_allowance = ?,
+        paternity_allowance = ?,
         updated_at = NOW()`,
       [
         employee_id,
         annualAdjustment,
         bereavementAdjustment,
+        maternityAdjustment,
+        paternityAdjustment,
         annualAllowance,
         bereavementAllowance,
+        maternityAllowance,
+        paternityAllowance,
         annualAdjustment,
         bereavementAdjustment,
+        maternityAdjustment,
+        paternityAdjustment,
         annualAllowance,
         bereavementAllowance,
-      ]
+        maternityAllowance,
+        paternityAllowance,
+      ],
     );
 
     return NextResponse.json({
@@ -224,13 +414,19 @@ export async function POST(req: NextRequest) {
       message: "Leave balance updated successfully",
       annual_current_balance: annualTarget,
       bereavement_current_balance: bereavementTarget,
+      maternity_current_balance:
+        genderNorm === "female" ? maternityTarget : 0,
+      paternity_current_balance: genderNorm === "male" ? paternityTarget : 0,
     });
   } catch (error) {
     console.error("Error updating leave allowance:", error);
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : String(error)
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    );
   } finally {
     if (conn) conn.release();
   }

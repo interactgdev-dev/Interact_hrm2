@@ -9,7 +9,6 @@ import {
   rowToTicket,
   type EmployeeTicketRow,
 } from "@/lib/employee-tickets-table";
-import { calendarDay } from "@/lib/mongo-helpers";
 import { broadcastWsEvent } from "@/lib/ws-broadcast";
 
 function ticketForm(ticket: EmployeeTicketRow): Record<string, unknown> {
@@ -17,24 +16,10 @@ function ticketForm(ticket: EmployeeTicketRow): Record<string, unknown> {
   return fd && typeof fd === "object" ? (fd as Record<string, unknown>) : {};
 }
 
-/** Business calendar day in Asia/Karachi (never UTC ISO prefix alone). */
 function ymd(v: unknown): string {
-  return calendarDay(v);
-}
-
-function parseTicketFormData(raw: unknown): Record<string, unknown> {
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    return raw as Record<string, unknown>;
-  }
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
-    } catch {
-      /* ignore */
-    }
-  }
-  return {};
+  const s = String(v || "").trim();
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  return m ? m[1] : "";
 }
 
 function leaveStatusFromTicket(status: string): "pending" | "approved" | "rejected" {
@@ -80,9 +65,16 @@ export async function syncLeaveRecordFromTicket(
 
   const fd = ticketForm(ticket);
   const employeeId = String(ticket.employee_id || "").trim();
-  // form_data dates may be Date / ISO from Mongo — calendarDay keeps Karachi day
-  const startDate = ymd(fd.start_date);
-  const endDate = ymd(fd.end_date) || startDate;
+  // form_data dates may be Date objects from Mongo
+  const startDate = ymd(
+    fd.start_date instanceof Date
+      ? fd.start_date.toISOString()
+      : fd.start_date
+  );
+  const endDate =
+    ymd(
+      fd.end_date instanceof Date ? fd.end_date.toISOString() : fd.end_date
+    ) || startDate;
   if (!employeeId || !startDate) return null;
 
   const leaveCategory = String(fd.leave_category || "annual").trim() || "annual";
@@ -100,23 +92,11 @@ export async function syncLeaveRecordFromTicket(
           ? "second_half"
           : ""
     ) ||
-    parseLeaveDuration(fd.halfDayPart) ||
-    // Fall back when total_days was already stored as 0.5 on the ticket form.
-    (Number(fd.total_days) > 0 && Number(fd.total_days) < 1
-      ? "first_half"
-      : null) ||
     "full";
   const effectiveEnd =
     duration === "first_half" || duration === "second_half" ? startDate : endDate;
-  const totalDays =
-    duration === "first_half" || duration === "second_half"
-      ? 0.5
-      : leaveDaysForDuration(duration, startDate, effectiveEnd);
+  const totalDays = leaveDaysForDuration(duration, startDate, effectiveEnd);
   const halfDayPart = halfDayPartFromDuration(duration);
-  // Persist duration on form_data so later balance/sync stays correct.
-  fd.leave_duration = duration;
-  fd.total_days = totalDays;
-  fd.half_day_part = halfDayPart;
   const reasonBody = String(fd.reason || ticket.description || "").trim();
   const marker = `[ticket:${ticket.id}]`;
   const reason = reasonBody.includes(marker)
@@ -319,234 +299,43 @@ export function ticketIdFromLeaveReason(reason: unknown): number | null {
   return Number.isFinite(id) && id > 0 ? id : null;
 }
 
-/** Find leave ticket id by employee + leave dates when reason has no [ticket:N] marker. */
-async function findLeaveTicketIdByDates(
-  employeeId: string,
-  startDate: string,
-  endDate: string,
-): Promise<number | null> {
-  const eid = String(employeeId || "").trim();
-  const start = ymd(startDate);
-  const end = ymd(endDate) || start;
-  if (!eid || !start) return null;
-  try {
-    const [rows] = await query(
-      `SELECT id, form_data, status FROM ${EMPLOYEE_TICKETS_TABLE}
-       WHERE ticket_type = ? AND employee_id = ?
-       ORDER BY id DESC LIMIT 40`,
-      ["leave", eid],
-    );
-    const list = Array.isArray(rows) ? rows : [];
-    let startOnlyMatch: number | null = null;
-    for (const raw of list as {
-      id: number;
-      form_data?: unknown;
-      status?: string;
-    }[]) {
-      const st = String(raw.status || "").toLowerCase();
-      if (st !== "pending" && st !== "in_progress") continue;
-      const fd = parseTicketFormData(raw.form_data);
-      const fdStart = ymd(fd.start_date);
-      const fdEnd = ymd(fd.end_date) || fdStart;
-      if (!fdStart) continue;
-      if (fdStart === start && fdEnd === end) return Number(raw.id);
-      // Half-day / form end missing: match on start date alone (first open ticket).
-      if (fdStart === start && startOnlyMatch == null) {
-        startOnlyMatch = Number(raw.id);
-      }
-    }
-    return startOnlyMatch;
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-async function applyTicketDecision(
-  ticketId: number,
-  ticketStatus: "resolved" | "rejected",
-  actorId: string | null,
-  actorName: string | null,
-): Promise<boolean> {
-  const nowIso = new Date().toISOString().slice(0, 19).replace("T", " ");
-  // Prefer full approver columns; always force status by id (Mongo IN filters are flaky).
-  try {
-    await query(
-      `UPDATE ${EMPLOYEE_TICKETS_TABLE}
-       SET status = ?, resolved_at = ?, updated_at = ?,
-           approved_by = ?, approved_by_name = ?
-       WHERE id = ?`,
-      [ticketStatus, nowIso, nowIso, actorId, actorName, ticketId],
-    );
-    return true;
-  } catch {
-    try {
-      await query(
-        `UPDATE ${EMPLOYEE_TICKETS_TABLE}
-         SET status = ?, resolved_at = ?, updated_at = ?
-         WHERE id = ?`,
-        [ticketStatus, nowIso, nowIso, ticketId],
-      );
-      return true;
-    } catch (err) {
-      console.warn("[leave-ticket-sync] ticket status update failed", err);
-      return false;
-    }
-  }
-}
-
 /**
  * When leave is approved/rejected on Leaves page, mirror status onto the linked ticket
- * so Ticket Inbox stays in sync and shows Approved by (TL / Manager / CEO).
+ * so Ticket Inbox stays in sync and shows Approved by.
  */
 export async function syncTicketFromLeaveDecision(opts: {
   leaveReason: unknown;
   status: "approved" | "rejected";
   actorId?: string | null;
   actorName?: string | null;
-  employeeId?: string | null;
-  startDate?: string | null;
-  endDate?: string | null;
 }): Promise<void> {
-  let ticketId = ticketIdFromLeaveReason(opts.leaveReason);
-  if (!ticketId) {
-    ticketId = await findLeaveTicketIdByDates(
-      String(opts.employeeId || ""),
-      ymd(opts.startDate) || String(opts.startDate || ""),
-      ymd(opts.endDate) || ymd(opts.startDate) || String(opts.endDate || ""),
-    );
-  }
-  if (!ticketId) {
-    console.warn(
-      "[leave-ticket-sync] no ticket found for leave decision",
-      String(opts.employeeId || ""),
-      ymd(opts.startDate),
-    );
-    return;
-  }
+  const ticketId = ticketIdFromLeaveReason(opts.leaveReason);
+  if (!ticketId) return;
   const ticketStatus = opts.status === "approved" ? "resolved" : "rejected";
+  const nowIso = new Date().toISOString().slice(0, 19).replace("T", " ");
   const actorId = String(opts.actorId || "").trim() || null;
   const actorName = String(opts.actorName || "").trim() || null;
-  const ok = await applyTicketDecision(ticketId, ticketStatus, actorId, actorName);
-  if (ok) {
-    // Keep leave reason linked for future syncs / monthly attendance.
+  try {
     try {
-      const marker = `[ticket:${ticketId}]`;
-      const reason = String(opts.leaveReason || "");
-      const start = ymd(opts.startDate);
-      const end = ymd(opts.endDate) || start;
-      if (opts.employeeId && start && !reason.includes(marker)) {
-        const [byDate] = await query(
-          `SELECT id, reason, start_date, end_date FROM employee_leaves
-           WHERE employee_id = ? ORDER BY id DESC LIMIT 20`,
-          [String(opts.employeeId)],
-        );
-        for (const row of (Array.isArray(byDate) ? byDate : []) as {
-          id: number;
-          reason?: string;
-          start_date?: unknown;
-          end_date?: unknown;
-        }[]) {
-          if (ymd(row.start_date) !== start) continue;
-          if ((ymd(row.end_date) || ymd(row.start_date)) !== end) continue;
-          const prev = String(row.reason || "");
-          if (prev.includes(marker)) break;
-          const next = `${prev}${prev ? " " : ""}${marker}`.trim();
-          await query(`UPDATE employee_leaves SET reason = ? WHERE id = ?`, [
-            next,
-            row.id,
-          ]);
-          break;
-        }
-      }
+      await query(
+        `UPDATE ${EMPLOYEE_TICKETS_TABLE}
+         SET status = ?, resolved_at = ?, updated_at = ?,
+             approved_by = ?, approved_by_name = ?
+         WHERE id = ? AND status IN ('pending', 'in_progress')`,
+        [ticketStatus, nowIso, nowIso, actorId, actorName, ticketId]
+      );
     } catch {
-      /* marker optional */
+      await query(
+        `UPDATE ${EMPLOYEE_TICKETS_TABLE}
+         SET status = ?, resolved_at = ?, updated_at = ?
+         WHERE id = ? AND status IN ('pending', 'in_progress')`,
+        [ticketStatus, nowIso, nowIso, ticketId]
+      );
     }
     broadcastWsEvent({ type: "ticket_update" });
-    broadcastWsEvent({ type: "leave_update" });
+  } catch (err) {
+    console.warn("[leave-ticket-sync] ticket mirror failed", err);
   }
-}
-
-/**
- * If Leaves page already approved/rejected but Ticket Inbox still shows Pending,
- * push leave decision onto matching open leave tickets (in-memory + DB).
- */
-export async function repairPendingTicketsFromLeaves<
-  T extends {
-    id: number;
-    employee_id?: string | number;
-    ticket_type?: string | null;
-    status?: string | null;
-    form_data?: Record<string, unknown> | null;
-    approved_by_name?: string | null;
-  },
->(tickets: T[]): Promise<T[]> {
-  const openLeave = tickets.filter(
-    (t) =>
-      String(t.ticket_type || "").toLowerCase() === "leave" &&
-      ["pending", "in_progress"].includes(String(t.status || "").toLowerCase()),
-  );
-  if (openLeave.length === 0) return tickets;
-
-  for (const t of openLeave) {
-    const eid = String(t.employee_id || "").trim();
-    if (!eid) continue;
-    const fd = parseTicketFormData(t.form_data);
-    const start = ymd(fd.start_date);
-    const end = ymd(fd.end_date) || start;
-    if (!start) continue;
-    try {
-      type LeaveRow = {
-        status?: string;
-        reason?: string;
-        step1_by?: string | null;
-        step2_by?: string | null;
-        start_date?: unknown;
-        end_date?: unknown;
-      };
-      // Fetch by employee only — date equality in SQL breaks on Mongo Date objects.
-      const [rows] = await query(
-        `SELECT id, status, reason, step1_by, step2_by, start_date, end_date
-         FROM employee_leaves
-         WHERE employee_id = ?
-         ORDER BY id DESC LIMIT 30`,
-        [eid],
-      );
-      const list = (Array.isArray(rows) ? rows : []) as LeaveRow[];
-      const decided = list.find((r) => {
-        const st = String(r.status || "").toLowerCase();
-        if (st !== "approved" && st !== "rejected") return false;
-        const rStart = ymd(r.start_date);
-        const rEnd = ymd(r.end_date) || rStart;
-        if (rStart !== start) return false;
-        const reason = String(r.reason || "");
-        if (reason.includes(`[ticket:${t.id}]`)) return true;
-        if (rEnd === end || rStart === start) return true;
-        return false;
-      });
-      if (!decided) continue;
-      const leaveStatus = String(decided.status || "").toLowerCase() as
-        | "approved"
-        | "rejected";
-      const actorName = String(
-        decided.step2_by || decided.step1_by || "",
-      ).trim();
-      await syncTicketFromLeaveDecision({
-        leaveReason: decided.reason || `[ticket:${t.id}]`,
-        status: leaveStatus,
-        actorId: null,
-        actorName: actorName || null,
-        employeeId: eid,
-        startDate: ymd(decided.start_date) || start,
-        endDate: ymd(decided.end_date) || end,
-      });
-      t.status = leaveStatus === "approved" ? "resolved" : "rejected";
-      if (actorName) t.approved_by_name = actorName;
-    } catch {
-      /* skip row */
-    }
-  }
-  return tickets;
 }
 
 let lastBackfillAt = 0;

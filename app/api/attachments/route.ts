@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs/promises";
 import { v4 as uuidv4 } from "uuid";
 import { pool } from "@/lib/db";
-import { uploadServeUrl } from "@/lib/upload-serve";
 
 // Max file size: 100MB
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -35,13 +34,12 @@ export async function POST(req: NextRequest) {
     const filePath = path.join(UPLOAD_DIR, uniqueName);
     const arrayBuffer = await file.arrayBuffer();
     await fs.writeFile(filePath, Buffer.from(arrayBuffer));
-    const storedPath = `/uploads/${uniqueName}`;
-    // Save record in DB (MySQL / Mongo adapter)
+    // Save record in DB (MySQL)
     await pool.execute(
       `INSERT INTO employee_attachments (employee_id, file_name, file_path, file_size) VALUES (?, ?, ?, ?)`,
-      [Number(employee_id), file.name, storedPath, file.size]
+      [Number(employee_id), file.name, `/uploads/${uniqueName}`, file.size]
     );
-    savedFiles.push({ name: file.name, url: uploadServeUrl(storedPath), path: storedPath });
+    savedFiles.push({ name: file.name, url: `/uploads/${uniqueName}` });
   }
   return NextResponse.json({ success: true, files: savedFiles });
 }

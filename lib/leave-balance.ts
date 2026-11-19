@@ -7,7 +7,12 @@ import {
   getLeaveCycleStartYmd,
   shouldApplyLeaveAdjustment,
 } from "@/lib/leave-cycle";
-import { approvedLeaveKindFromRow } from "@/lib/leave-duration";
+import {
+  BEREAVEMENT_ALLOWANCE,
+  MATERNITY_ALLOWANCE,
+  PATERNITY_ALLOWANCE,
+  normalizeEmployeeGender,
+} from "@/lib/leave-categories";
 import { getDateStringInTimeZone } from "@/lib/timezone";
 
 export type LeaveBalanceResult = {
@@ -15,12 +20,19 @@ export type LeaveBalanceResult = {
   employee_id: string | number;
   resolvedEmployeeId: number | null;
   employment_status: "Probation" | "Permanent";
+  gender: string | null;
   leaveCycleStart: string | null;
   annualBalance: number;
   annualAllowance: number;
   bereavementBalance: number;
+  maternityBalance: number;
+  maternityAllowance: number;
+  paternityBalance: number;
+  paternityAllowance: number;
   annualBalanceAdjustment: number;
   bereavementBalanceAdjustment: number;
+  maternityBalanceAdjustment: number;
+  paternityBalanceAdjustment: number;
   usedLeave: Record<string, number>;
   totalUsedDays: number;
 };
@@ -40,11 +52,13 @@ export async function getEmployeeLeaveBalance(
     conn = await pool.getConnection();
 
     const [empRows]: any = await conn.execute(
-      "SELECT id, employee_code, employment_status FROM hrm_employees WHERE employee_code = ? OR CAST(id AS CHAR) = ? OR username = ?",
+      "SELECT id, employee_code, employment_status, gender FROM hrm_employees WHERE employee_code = ? OR CAST(id AS CHAR) = ? OR username = ?",
       [employee_id, employee_id, employee_id]
     );
     const emp = empRows.length > 0 ? empRows[0] : null;
     const resolvedEmployeeId = emp?.id ? Number(emp.id) : null;
+    const genderRaw = emp?.gender != null ? String(emp.gender) : null;
+    const genderNorm = normalizeEmployeeGender(genderRaw);
 
     const [jobRows]: any = await conn.execute(
       "SELECT employment_status, DATE_FORMAT(joined_date, '%Y-%m-%d') AS joined_date FROM employee_jobs WHERE employee_id = ?",
@@ -65,7 +79,9 @@ export async function getEmployeeLeaveBalance(
       allowanceResult && allowanceResult.length > 0 ? allowanceResult[0] : null;
 
     const annualAllowance = effectiveStatus === "Probation" ? 3 : 20;
-    const bereavementAllowance = 3;
+    const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
+    const maternityAllowance = MATERNITY_ALLOWANCE;
+    const paternityAllowance = PATERNITY_ALLOWANCE;
     const leaveCycleStart = getLeaveCycleStartYmd(job?.joined_date || null);
 
     const isCurrentCycleAdjustment = shouldApplyLeaveAdjustment(
@@ -78,71 +94,69 @@ export async function getEmployeeLeaveBalance(
     const bereavementBalanceAdjustment = isCurrentCycleAdjustment
       ? Number(customAllowance?.bereavement_balance_adjustment ?? 0)
       : 0;
+    const maternityBalanceAdjustment = isCurrentCycleAdjustment
+      ? Number(customAllowance?.maternity_balance_adjustment ?? 0)
+      : 0;
+    const paternityBalanceAdjustment = isCurrentCycleAdjustment
+      ? Number(customAllowance?.paternity_balance_adjustment ?? 0)
+      : 0;
 
-    // Fetch approved leaves for this employee. Do NOT use DATE(col) <= today —
-    // on Mongo the adapter strips DATE() and datetime `updated_at` then fails
-    // string-compare against a date-only bound, so half-day deducts never apply.
     let leavesQuery =
-      "SELECT leave_category, total_days, half_day_part, start_date, end_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
+      "SELECT leave_category, total_days, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
     const leaveId = resolvedEmployeeId ?? employee_id;
     const leaveParams: any[] = [leaveId, String(leaveId)];
-    let leaves: any[] = [];
-    try {
-      const [rows]: any = await conn.execute(leavesQuery, leaveParams);
-      leaves = Array.isArray(rows) ? rows : [];
-    } catch {
-      // Older DBs without half_day_part column.
-      leavesQuery =
-        "SELECT leave_category, total_days, start_date, end_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
-      const [rows]: any = await conn.execute(leavesQuery, leaveParams);
-      leaves = Array.isArray(rows) ? rows : [];
+    const todayYmd = getDateStringInTimeZone(new Date());
+    if (leaveCycleStart) {
+      leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) >= ?";
+      leaveParams.push(leaveCycleStart);
     }
+    leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) <= ?";
+    leaveParams.push(todayYmd);
+    const [leaves]: any = await conn.execute(leavesQuery, leaveParams);
 
-    const cycleStart = leaveCycleStart || "";
     const usedLeave: Record<string, number> = {};
     let totalUsedDays = 0;
     for (const leave of leaves as any[]) {
-      // Keep leaves approved/taken in the current cycle (by approval or start date).
-      const updatedYmd = getDateStringInTimeZone(
-        leave.updated_at || leave.start_date || "",
-      );
-      const startYmd = getDateStringInTimeZone(leave.start_date || "");
-      const cycleKey = updatedYmd || startYmd;
-      if (cycleStart && cycleKey && cycleKey < cycleStart) continue;
-
       const category = String(leave.leave_category || "annual");
-      // Full day → 1+; 1st/2nd half → always 0.5 (even if INT column stored 1).
-      const kind = approvedLeaveKindFromRow(leave);
-      const rawDays = Number(leave.total_days);
-      const days =
-        kind === "first_half" || kind === "second_half"
-          ? 0.5
-          : Number.isFinite(rawDays) && rawDays > 0
-            ? rawDays
-            : 0;
-      if (days <= 0) continue;
+      const days = Number(leave.total_days || 0);
       usedLeave[category] = (usedLeave[category] || 0) + days;
       totalUsedDays += days;
     }
 
     const bereavementUsedDays = usedLeave.bereavement || 0;
-    const totalApprovedDaysUsed = totalUsedDays - bereavementUsedDays;
+    const maternityUsedDays = usedLeave.maternity || 0;
+    const paternityUsedDays = usedLeave.paternity || 0;
+    const annualUsedDays =
+      totalUsedDays - bereavementUsedDays - maternityUsedDays - paternityUsedDays;
     const annualBalance =
-      annualAllowance - totalApprovedDaysUsed + annualBalanceAdjustment;
+      annualAllowance - annualUsedDays + annualBalanceAdjustment;
     const bereavementBalance =
       bereavementAllowance - bereavementUsedDays + bereavementBalanceAdjustment;
+    const maternityBalance =
+      maternityAllowance - maternityUsedDays + maternityBalanceAdjustment;
+    const paternityBalance =
+      paternityAllowance - paternityUsedDays + paternityBalanceAdjustment;
 
     return {
       success: true,
       employee_id,
       resolvedEmployeeId,
       employment_status: effectiveStatus,
+      gender: genderRaw,
       leaveCycleStart,
       annualBalance: Math.max(0, annualBalance),
       annualAllowance,
       bereavementBalance: Math.max(0, bereavementBalance),
+      maternityBalance:
+        genderNorm === "female" ? Math.max(0, maternityBalance) : 0,
+      maternityAllowance: genderNorm === "female" ? maternityAllowance : 0,
+      paternityBalance:
+        genderNorm === "male" ? Math.max(0, paternityBalance) : 0,
+      paternityAllowance: genderNorm === "male" ? paternityAllowance : 0,
       annualBalanceAdjustment,
       bereavementBalanceAdjustment,
+      maternityBalanceAdjustment,
+      paternityBalanceAdjustment,
       usedLeave,
       totalUsedDays,
     };
@@ -156,13 +170,15 @@ export async function getEmployeeLeaveBalance(
   }
 }
 
-/** Remaining days for a leave category (bereavement vs annual pool). */
+/** Remaining days for a leave category. */
 export function remainingForCategory(
   balance: LeaveBalanceResult,
   category: string
 ): number {
   const cat = String(category || "annual").toLowerCase();
   if (cat === "bereavement") return balance.bereavementBalance;
+  if (cat === "maternity") return balance.maternityBalance;
+  if (cat === "paternity") return balance.paternityBalance;
   return balance.annualBalance;
 }
 
@@ -183,12 +199,17 @@ export function assertLeaveBalanceAllowsRequest(
     return { ok: false, error: "Please select type of leave." };
   }
   if (remaining <= 0) {
+    const label =
+      cat === "bereavement"
+        ? "Bereavement"
+        : cat === "maternity"
+          ? "Maternity"
+          : cat === "paternity"
+            ? "Paternity"
+            : "Leave";
     return {
       ok: false,
-      error:
-        cat === "bereavement"
-          ? "Bereavement leave balance is 0. You cannot apply for leave."
-          : "Leave balance is 0. You cannot apply for leave.",
+      error: `${label} leave balance is 0. You cannot apply for leave.`,
     };
   }
   if (days > remaining) {

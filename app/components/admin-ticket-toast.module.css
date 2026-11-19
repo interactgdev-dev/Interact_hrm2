@@ -16,14 +16,17 @@
   gap: 16px;
   align-items: flex-start;
   padding: 18px 20px 18px 18px;
-  background: linear-gradient(135deg, #ffffff 0%, #fdfaff 55%, #f8f3fc 100%);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
   color: #1d1c1d;
-  border-radius: 16px;
-  border: 1px solid #e8d9ef;
-  border-left: 5px solid #611f69;
+  border-radius: 18px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-left: 4px solid #14b8a6;
   box-shadow:
-    0 12px 40px rgba(97, 31, 105, 0.14),
-    0 4px 12px rgba(15, 23, 42, 0.06);
+    0 16px 40px rgba(15, 23, 42, 0.12),
+    0 4px 12px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
   animation: toastIn 0.32s cubic-bezier(0.22, 1, 0.36, 1);
   cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
@@ -32,7 +35,7 @@
 .toast:hover {
   transform: translateY(-2px);
   box-shadow:
-    0 16px 48px rgba(97, 31, 105, 0.18),
+    0 20px 48px rgba(15, 23, 42, 0.14),
     0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
@@ -72,7 +75,7 @@
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #611f69 0%, #4a154b 100%);
+  background: #14b8a6;
   color: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -83,7 +86,7 @@
 .toastNumber {
   font-size: 12px;
   font-weight: 700;
-  color: #7c3aed;
+  color: #0d9488;
   letter-spacing: 0.02em;
 }
 

@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
       success: true,
       employee_id: result.employee_id,
       employment_status: result.employment_status,
+      gender: result.gender,
       probationEndsOn: null,
       leaveCycleStart: result.leaveCycleStart,
       usedLeave: result.usedLeave,
@@ -28,8 +29,15 @@ export async function GET(req: NextRequest) {
       annualBalance: result.annualBalance,
       annualAllowance: result.annualAllowance,
       bereavementBalance: result.bereavementBalance,
+      bereavementAllowance: 3,
+      maternityBalance: result.maternityBalance,
+      maternityAllowance: result.maternityAllowance,
+      paternityBalance: result.paternityBalance,
+      paternityAllowance: result.paternityAllowance,
       annualBalanceAdjustment: result.annualBalanceAdjustment,
       bereavementBalanceAdjustment: result.bereavementBalanceAdjustment,
+      maternityBalanceAdjustment: result.maternityBalanceAdjustment,
+      paternityBalanceAdjustment: result.paternityBalanceAdjustment,
     });
   } catch (error) {
     return NextResponse.json({

@@ -105,7 +105,7 @@ export default function AdminFinancialRequestsPage() {
     <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={adminStyles.inner}>
-          <h1 className={adminStyles.title}>Payroll requests</h1>
+          <h1 className={adminStyles.title}>Advance loan request</h1>
           <p className={adminStyles.subtitle}>
             Review employee advance and loan requests. Approved items are added to payroll.
           </p>

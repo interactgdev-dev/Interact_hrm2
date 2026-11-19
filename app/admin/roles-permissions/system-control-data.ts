@@ -83,6 +83,8 @@ const PERM_HINTS: Record<string, string> = {
   "payroll.commissions": "Access commission calculation and payout screens.",
   "payroll.advance": "Process salary advance requests.",
   "payroll.loan": "Manage employee loan schedules and deductions.",
+  "payroll.claims":
+    "HR adds claims; Finance sees approved/pending claims and marks them Paid after payment.",
   "payroll.financial_history":
     "View complete employee advance/loan history, installments, and yearly totals.",
   "payroll.salary_disbursement":
@@ -98,7 +100,7 @@ const PERM_HINTS: Record<string, string> = {
   "people.face_enrollment.manage": "Enroll or update biometric face profiles.",
   "people.files.view": "Access employee document files.",
   "people.appraisals.view": "Review pending appraisal workflows.",
-  "people.formats.view": "Open HR formats library.",
+  "people.formats.view": "Open Form Templates.",
   "people.recruitment.view": "Open recruitment module.",
   "shifts.scheduler.view": "Open shift scheduler.",
   "shifts.management.view": "Manage shift templates and assignments.",
@@ -317,6 +319,7 @@ export const FEATURE_MODULES = withPermissionHints([
       { key: "payroll.commissions", label: "Commissions" },
       { key: "payroll.advance", label: "Advance" },
       { key: "payroll.loan", label: "Loan" },
+      { key: "payroll.claims", label: "Claims" },
       { key: "payroll.financial_history", label: "Financial history" },
       { key: "payroll.salary_disbursement", label: "Salary disbursement" },
       { key: "payroll.financial_requests.view", label: "Financial request inbox" },
@@ -337,7 +340,7 @@ export const FEATURE_MODULES = withPermissionHints([
       { key: "people.face_enrollment.manage", label: "Face enrollment" },
       { key: "people.files.view", label: "Employee files" },
       { key: "people.appraisals.view", label: "Pending appraisals" },
-      { key: "people.formats.view", label: "Formats library" },
+      { key: "people.formats.view", label: "Form Templates" },
       { key: "people.recruitment.view", label: "Recruitment" },
     ],
   },
@@ -495,11 +498,13 @@ const HR_ROLE_OPS = [
   "leave.list.view",
   "leave.approval_status.view",
   "leave.monthly_summary.view",
+  "leave.balances.edit",
   "payroll.monthly.view",
   "payroll.daily.view",
   "payroll.daily.edit",
   "payroll.advance",
   "payroll.loan",
+  "payroll.claims",
   "payroll.financial_history",
   "ops.tickets.view",
 ];
@@ -554,7 +559,7 @@ export const GLOBAL_FEATURES: GlobalFeature[] = [
     key: "team_lead_module",
     name: "Team module",
     desc: "Org flag for team features; assigned team.* permissions still always show in the employee sidebar",
-    on: false,
+    on: true,
   },
   { key: "tickets", name: "Ticket system", desc: "Employee tickets and admin ticket inbox", on: true },
   { key: "recruitment", name: "Recruitment module", desc: "Recruitment workflows and pages", on: true },
@@ -807,7 +812,16 @@ export function orgDeptChipLabel(departmentName: string | undefined | null): str
   ) {
     return "Medical Billing";
   }
-  if (t === "finance" || t === "accounts") return "Finance";
+  if (
+    t === "finance" ||
+    t === "accounts" ||
+    t === "account" ||
+    t.includes("finance") ||
+    t.includes("accounts") ||
+    (t.includes("account") && !t.includes("accounting software"))
+  ) {
+    return "Finance";
+  }
   return String(departmentName || "").trim() || null;
 }
 

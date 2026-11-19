@@ -43,7 +43,7 @@ export function registerZkbioCron(): void {
 
   const tick = () => {
     const started = ts();
-    console.log(`[zkbio-sync] ▶ ${started} — sync started (ZKBio → zkbio_punch_log)`);
+    console.log(`[zkbio-sync] ▶ ${started} — sync started (ZKBio → MySQL zkbio_punch_log)`);
 
     runZkbioSync()
       .then((r) => {

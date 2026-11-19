@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import LeaveInboxPage from "../../leave/page";
-
+/** Legacy Leaves inbox → unified 3-tab Leaves (Requests first). */
 export default function EmployeeLeaveInboxPage() {
-  return <LeaveInboxPage />;
+  redirect("/employee-dashboard/manage-leaves?tab=requests");
 }

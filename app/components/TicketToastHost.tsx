@@ -134,6 +134,9 @@ export function TicketToastHost() {
         const msg = JSON.parse(evt.data.toString());
         const path = window.location.pathname || "/";
 
+        // Guard policy alerts are inbox-only (silent: true).
+        if (msg?.silent) return;
+
         if (msg?.type === "ticket_created" && msg?.ticket) {
           const payload = wsTicketToToastPayload(msg.ticket, "created");
           if (payload && shouldShowTicketCreated(path)) pushToast(payload);

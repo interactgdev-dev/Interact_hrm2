@@ -47,6 +47,10 @@ function isRatingScaleSelect(field: FormFieldDef): boolean {
   return hasExcellent && hasGood && (hasAverage || hasNeedsImprovement);
 }
 
+export function isHeadingField(field: FormFieldDef): boolean {
+  return String(field.type || "").toLowerCase() === "heading";
+}
+
 export function isEmployeeField(field: FormFieldDef): boolean {
   return !isManagerField(field) && !isHrField(field);
 }
@@ -85,6 +89,7 @@ export function validateRequiredFields(
 ): string | null {
   for (const field of fieldsForAudience(schema, audience)) {
     if (!field.required || !field.key) continue;
+    if (isHeadingField(field)) continue;
     const val = formData[field.key];
     if (field.type === "checkbox") {
       if (!val) return `${field.label || field.key} is required`;

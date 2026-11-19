@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import AdminPage from "../../admin/monthly-leave-summary/page";
-
-export default function EmployeeMonthlyLeaveSummaryPage() {
-  return <AdminPage />;
+/** Leave Summary menu removed — Summary lives inside Leaves tabs. */
+export default function MonthlyLeaveSummaryRedirect() {
+  redirect("/employee-dashboard/manage-leaves?tab=requests");
 }

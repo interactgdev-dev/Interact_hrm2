@@ -2,6 +2,7 @@
 
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import styles from "../break-summary/break-summary.module.css";
+import leaveStyles from "../leave/leave.module.css";
 import { EmployeeTableNameCell } from "../components/EmployeeTableNameCell";
 import {
   EmployeeDetailPopup,
@@ -22,6 +23,11 @@ import {
   filterRowsByClockInSessionDate,
   overnightFetchRange,
 } from "@/lib/break-session-date";
+import {
+  buildAllowanceSecondsByEmployeeSession,
+  exceedSecondsOverAllowance,
+  resolveAllowanceSeconds,
+} from "@/lib/break-prayer-allowance";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
@@ -55,6 +61,7 @@ export default function PrayerSummaryView() {
   const [fromDate, setFromDate] = useState(today);
   const [toDate, setToDate] = useState(today);
   const [prayerBreaks, setPrayerBreaks] = useState<any[]>([]);
+  const [attendanceRows, setAttendanceRows] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -96,13 +103,28 @@ export default function PrayerSummaryView() {
       toDate: range.toDate,
     });
     setLoading(true);
-    fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) setPrayerBreaks(data.prayer_breaks || []);
-        else setPrayerBreaks([]);
+    Promise.all([
+      fetch(`/api/prayer_breaks?${params.toString()}`, { cache: "no-store" }).then(
+        (r) => r.json(),
+      ),
+      fetch(`/api/attendance?${params.toString()}&summary=1`, {
+        cache: "no-store",
+      }).then((r) => r.json()),
+    ])
+      .then(([prayerData, attData]) => {
+        setPrayerBreaks(
+          prayerData.success ? prayerData.prayer_breaks || [] : [],
+        );
+        setAttendanceRows(
+          attData.success && Array.isArray(attData.attendance)
+            ? attData.attendance
+            : [],
+        );
       })
-      .catch(() => setPrayerBreaks([]))
+      .catch(() => {
+        setPrayerBreaks([]);
+        setAttendanceRows([]);
+      })
       .finally(() => setLoading(false));
   }, [fromDate, toDate, today]);
 
@@ -149,6 +171,11 @@ export default function PrayerSummaryView() {
     return map;
   }, [filteredPrayerBreaks]);
 
+  const prayerAllowanceMap = useMemo(
+    () => buildAllowanceSecondsByEmployeeSession(attendanceRows, "prayer"),
+    [attendanceRows],
+  );
+
   const rows = useMemo(() => {
     const liveTotals = new Map(staticTotals);
     for (const p of filteredPrayerBreaks) {
@@ -167,10 +194,17 @@ export default function PrayerSummaryView() {
         const sessionSeconds = p.prayer_break_start ? Math.floor((end - start) / 1000) : 0;
         const key = getSessionGroupingKey(p);
         const dailySeconds = liveTotals.get(key) || sessionSeconds;
-        const exceedToday = dailySeconds > 1800 ? dailySeconds - 1800 : 0;
+        const sessionDate = breakSessionDate(p);
+        const allowance = resolveAllowanceSeconds(prayerAllowanceMap, {
+          employeeId: p.employee_id,
+          sessionDate,
+          attendanceSessionId: p.attendance_session_id,
+          kind: "prayer",
+        });
+        const exceedToday = exceedSecondsOverAllowance(dailySeconds, allowance);
         return {
           ...p,
-          date_display: breakSessionDate(p),
+          date_display: sessionDate,
           prayer_start_display: p.prayer_break_start ? getTimeStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : "",
           prayer_end_display: p.prayer_break_end ? getTimeStringInTimeZone(p.prayer_break_end, SERVER_TIMEZONE) : (isRunning ? "Running..." : ""),
           total_prayer_time: formatDuration(sessionSeconds),
@@ -179,7 +213,7 @@ export default function PrayerSummaryView() {
         };
       })
       .sort((a, b) => new Date(b.prayer_break_start || 0).getTime() - new Date(a.prayer_break_start || 0).getTime());
-  }, [filteredPrayerBreaks, staticTotals, now]);
+  }, [filteredPrayerBreaks, staticTotals, now, prayerAllowanceMap]);
 
   const downloadPrayerCSV = () => {
     const headers = [
@@ -263,45 +297,70 @@ export default function PrayerSummaryView() {
     <>
       <div className={styles.breakSummaryContainer}>
         <h1 className={styles.pageTitle}>Prayer Break Summary</h1>
-        <div className={styles.breakSummaryFilters}>
-          <input
-            type="text"
-            placeholder="Search by name or pseudo name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className={styles.breakSummaryInput}
-            style={{ width: 180 }}
-          />
-          <select value={department} onChange={(e) => setDepartment(e.target.value)} className={styles.breakSummaryDate} style={{ width: 180 }}>
+        <div className={leaveStyles.toolbar}>
+          <div className={leaveStyles.searchWrap}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="search"
+              className={leaveStyles.toolbarSearch}
+              placeholder="Search by name or pseudo name"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <select
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            className={leaveStyles.toolbarSelect}
+            aria-label="Filter by department"
+          >
             <option value="">
               {viewerScope.mode === "all" ? "All Departments" : "All (your departments)"}
             </option>
             {scopedDepartments.map((dept: any) => (
-              <option key={dept.id} value={dept.name}>{dept.name}</option>
+              <option key={dept.id} value={dept.name}>
+                {dept.name}
+              </option>
             ))}
           </select>
           <input
             type="date"
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
-            className={styles.breakSummaryDate}
-            placeholder="From Date"
+            className={leaveStyles.toolbarSelect}
+            aria-label="From date"
           />
           <input
             type="date"
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
-            className={styles.breakSummaryDate}
-            placeholder="To Date"
+            className={leaveStyles.toolbarSelect}
+            aria-label="To date"
           />
-          <button onClick={downloadPrayerCSV} className={styles.breakSummaryXLSButton} title="Download XLS">
-            <FaFileExcel size={20} />
-            <span>Export XLS</span>
-          </button>
-          <button onClick={handleImportClick} className={styles.breakSummaryXLSButton} title="Import XLS">
-            <FaFileExcel size={20} />
-            <span>Import XLS</span>
-          </button>
+          <div className={leaveStyles.toolbarActions}>
+            <button
+              type="button"
+              onClick={downloadPrayerCSV}
+              className={styles.breakSummaryXLSButton}
+              title="Download XLS"
+            >
+              <FaFileExcel size={14} />
+              <span>Export XLS</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleImportClick}
+              className={`${styles.breakSummaryXLSButton} ${styles.breakSummaryXLSButtonSecondary}`}
+              title="Import XLS"
+            >
+              <FaFileExcel size={14} />
+              <span>Import XLS</span>
+            </button>
+          </div>
           <input
             ref={importInputRef}
             type="file"
@@ -311,65 +370,69 @@ export default function PrayerSummaryView() {
           />
         </div>
 
-        <div className={styles.breakSummaryTableWrapper}>
-          {loading ? (
-            <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
-              Loading...
-            </div>
-          ) : (
-          <table className={styles.breakSummaryTable}>
-            <thead>
-              <tr>
-                <th>Id</th>
-                <th>Full Name</th>
-                <th>P.Name</th>
-                <th>Department</th>
-                <th>Date</th>
-                <th>Prayer Start</th>
-                <th>Prayer End</th>
-                <th>Total Prayer Time</th>
-                <th>Total Prayer</th>
-                <th>Exceed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className={styles.breakSummaryNoRecords}>No records found.</td>
-                </tr>
-              ) : (
-                rows.map((p, idx) => (
-                  <tr key={p.id || idx}>
-                    <td className={styles.cellMuted}>{p.employee_id}</td>
-                    <td className={styles.nameCol}>
-                      <EmployeeTableNameCell
-                        key={`${p.employee_id}-${getPhoto(p.employee_id) ?? "none"}`}
-                        name={p.employee_name || ""}
-                        employeeId={p.employee_id}
-                        photo={getPhoto(p.employee_id)}
-                        onOpen={() => openEmployeeDetail(p)}
-                      />
-                    </td>
-                    <td>{p.pseudonym || "-"}</td>
-                    <td>{p.department_name || "-"}</td>
-                    <td>{p.date_display}</td>
-                    <td>{p.prayer_start_display}</td>
-                    <td>
-                      {p.prayer_break_start && !p.prayer_break_end ? (
-                        <span className={styles.badgeRunning}>Running</span>
-                      ) : (
-                        p.prayer_end_display
-                      )}
-                    </td>
-                    <td>{p.total_prayer_time}</td>
-                    <td>{p.total_prayer_time_today}</td>
-                    <td className={p.exceed_today ? styles.cellExceed : undefined}>{p.exceed_today}</td>
+        <div className={leaveStyles.reqTableShell}>
+          <div className={leaveStyles.reqTableScroll}>
+            {loading ? (
+              <div className={leaveStyles.loading}>Loading prayer breaks…</div>
+            ) : (
+              <table className={`${leaveStyles.reqTable} ${styles.breakSumTableFit}`}>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Full Name</th>
+                    <th>P.Name</th>
+                    <th>Department</th>
+                    <th>Date</th>
+                    <th>Prayer Start</th>
+                    <th>Prayer End</th>
+                    <th>Total Prayer Time</th>
+                    <th>Total Prayer</th>
+                    <th>Exceed</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          )}
+                </thead>
+                <tbody>
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className={leaveStyles.reqEmpty}>
+                        No records found.
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((p, idx) => (
+                      <tr key={p.id || idx}>
+                        <td className={leaveStyles.reqId}>{p.employee_id}</td>
+                        <td>
+                          <EmployeeTableNameCell
+                            key={`${p.employee_id}-${getPhoto(p.employee_id) ?? "none"}`}
+                            name={p.employee_name || ""}
+                            employeeId={p.employee_id}
+                            photo={getPhoto(p.employee_id)}
+                            onOpen={() => openEmployeeDetail(p)}
+                          />
+                        </td>
+                        <td>{p.pseudonym || "—"}</td>
+                        <td>{p.department_name || "—"}</td>
+                        <td>{p.date_display}</td>
+                        <td>{p.prayer_start_display}</td>
+                        <td>
+                          {p.prayer_break_start && !p.prayer_break_end ? (
+                            <span className={styles.badgeRunning}>Running</span>
+                          ) : (
+                            p.prayer_end_display
+                          )}
+                        </td>
+                        <td>{p.total_prayer_time}</td>
+                        <td>{p.total_prayer_time_today}</td>
+                        <td className={p.exceed_today ? styles.cellExceed : undefined}>
+                          {p.exceed_today || "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
       {detail ? <EmployeeDetailPopup data={detail} onClose={() => setDetail(null)} /> : null}

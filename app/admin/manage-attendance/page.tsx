@@ -2,6 +2,7 @@
 import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
 import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
+import leaveStyles from "../../leave/leave.module.css";
 import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
@@ -368,389 +369,351 @@ export default function ManageAttendancePage() {
     <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={styles.breakSummaryContainer}>
-        <div className={adminStyles.pageHeader}>
-          <h1 className={adminStyles.pageHeaderTitle}>Manage Attendance</h1>
-          <button
-            type="button"
-            onClick={() => setShowAddForm(!showAddForm)}
-            className={adminStyles.btnGreen}
-          >
-            <FaPlus /> Add New Attendance
-          </button>
-        </div>
+          <div className={adminStyles.pageHeader}>
+            <h1 className={adminStyles.pageHeaderTitle}>Manage Attendance</h1>
+            <button
+              type="button"
+              onClick={() => setShowAddForm(!showAddForm)}
+              className={adminStyles.btnGreen}
+            >
+              <FaPlus /> Add New Attendance
+            </button>
+          </div>
 
-        {/* Add New Record Form */}
-        {showAddForm && (
-          <div style={{
-            background: "#f8f9fa",
-            padding: "20px",
-            borderRadius: "8px",
-            marginBottom: "20px",
-            border: "1px solid #e2e8f0"
-          }}>
-            <h3 style={{ marginTop: 0, marginBottom: "16px", color: "#0052CC" }}>Add New Attendance Record</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Employee</label>
-                <select
-                  value={newRecord.employee_id}
-                  onChange={(e) => setNewRecord({ ...newRecord, employee_id: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
+          {showAddForm ? (
+            <div className={styles.mgmtAttAddPanel}>
+              <h3 className={styles.mgmtAttAddTitle}>Add New Attendance Record</h3>
+              <div className={styles.mgmtAttAddGrid}>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Employee</label>
+                  <select
+                    value={newRecord.employee_id}
+                    onChange={(e) => setNewRecord({ ...newRecord, employee_id: e.target.value })}
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="">Select Employee</option>
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.first_name} {emp.last_name} ({emp.employee_code || emp.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Date</label>
+                  <input
+                    type="date"
+                    value={newRecord.date}
+                    onChange={(e) => setNewRecord({ ...newRecord, date: e.target.value })}
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Clock In</label>
+                  <input
+                    type="datetime-local"
+                    value={newRecord.clock_in ? formatDateTimeLocal(newRecord.clock_in) : ""}
+                    onChange={(e) =>
+                      setNewRecord({
+                        ...newRecord,
+                        clock_in: e.target.value
+                          ? dateTimeLocalToIsoInTimeZone(e.target.value, SERVER_TIMEZONE)
+                          : null,
+                      })
+                    }
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Clock Out</label>
+                  <input
+                    type="datetime-local"
+                    value={newRecord.clock_out ? formatDateTimeLocal(newRecord.clock_out) : ""}
+                    onChange={(e) =>
+                      setNewRecord({
+                        ...newRecord,
+                        clock_out: e.target.value
+                          ? dateTimeLocalToIsoInTimeZone(e.target.value, SERVER_TIMEZONE)
+                          : null,
+                      })
+                    }
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+              <div className={styles.mgmtAttAddActions}>
+                <button
+                  type="button"
+                  onClick={addNewRecord}
+                  className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnSave}`}
+                  style={{ padding: "8px 14px", fontSize: 13 }}
                 >
-                  <option value="">Select Employee</option>
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.first_name} {emp.last_name} ({emp.employee_code || emp.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Date</label>
-                <input
-                  type="date"
-                  value={newRecord.date}
-                  onChange={(e) => setNewRecord({ ...newRecord, date: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Clock In</label>
-                <input
-                  type="datetime-local"
-                  value={newRecord.clock_in ? formatDateTimeLocal(newRecord.clock_in) : ""}
-                  onChange={(e) =>
-                    setNewRecord({
-                      ...newRecord,
-                      clock_in: e.target.value
-                        ? dateTimeLocalToIsoInTimeZone(e.target.value, SERVER_TIMEZONE)
-                        : null,
-                    })
-                  }
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Clock Out</label>
-                <input
-                  type="datetime-local"
-                  value={newRecord.clock_out ? formatDateTimeLocal(newRecord.clock_out) : ""}
-                  onChange={(e) =>
-                    setNewRecord({
-                      ...newRecord,
-                      clock_out: e.target.value
-                        ? dateTimeLocalToIsoInTimeZone(e.target.value, SERVER_TIMEZONE)
-                        : null,
-                    })
-                  }
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
-                />
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm(false)}
+                  className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnDelete}`}
+                  style={{ padding: "8px 14px", fontSize: 13 }}
+                >
+                  Cancel
+                </button>
               </div>
             </div>
-            <div style={{ marginTop: "16px", display: "flex", gap: "12px" }}>
+          ) : null}
+
+          <div className={leaveStyles.toolbar}>
+            <div className={leaveStyles.searchWrap}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="search"
+                className={leaveStyles.toolbarSearch}
+                placeholder="Search by name or pseudo name"
+                value={searchName}
+                onChange={(e) => setSearchName(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            <select
+              value={selectedDepartment}
+              onChange={(e) => setSelectedDepartment(e.target.value)}
+              className={leaveStyles.toolbarSelect}
+              aria-label="Filter by department"
+            >
+              <option value="">All Departments</option>
+              {scopedDepartments.map((dept) => (
+                <option key={dept.id} value={dept.name}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className={leaveStyles.toolbarSelect}
+              aria-label="From date"
+            />
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className={leaveStyles.toolbarSelect}
+              aria-label="To date"
+            />
+            <div className={leaveStyles.toolbarActions}>
               <button
-                onClick={addNewRecord}
-                style={{
-                  background: "linear-gradient(135deg, #27ae60 0%, #2ecc71 100%)",
-                  color: "#fff",
-                  border: "none",
-                  padding: "10px 20px",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontWeight: "600"
-                }}
+                type="button"
+                onClick={downloadExcel}
+                className={styles.breakSummaryXLSButton}
+                title="Download Excel"
               >
-                Save
-              </button>
-              <button
-                onClick={() => setShowAddForm(false)}
-                style={{
-                  background: "#e74c3c",
-                  color: "#fff",
-                  border: "none",
-                  padding: "10px 20px",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontWeight: "600"
-                }}
-              >
-                Cancel
+                <FaFileExcel size={14} />
+                <span>Export Excel</span>
               </button>
             </div>
           </div>
-        )}
 
-        {/* Filters */}
-        <div className={styles.breakSummaryFilters}>
-          <input
-            type="text"
-            placeholder="Search by name or pseudo name..."
-            value={searchName}
-            onChange={e => setSearchName(e.target.value)}
-            className={styles.breakSummaryInput}
-            style={{ width: 220 }}
-          />
-          <select
-            value={selectedDepartment}
-            onChange={e => setSelectedDepartment(e.target.value)}
-            className={styles.breakSummaryDate}
-            style={{ width: 180 }}
-          >
-            <option value="">All Departments</option>
-            {scopedDepartments.map(dept => (
-              <option key={dept.id} value={dept.name}>{dept.name}</option>
-            ))}
-          </select>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={e => setFromDate(e.target.value)}
-            placeholder="From Date"
-            className={styles.breakSummaryDate}
-          />
-          <input
-            type="date"
-            value={toDate}
-            onChange={e => setToDate(e.target.value)}
-            placeholder="To Date"
-            className={styles.breakSummaryDate}
-          />
-          <button onClick={downloadExcel} className={styles.breakSummaryXLSButton} title="Download Excel">
-            <FaFileExcel size={20} />
-            <span>Export Excel</span>
-          </button>
-        </div>
-
-        {/* Table */}
-        <div className={styles.breakSummaryTableWrapper}>
-          {loading ? (
-            <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
-              Loading...
-            </div>
-          ) : (
-            <table className={styles.breakSummaryTable}>
-              <thead>
-                <tr>
-                  <th>Id</th>
-                  <th>Full Name</th>
-                  <th>P.Name</th>
-                  <th>Department</th>
-                  <th>Date</th>
-                  <th>Clock In</th>
-                  <th>Clock Out</th>
-                  <th>Total Hours</th>
-                  <th>Late</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAttendance.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className={styles.breakSummaryNoRecords}>
-                      No records found.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAttendance.map((a) => (
-                    <tr key={a.id}>
-                      <td>{a.employee_id}</td>
-                      <td>
-                        {a.isEditing ? (
-                          <input
-                            type="text"
-                            value={a.employee_name}
-                            onChange={(e) => updateField(a.id!, "employee_name", e.target.value)}
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          <EmployeeTableNameCell
-                            name={a.employee_name}
-                            employeeId={a.employee_id}
-                            photo={getPhoto(a.employee_id)}
-                            onOpen={() => openFromRow(a)}
-                          />
-                        )}
-                      </td>
-                      <td>{a.pseudonym || '-'}</td>
-                      <td>{a.department_name || '-'}</td>
-                      <td>
-                        {a.isEditing ? (
-                          <input
-                            type="date"
-                            value={a.date ? getDateStringInTimeZone(a.date, SERVER_TIMEZONE) : ""}
-                            onChange={(e) => updateField(a.id!, "date", e.target.value)}
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          a.date || ""
-                        )}
-                      </td>
-                      <td>
-                        {a.isEditing ? (
-                          <input
-                            type="datetime-local"
-                            value={formatDateTimeLocal(a.clock_in)}
-                            onChange={(e) =>
-                              updateField(
-                                a.id!,
-                                "clock_in",
-                                e.target.value
-                                  ? dateTimeLocalToIsoInTimeZone(e.target.value, SERVER_TIMEZONE)
-                                  : null
-                              )
-                            }
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          a.clock_in ? getTimeStringInTimeZone(a.clock_in, SERVER_TIMEZONE) : ""
-                        )}
-                      </td>
-                      <td>
-                        {a.isEditing ? (
-                          <input
-                            type="datetime-local"
-                            value={formatDateTimeLocal(a.clock_out)}
-                            onChange={(e) =>
-                              updateField(
-                                a.id!,
-                                "clock_out",
-                                e.target.value
-                                  ? dateTimeLocalToIsoInTimeZone(e.target.value, SERVER_TIMEZONE)
-                                  : null
-                              )
-                            }
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          a.clock_out ? getTimeStringInTimeZone(a.clock_out, SERVER_TIMEZONE) : ""
-                        )}
-                      </td>
-                      <td>
-                        {a.clock_in && a.clock_out ? 
-                          (() => {
-                            const start = toKarachiEpochMs(a.clock_in);
-                            const end = toKarachiEpochMs(a.clock_out);
-                            if (start === null || end === null) return "";
-                            const totalSeconds = Math.floor((end - start) / 1000);
-                            return formatDuration(Math.max(0, totalSeconds));
-                          })() : ""
-                        }
-                      </td>
-                      <td style={{ color: a.is_late ? "#e74c3c" : "#27ae60", fontWeight: "600" }}>
-                        {a.is_late ? `Late ${formatLateTime(a.late_minutes || 0)}` : "On Time"}
-                      </td>
-                      <td>
-                        <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                          {a.isEditing ? (
-                            <>
-                              <button
-                                onClick={() => saveRecord(a)}
-                                style={{
-                                  background: "#27ae60",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "4px"
-                                }}
-                                title="Save"
-                              >
-                                <FaSave /> Save
-                              </button>
-                              <button
-                                onClick={() => toggleEdit(a.id!)}
-                                style={{
-                                  background: "#95a5a6",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px"
-                                }}
-                                title="Cancel"
-                              >
-                                <FaTimes />
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => toggleEdit(a.id!)}
-                                style={{
-                                  background: "#3498db",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "4px"
-                                }}
-                                title="Edit"
-                              >
-                                <FaEdit /> Edit
-                              </button>
-                              <button
-                                onClick={() => deleteRecord(a.id!)}
-                                style={{
-                                  background: "#e74c3c",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px"
-                                }}
-                                title="Delete"
-                              >
-                                <FaTimes />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
+          <div className={leaveStyles.reqTableShell}>
+            <div className={styles.mgmtAttScroll}>
+              {loading ? (
+                <div className={leaveStyles.loading}>Loading attendance…</div>
+              ) : (
+                <table className={`${leaveStyles.reqTable} ${styles.mgmtAttTableFit}`}>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Full Name</th>
+                      <th>P.Name</th>
+                      <th>Department</th>
+                      <th>Date</th>
+                      <th>Clock In</th>
+                      <th>Clock Out</th>
+                      <th>Total Hours</th>
+                      <th>Late</th>
+                      <th>Actions</th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
+                  </thead>
+                  <tbody>
+                    {filteredAttendance.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className={leaveStyles.reqEmpty}>
+                          No records found.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAttendance.map((a) => (
+                        <tr key={a.id}>
+                          <td className={leaveStyles.reqId}>{a.employee_id}</td>
+                          <td>
+                            {a.isEditing ? (
+                              <input
+                                type="text"
+                                value={a.employee_name}
+                                onChange={(e) =>
+                                  updateField(a.id!, "employee_name", e.target.value)
+                                }
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : (
+                              <EmployeeTableNameCell
+                                name={a.employee_name}
+                                employeeId={a.employee_id}
+                                photo={getPhoto(a.employee_id)}
+                                onOpen={() => openFromRow(a)}
+                              />
+                            )}
+                          </td>
+                          <td title={a.pseudonym || ""}>{a.pseudonym || "—"}</td>
+                          <td title={a.department_name || ""}>{a.department_name || "—"}</td>
+                          <td>
+                            {a.isEditing ? (
+                              <input
+                                type="date"
+                                value={
+                                  a.date
+                                    ? getDateStringInTimeZone(a.date, SERVER_TIMEZONE)
+                                    : ""
+                                }
+                                onChange={(e) => updateField(a.id!, "date", e.target.value)}
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : (
+                              a.date || ""
+                            )}
+                          </td>
+                          <td>
+                            {a.isEditing ? (
+                              <input
+                                type="datetime-local"
+                                value={formatDateTimeLocal(a.clock_in)}
+                                onChange={(e) =>
+                                  updateField(
+                                    a.id!,
+                                    "clock_in",
+                                    e.target.value
+                                      ? dateTimeLocalToIsoInTimeZone(
+                                          e.target.value,
+                                          SERVER_TIMEZONE,
+                                        )
+                                      : null,
+                                  )
+                                }
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : a.clock_in ? (
+                              getTimeStringInTimeZone(a.clock_in, SERVER_TIMEZONE)
+                            ) : (
+                              ""
+                            )}
+                          </td>
+                          <td>
+                            {a.isEditing ? (
+                              <input
+                                type="datetime-local"
+                                value={formatDateTimeLocal(a.clock_out)}
+                                onChange={(e) =>
+                                  updateField(
+                                    a.id!,
+                                    "clock_out",
+                                    e.target.value
+                                      ? dateTimeLocalToIsoInTimeZone(
+                                          e.target.value,
+                                          SERVER_TIMEZONE,
+                                        )
+                                      : null,
+                                  )
+                                }
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : a.clock_out ? (
+                              getTimeStringInTimeZone(a.clock_out, SERVER_TIMEZONE)
+                            ) : (
+                              ""
+                            )}
+                          </td>
+                          <td>
+                            {a.clock_in && a.clock_out
+                              ? (() => {
+                                  const start = toKarachiEpochMs(a.clock_in);
+                                  const end = toKarachiEpochMs(a.clock_out);
+                                  if (start === null || end === null) return "";
+                                  const totalSeconds = Math.floor((end - start) / 1000);
+                                  return formatDuration(Math.max(0, totalSeconds));
+                                })()
+                              : ""}
+                          </td>
+                          <td className={a.is_late ? styles.attLate : styles.attOnTime}>
+                            {a.is_late
+                              ? `Late ${formatLateTime(a.late_minutes || 0)}`
+                              : "On Time"}
+                          </td>
+                          <td>
+                            <div className={styles.mgmtAttActions}>
+                              {a.isEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveRecord(a)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnSave}`}
+                                    title="Save"
+                                    aria-label="Save"
+                                  >
+                                    <FaSave />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleEdit(a.id!)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnCancel}`}
+                                    title="Cancel"
+                                    aria-label="Cancel"
+                                  >
+                                    <FaTimes />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleEdit(a.id!)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnEdit}`}
+                                    title="Edit"
+                                    aria-label="Edit"
+                                  >
+                                    <FaEdit />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteRecord(a.id!)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnDelete}`}
+                                    title="Delete"
+                                    aria-label="Delete"
+                                  >
+                                    <FaTimes />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
 
-        <div style={{ marginTop: "20px", fontSize: "14px", color: "#718096" }}>
-          Total Records: {filteredAttendance.length}
-        </div>
+          <div className={styles.mgmtAttMeta}>
+            Total Records: {filteredAttendance.length}
+          </div>
         </div>
       </div>
       {popup}

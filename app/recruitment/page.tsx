@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import LayoutDashboard from "../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../components/admin-module-page.module.css";
 import { FaBriefcase, FaUserPlus } from "react-icons/fa";
 import { useRouter } from "next/navigation";
@@ -17,7 +17,7 @@ export default function RecruitmentPage() {
   const totalCandidates = OPEN_ROLES.reduce((sum, r) => sum + r.candidates, 0);
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <header className={styles.header}>
@@ -77,6 +77,6 @@ export default function RecruitmentPage() {
           </div>
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

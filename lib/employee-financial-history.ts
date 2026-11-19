@@ -627,15 +627,16 @@ export async function syncLoanInstallmentFromLegacy(opts: {
       params.push(opts.status);
       if (opts.status === "paid") {
         updates.push("paid_at = NOW()");
-        if (opts.paidAmount != null) {
+        const paid = Number(opts.paidAmount);
+        if (Number.isFinite(paid)) {
           updates.push("paid_amount = ?");
-          params.push(Number(opts.paidAmount));
+          params.push(paid);
         }
       } else {
         updates.push("paid_at = NULL");
         updates.push("paid_amount = 0");
       }
-    } else if (opts.paidAmount != null) {
+    } else if (opts.paidAmount != null && Number.isFinite(Number(opts.paidAmount))) {
       updates.push("paid_amount = ?");
       params.push(Number(opts.paidAmount));
     }

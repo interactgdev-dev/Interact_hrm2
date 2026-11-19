@@ -13,7 +13,7 @@ export const MONTHLY_ATTENDANCE_HEADERS = [
   "OverTime",
   "Tardy Count",
   "Status",
-  "Tardy Note",
+  "Note",
   "Deduction",
 ] as const;
 
@@ -173,10 +173,21 @@ export async function downloadMonthlyAttendanceExcel(
   const blob = new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
+  const downloadName = fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`;
+  try {
+    const { reportClientFileDownload } = await import(
+      "@/lib/client-activity-download"
+    );
+    reportClientFileDownload(blob, downloadName, {
+      detail: `Downloaded "${downloadName}" via Export XLS / monthly attendance (${blob.size} B)`,
+    });
+  } catch {
+    /* ignore backlog archive errors */
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`;
+  link.download = downloadName;
   link.click();
   URL.revokeObjectURL(url);
 }

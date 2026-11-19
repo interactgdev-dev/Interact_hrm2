@@ -13,7 +13,7 @@ const VIEW_OPTIONS: { key: SummaryViewKey; label: string }[] = [
   { key: "attendance", label: "Attendance" },
   { key: "break", label: "Break" },
   { key: "prayer", label: "Prayer Break" },
-  { key: "refreshment", label: "Rest Room" },
+  { key: "refreshment", label: "Refreshment" },
   { key: "meeting", label: "Meeting" },
 ];
 
@@ -36,7 +36,7 @@ const RefreshmentSummaryView = dynamic(
   })),
   {
     ssr: false,
-    loading: () => <SummaryLoading label="Rest Room" />,
+    loading: () => <SummaryLoading label="Refreshment" />,
   }
 );
 const MeetingSummaryView = dynamic(
@@ -51,7 +51,7 @@ const MeetingSummaryView = dynamic(
 
 function SummaryLoading({ label }: { label: string }) {
   return (
-    <div className={styles.breakSummaryContainer} style={{ paddingTop: 24 }}>
+    <div className={styles.breakSummaryContainer} style={{ paddingTop: 12 }}>
       <p style={{ color: "#64748b", fontSize: "0.95rem" }}>Loading {label} summary…</p>
     </div>
   );
@@ -100,6 +100,7 @@ function SummariesHubInner() {
   const viewFromUrl = viewFromLocation(pathname, searchParams?.get("view"));
   const [view, setView] = useState<SummaryViewKey>(viewFromUrl);
 
+  // Keep local state in sync if user lands via path or ?view=
   React.useEffect(() => {
     setView(viewFromUrl);
   }, [viewFromUrl]);
@@ -119,6 +120,7 @@ function SummariesHubInner() {
 
   const onViewChange = useCallback(
     (next: SummaryViewKey) => {
+      // Defer heavy panel mount so the select stays snappy
       startTransition(() => {
         setView(next);
         router.replace(hrefForSummaryView(pathname, next), { scroll: false });

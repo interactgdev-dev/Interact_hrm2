@@ -26,7 +26,7 @@ type PresenceSettings = {
   agentHrmBaseUrl: string;
 };
 
-const PROD_HRM_URL = "https://hrm.ig.com";
+const STAGING_HRM_URL = "https://192.168.10.6:8443";
 
 type EmpRow = {
   id: number;
@@ -205,7 +205,7 @@ export default function PresenceIdleSettingsPage() {
       enabledEmployeeIds: Array.isArray(s.enabledEmployeeIds)
         ? s.enabledEmployeeIds.map(String)
         : [],
-      agentHrmBaseUrl: (s.agentHrmBaseUrl || PROD_HRM_URL).trim(),
+      agentHrmBaseUrl: (s.agentHrmBaseUrl || STAGING_HRM_URL).trim(),
       faceScanIntervalByEmployee:
         s.faceScanIntervalByEmployee &&
         typeof s.faceScanIntervalByEmployee === "object"
@@ -338,7 +338,7 @@ export default function PresenceIdleSettingsPage() {
           120,
           Math.max(5, Math.floor(retryGapSeconds) || 10)
         ),
-        agentHrmBaseUrl: (settings.agentHrmBaseUrl || PROD_HRM_URL).trim(),
+        agentHrmBaseUrl: (settings.agentHrmBaseUrl || STAGING_HRM_URL).trim(),
         agentExitPassword: (settings.agentExitPassword ?? "").trim(),
         enabledEmployeeIds: settings.enabledEmployeeIds ?? [],
       };
@@ -1253,7 +1253,7 @@ export default function PresenceIdleSettingsPage() {
                     <h3 className={styles.blockTitle}>Agent HRM server URL</h3>
                     <p className={styles.tip} style={{ marginBottom: 8 }}>
                       Agents sync this URL from heartbeat (no tray Staging switch). Use{" "}
-                      <strong>Production (10.98)</strong> for this environment, then Save.
+                      <strong>Staging (10.6)</strong> for this environment, then Save.
                     </p>
                     <div className={styles.durationRow}>
                       <div className={styles.field} style={{ minWidth: 320, flex: 1 }}>
@@ -1261,7 +1261,7 @@ export default function PresenceIdleSettingsPage() {
                         <input
                           id="agent-hrm-url"
                           type="url"
-                          value={settings.agentHrmBaseUrl || PROD_HRM_URL}
+                          value={settings.agentHrmBaseUrl || STAGING_HRM_URL}
                           disabled={disabled}
                           onChange={(e) =>
                             setSettings({
@@ -1279,11 +1279,11 @@ export default function PresenceIdleSettingsPage() {
                         onClick={() =>
                           setSettings({
                             ...settings,
-                            agentHrmBaseUrl: PROD_HRM_URL,
+                            agentHrmBaseUrl: STAGING_HRM_URL,
                           })
                         }
                       >
-                        Production (10.98)
+                        Staging (10.6)
                       </button>
                     </div>
                   </div>

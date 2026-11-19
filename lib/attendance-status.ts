@@ -5,7 +5,7 @@ export function normalizeAttendanceStatus(status: string): string {
   return s;
 }
 
-/** Status choices for monthly attendance manual override dropdown. */
+/** Status values admins can pick in Monthly Attendance (manual override). */
 export const MONTHLY_ATTENDANCE_STATUS_OPTIONS = [
   "On Time",
   "Tardy",

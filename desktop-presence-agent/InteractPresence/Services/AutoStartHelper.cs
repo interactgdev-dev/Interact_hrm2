@@ -20,11 +20,16 @@ internal static class AutoStartHelper
     {
         try
         {
-            var exe = Environment.ProcessPath
-                       ?? Process.GetCurrentProcess().MainModule?.FileName;
-            if (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe)) return;
+            var exe = AgentInstallPaths.CanonicalExe;
+            if (!File.Exists(exe))
+            {
+                var running = AgentInstallPaths.RunningExe;
+                var dir = Path.GetDirectoryName(running);
+                if (string.IsNullOrWhiteSpace(dir) || !File.Exists(running)) return;
+                AgentInstallPaths.CopyFullInstall(dir, AgentInstallPaths.AppDir);
+            }
 
-            // Always refresh shortcut so moves/rebuilds still auto-start.
+            if (!File.Exists(exe)) return;
             CreateShortcut(exe);
         }
         catch

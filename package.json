@@ -8,8 +8,6 @@
     "start": "next start",
     "lint": "eslint",
     "migrate": "node scripts/run-migrations.mjs",
-    "migrate:mongo": "node scripts/mysql-to-mongodb.mjs",
-    "export:mongo": "node scripts/mysql-to-mongo-files.mjs",
     "sweep:auto-presence": "node scripts/auto-presence-sweep.js",
     "face:setup": "node scripts/copy-face-models.mjs"
   },

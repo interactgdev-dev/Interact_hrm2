@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { sumApprovedClaimsByPayrollMonth } from "@/lib/employee-claims";
 
 function parseMoney(value: unknown): number {
   const n = Number(value);
@@ -28,7 +29,35 @@ export async function GET(request: NextRequest) {
          ORDER BY employee_id ASC`,
         [month]
       );
-      return NextResponse.json({ success: true, adjustments: rows || [] });
+      const claimSums = await sumApprovedClaimsByPayrollMonth(month);
+      const byId = new Map<string, any>();
+      for (const row of rows || []) {
+        const id = String(row.employee_id ?? "").trim();
+        if (!id) continue;
+        byId.set(id, { ...row });
+      }
+      // Claims ledger is source of truth for medical_claims column.
+      for (const [id, total] of Object.entries(claimSums)) {
+        const prev = byId.get(id);
+        if (prev) {
+          byId.set(id, { ...prev, medical_claims: total });
+        } else {
+          byId.set(id, {
+            employee_id: id,
+            month,
+            ctd: null,
+            fuel_allowance: null,
+            unpaid_days: null,
+            medical_claims: total,
+          });
+        }
+      }
+      const adjustments = Array.from(byId.values()).sort((a, b) =>
+        String(a.employee_id).localeCompare(String(b.employee_id), undefined, {
+          numeric: true,
+        }),
+      );
+      return NextResponse.json({ success: true, adjustments, claim_sums: claimSums });
     } finally {
       connection.release();
     }

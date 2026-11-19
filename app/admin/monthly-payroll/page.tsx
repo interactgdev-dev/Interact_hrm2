@@ -42,6 +42,11 @@ import {
   type MedicalPackageId,
 } from "@/lib/medical-package";
 import { monthlySalaryTaxFromGross } from "@/lib/pakistan-salary-tax";
+import {
+  employeeIdKeys,
+  lookupByEmployeeId,
+  setForEmployeeIdKeys,
+} from "@/lib/employee-id-keys";
 
 // ...existing code...
 
@@ -268,16 +273,9 @@ export default function MonthlyAttendancePage() {
     return Number.isFinite(n) && n >= 0 ? n : 0;
   }
 
-  /** Normalize "097" / 97 / "97" so Allowances defaults match payroll rows. */
+  /** Normalize "097" / 97 / "97" so Allowances / attendance / leave maps match. */
   function payrollIdKeys(raw: string | number | undefined | null): string[] {
-    const s = String(raw ?? "").trim();
-    if (!s) return [];
-    const keys = [s];
-    if (/^\d+$/.test(s)) {
-      const n = String(Number(s));
-      if (n !== s) keys.push(n);
-    }
-    return keys;
+    return employeeIdKeys(raw);
   }
 
   function lookupMoneyMap(
@@ -400,7 +398,8 @@ export default function MonthlyAttendancePage() {
 
   function getClaimsForEmployee(employee: { employeeId?: string }) {
     const empId = String(employee.employeeId ?? "");
-    return claimsByEmployee[empId] ?? 0;
+    const n = Number(lookupMoneyMap(claimsByEmployee, empId) ?? 0);
+    return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
   function getMedicalDedcForEmployee(employee: { employeeId?: string }) {
@@ -805,13 +804,17 @@ export default function MonthlyAttendancePage() {
                 sessionFill.push({ eid, dk, status });
                 return;
               }
-              if (!map[eid]) map[eid] = {};
-              map[eid][dk] = status;
+              for (const idKey of employeeIdKeys(eid)) {
+                if (!map[idKey]) map[idKey] = {};
+                map[idKey][dk] = status;
+              }
             },
           );
           sessionFill.forEach(({ eid, dk, status }) => {
-            if (!map[eid]) map[eid] = {};
-            if (!map[eid][dk]) map[eid][dk] = status;
+            for (const idKey of employeeIdKeys(eid)) {
+              if (!map[idKey]) map[idKey] = {};
+              if (!map[idKey][dk]) map[idKey][dk] = status;
+            }
           });
         }
         setStatusOverrides(map);
@@ -926,7 +929,7 @@ export default function MonthlyAttendancePage() {
       const meta = employee.dateMeta?.[day.dateKey];
       const workingDay = isWorkingDay(day.dateKey);
       const leaveKind = approvedLeaveOnDay(approvedLeavesMap, empId, day.dateKey);
-      const override = statusOverrides[empId]?.[day.dateKey];
+      const override = lookupByEmployeeId(statusOverrides, empId)?.[day.dateKey];
 
       let dayDeduction = 0;
       if (leaveKind || override === "Leave") {
@@ -992,6 +995,7 @@ export default function MonthlyAttendancePage() {
           "Employee Name": emp.employeeName,
           Pseudonym: emp.pseudonym,
           Department: emp.departmentName,
+          Claims: row.medicalClaims || 0,
           Advance: row.advanceDeduction,
           Loan: row.loanDeduction,
           "Final Salary": row.finalSalary,
@@ -1433,24 +1437,40 @@ export default function MonthlyAttendancePage() {
     attendance.forEach((record: any) => {
       if (!record.employee_id) return;
       const empId = String(record.employee_id);
-      if (!attMap[empId]) {
-        attMap[empId] = {
-          byDate: {},
-          dateMeta: {},
-          gender: record.gender || "",
-          attendanceRecord: record,
-        };
-      }
-      if (!attMap[empId].gender && record.gender) {
-        attMap[empId].gender = record.gender;
+      const bucket =
+        lookupByEmployeeId(attMap, empId) ||
+        (() => {
+          const fresh = {
+            byDate: {} as Record<string, any[]>,
+            dateMeta: {} as Record<
+              string,
+              {
+                runningLate: number | string;
+                statusLabel: string;
+                statusColor: string;
+                deduction: string;
+              }
+            >,
+            gender: record.gender || "",
+            attendanceRecord: record,
+          };
+          setForEmployeeIdKeys(attMap, empId, fresh);
+          return fresh;
+        })();
+      if (!bucket.gender && record.gender) {
+        bucket.gender = record.gender;
       }
       const dateKey = getRecordDateKey(record);
       if (!dateKey) return;
-      if (!attMap[empId].byDate[dateKey]) attMap[empId].byDate[dateKey] = [];
-      attMap[empId].byDate[dateKey].push(record);
+      if (!bucket.byDate[dateKey]) bucket.byDate[dateKey] = [];
+      bucket.byDate[dateKey].push(record);
     });
 
-    Object.entries(attMap).forEach(([empId, employee]) => {
+    const seenAtt = new Set<object>();
+    Object.values(attMap).forEach((employee) => {
+      if (seenAtt.has(employee)) return;
+      seenAtt.add(employee);
+
       Object.keys(employee.byDate).forEach((dateKey) => {
         employee.byDate[dateKey].sort(compareAttendanceRows);
       });
@@ -1470,7 +1490,10 @@ export default function MonthlyAttendancePage() {
         });
 
         const autoStatusLabel = normalizeAttendanceStatus(dayStatus.statusLabel);
-        const override = statusOverrides[empId]?.[dateKey];
+        const override = lookupByEmployeeId(
+          statusOverrides,
+          employee.attendanceRecord?.employee_id,
+        )?.[dateKey];
         const isManual = Boolean(override);
         const statusLabel = override || autoStatusLabel;
         let deduction = "";
@@ -1507,11 +1530,11 @@ export default function MonthlyAttendancePage() {
 
     return allEmployees.map((emp) => {
       const empId = String(emp.id || emp.employee_id);
-      const att = attMap[empId];
-      const basicSalary = salaryMap[empId];
-      const allowOT = allowOvertimeMap[empId] === true;
+      const att = lookupByEmployeeId(attMap, empId);
+      const basicSalary = lookupByEmployeeId(salaryMap, empId);
+      const allowOT = lookupByEmployeeId(allowOvertimeMap, empId) === true;
       const paidHoursPerDay =
-        paidHoursPerDayMap[empId] ??
+        lookupByEmployeeId(paidHoursPerDayMap, empId) ??
         getPaidHoursPerDayFromProfile(emp.working_hours);
       return {
         employeeId: empId,
@@ -1809,9 +1832,11 @@ export default function MonthlyAttendancePage() {
   const financeSummary = React.useMemo(() => {
     let advanceTotal = 0;
     let loanTotal = 0;
+    let claimsTotal = 0;
     let finalTotal = 0;
     let withAdvance = 0;
     let withLoan = 0;
+    let withClaims = 0;
     for (const employee of filteredEmployees) {
       const empId = employee.employeeId;
       const taxManual = taxEditedRef.current.has(String(empId));
@@ -1829,17 +1854,21 @@ export default function MonthlyAttendancePage() {
       });
       advanceTotal += row.advanceDeduction || 0;
       loanTotal += row.loanDeduction || 0;
+      claimsTotal += row.medicalClaims || 0;
       finalTotal += row.finalSalary || 0;
       if ((row.advanceDeduction || 0) > 0) withAdvance += 1;
       if ((row.loanDeduction || 0) > 0) withLoan += 1;
+      if ((row.medicalClaims || 0) > 0) withClaims += 1;
     }
     return {
       employees: filteredEmployees.length,
       advanceTotal,
       loanTotal,
+      claimsTotal,
       finalTotal,
       withAdvance,
       withLoan,
+      withClaims,
     };
   }, [
     filteredEmployees,
@@ -2137,8 +2166,9 @@ export default function MonthlyAttendancePage() {
           <div className={fh.hero}>
             <h1 className={fh.heroTitle}>Final Salary (Finance)</h1>
             <p className={fh.heroSub}>
-              Company-wide Final Salary with Advance and Loan for the selected month. Filter by
-              name, pseudo name, or department — then mark Loan/Advance Paid after recovery.
+              Company-wide Final Salary with Claims, Advance, and Loan for the selected month.
+              Filter by name, pseudo name, or department — then mark Loan/Advance Paid after
+              recovery.
             </p>
           </div>
 
@@ -2201,6 +2231,11 @@ export default function MonthlyAttendancePage() {
               <div className={fh.cardMeta}>{monthInfo.label || selectedMonth}</div>
             </div>
             <div className={fh.card}>
+              <div className={fh.cardLabel}>Claims this month</div>
+              <div className={fh.cardValue}>{formatWithCommas(financeSummary.claimsTotal)}</div>
+              <div className={fh.cardMeta}>{financeSummary.withClaims} employee(s)</div>
+            </div>
+            <div className={fh.card}>
               <div className={fh.cardLabel}>Advance this month</div>
               <div className={fh.cardValue}>{formatWithCommas(financeSummary.advanceTotal)}</div>
               <div className={fh.cardMeta}>{financeSummary.withAdvance} employee(s)</div>
@@ -2259,6 +2294,7 @@ export default function MonthlyAttendancePage() {
                     <th>Employee</th>
                     <th>P.Name</th>
                     <th>Department</th>
+                    <th>Claims</th>
                     <th>Advance</th>
                     <th>Loan</th>
                     <th>Final Salary</th>
@@ -2281,6 +2317,7 @@ export default function MonthlyAttendancePage() {
                         medicalClaims: getClaimsForEmployee(employee),
                         medicalDedc: getMedicalDedcForEmployee(employee),
                       });
+                      const claimsVal = Number(row.medicalClaims || 0);
                       return (
                         <tr key={employee.employeeId}>
                           <td>{employee.employeeId}</td>
@@ -2301,6 +2338,14 @@ export default function MonthlyAttendancePage() {
                           </td>
                           <td>{employee.pseudonym || "--"}</td>
                           <td>{employee.departmentName || "--"}</td>
+                          <td
+                            style={{
+                              color: claimsVal > 0 ? "#007a5a" : undefined,
+                              fontWeight: claimsVal > 0 ? 600 : undefined,
+                            }}
+                          >
+                            {claimsVal > 0 ? formatWithCommas(claimsVal) : "--"}
+                          </td>
                           <td style={{ color: "#dc2626", fontWeight: 600 }}>
                             {formatWithCommas(row.advanceDeduction)}
                           </td>
@@ -2315,7 +2360,7 @@ export default function MonthlyAttendancePage() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={7}>
+                      <td colSpan={8}>
                         <div className={fh.empty}>
                           No employees match the current filters for {selectedMonth}.
                         </div>
@@ -2531,7 +2576,7 @@ export default function MonthlyAttendancePage() {
                           onChange={(e) => setClaimsAmount(empId, e.target.value)}
                           onBlur={(e) => saveClaimsAmount(empId, e.target.value)}
                           style={fuelInputStyle}
-                          title="Claims — added to Gross Salary; saved for this month"
+                          title="Claims — auto from Claims page (approved/paid this month); editable override still saves"
                         />
                       </td>
                       <td style={{ color: '#007a5a', fontWeight: 700 }}>{formatWithCommas(row.grossSalary)}</td>

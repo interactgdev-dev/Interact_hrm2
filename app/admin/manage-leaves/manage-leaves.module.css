@@ -1,3 +1,233 @@
+.pageWhite {
+  background: #fff !important;
+}
+
+.pageWide {
+  max-width: 100% !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 11.5px;
+  color: #8b93a6;
+}
+
+.legendBtn {
+  appearance: none;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.legendBtn:hover {
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.legendBtnOn {
+  border-color: #99f6e4;
+  background: #ecfdf8;
+  color: #0f766e;
+}
+
+.legendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.legendAnnual {
+  background: #2e3f6e;
+}
+
+.legendBer {
+  background: #ad7a2e;
+}
+
+.badgeConfirmed {
+  background: #e6f3ec;
+  color: #2c8058;
+  text-transform: none;
+}
+
+.badgeProbation {
+  background: #fbf1df;
+  color: #ad7a2e;
+  text-transform: none;
+}
+
+.equity {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.equityBar {
+  height: 8px;
+  border-radius: 4px;
+  background: #eef0f3;
+  overflow: hidden;
+  display: flex;
+  width: 100%;
+}
+
+.segAnnual {
+  background: #2e3f6e;
+  height: 100%;
+}
+
+.segBer {
+  background: #ad7a2e;
+  height: 100%;
+}
+
+.equityLabel {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #8b93a6;
+  min-width: 0;
+}
+
+.equityLabel span,
+.equityLabel b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.equityLabel b {
+  font-weight: 600;
+  color: #1b2233;
+  font-variant-numeric: tabular-nums;
+}
+
+.availLow {
+  color: #bc3a3a !important;
+}
+
+.availMid {
+  color: #ad7a2e !important;
+}
+
+.availableCell {
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: #1b2233;
+}
+
+.dashTabsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  margin: 0 0 18px;
+}
+
+.dashTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.dashMonthFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.dashMonthFilter label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.dashMonthInput {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+  color: #0f172a;
+}
+
+.dashTab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dashTab:hover {
+  color: #0f766e;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.dashTabActive {
+  background: #fff;
+  color: #0f766e;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.dashTabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ecfdf8;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .container {
   padding: 2rem;
   max-width: 1160px;
@@ -109,14 +339,15 @@
 }
 
 .editBtn {
-  background: linear-gradient(135deg, #611f69 0%, #4a1850 100%);
+  background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
   color: white;
   border: none;
-  padding: 0.5rem 1rem;
+  padding: 0.4rem 0.75rem;
   border-radius: 8px;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .editBtn:hover {
@@ -166,7 +397,7 @@
 }
 
 .infoText {
-  background-color: #f0f9ff;
+  background-color: #f0fdfa;
   color: #0369a1;
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
@@ -207,8 +438,8 @@
 
 .input:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: #14b8a6;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.16);
 }
 
 .modalActions {
@@ -262,9 +493,9 @@
   gap: 0.75rem;
   margin-bottom: 1rem;
   padding: 0.75rem;
-  background-color: #f0f9ff;
+  background-color: #f0fdfa;
   border-radius: 8px;
-  border: 1px solid #bae6fd;
+  border: 1px solid #99f6e4;
 }
 
 .balanceCard {
@@ -315,7 +546,7 @@
   padding: 0.4rem;
   background-color: #f8fafc;
   border-radius: 4px;
-  border-left: 3px solid #3b82f6;
+  border-left: 3px solid #14b8a6;
 }
 
 .helpText strong {

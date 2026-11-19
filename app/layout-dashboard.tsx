@@ -4,17 +4,24 @@ import { useRouter, usePathname } from "next/navigation";
 import styles from "./layout-dashboard.module.css";
 import "./globals.css";
 import "./dashboard/nexatech-theme.module.css";
-import { FaTachometerAlt, FaUserShield, FaCalendarAlt, FaClock, FaUserPlus, FaIdBadge, FaListAlt, FaClipboardList, FaBuilding, FaCog, FaUser, FaChartBar, FaKey, FaCalendarCheck, FaEdit, FaCoffee, FaFileAlt, FaDollarSign, FaExchangeAlt, FaTicketAlt, FaFolderOpen, FaDesktop, FaImages } from "react-icons/fa";
+import { FaTachometerAlt, FaUserShield, FaCalendarAlt, FaClock, FaUserPlus, FaIdBadge, FaListAlt, FaClipboardList, FaBuilding, FaCog, FaUser, FaChartBar, FaKey, FaCalendarCheck, FaEdit, FaCoffee, FaFileAlt, FaWallet, FaChartLine, FaCreditCard, FaHandshake, FaNotesMedical, FaExchangeAlt, FaTicketAlt, FaFolderOpen, FaDesktop, FaImages } from "react-icons/fa";
 import { FiChevronDown, FiChevronRight } from "react-icons/fi";
 import { EmployeeAvatar } from "./components/EmployeeAvatar";
 import { AdminProfileMenu } from "./components/AdminProfileMenu";
 import { ShellImageUpload } from "./components/ShellImageUpload";
+import { InteractGlobeLogo } from "./employee-dashboard/components/InteractGlobeLogo";
 import {
 	fetchShellBranding,
 	removeCompanyLogo,
 	saveCompanyLogo,
 } from "./shell-branding-api";
 import { toastError } from "@/lib/app-toast";
+import { ADMIN_PATH_TO_EMPLOYEE } from "@/lib/access-control/menu-registry";
+import {
+	isEmployeeBrowserSession,
+	markAdminPortal,
+	isAdminBrowserSession,
+} from "@/lib/access-control/employee-shell";
 
 /** Sub-menu row ~44–48px; full height so items are not clipped inside scrollable nav */
 function sidebarDropdownMaxHeightPx(itemCount: number) {
@@ -36,10 +43,8 @@ const sidebarLinks = [
 				name: "PTO",
 				icon: <FaCalendarAlt />,
 				dropdown: [
-					{ name: "Leave", path: "/leave", icon: <FaCalendarAlt /> },
-					{ name: "Manage Leave", path: "/admin/manage-leaves", icon: <FaEdit /> },
+					{ name: "Manage Leave", path: "/admin/manage-leaves?tab=requests", icon: <FaEdit /> },
 					{ name: "Calendar", path: "/admin/calendar", icon: <FaCalendarAlt /> },
-					{ name: "Leave Summary", path: "/admin/monthly-leave-summary", icon: <FaClipboardList /> },
 				]
 			},
 			{
@@ -58,7 +63,8 @@ const sidebarLinks = [
 			{ name: "Recruitment", path: "/recruitment", icon: <FaUserPlus /> },
 			{ name: "Ticket Inbox", path: "/admin/tickets", icon: <FaTicketAlt /> },
 			{ name: "Employee Files", path: "/admin/employee-files", icon: <FaFolderOpen /> },
-			{ name: "Formats Library", path: "/admin/formats-library", icon: <FaFileAlt /> },
+			{ name: "Form Templates", path: "/admin/formats-library", icon: <FaFileAlt /> },
+			{ name: "Medical Tracker", path: "/admin/medical-tracker", icon: <FaNotesMedical /> },
 			{ name: "Pending Appraisals", path: "/admin/pending-appraisals", icon: <FaClipboardList /> },
 			{
 				name: "Onboard",
@@ -80,14 +86,14 @@ const sidebarLinks = [
 			},
 			{
 				name: "Payroll",
-				icon: <FaDollarSign />,
+				icon: <FaWallet />,
 				dropdown: [
 					{ name: "Monthly Payroll", path: "/admin/monthly-payroll", icon: <FaFileAlt /> },
-					{ name: "Commissions", path: "/admin/commissions", icon: <FaDollarSign /> },
-					{ name: "Advance", path: "/admin/advance", icon: <FaDollarSign /> },
-					{ name: "Loan", path: "/admin/loan", icon: <FaDollarSign /> },
+					{ name: "Commissions", path: "/admin/commissions", icon: <FaChartLine /> },
+					{ name: "Advance", path: "/admin/advance", icon: <FaCreditCard /> },
+					{ name: "Loan", path: "/admin/loan", icon: <FaHandshake /> },
+					{ name: "Claims", path: "/admin/claims", icon: <FaNotesMedical /> },
 					{ name: "Financial History", path: "/admin/employee-financial-history", icon: <FaFileAlt /> },
-					{ name: "Salary Disbursement", path: "/admin/salary-disbursement", icon: <FaDollarSign /> },
 					{ name: "Request Inbox", path: "/admin/financial-requests", icon: <FaClipboardList /> },
 				]
 			},
@@ -113,11 +119,33 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 	const [shiftsDropdownOpen, setShiftsDropdownOpen] = React.useState(false);
 	const [payrollDropdownOpen, setPayrollDropdownOpen] = React.useState(false);
 	const [sidebarOpen, setSidebarOpen] = React.useState(false);
+	const [navPeek, setNavPeek] = React.useState(false);
+	const [isDesktopNav, setIsDesktopNav] = React.useState(true);
 	const [companyLogo, setCompanyLogo] = React.useState<string | null>(null);
 	const [adminAvatar, setAdminAvatar] = React.useState<string | null>(null);
+	const navGroups = sidebarLinks;
+	const [accessRestricted, setAccessRestricted] = React.useState(false);
 	const router = useRouter();
 	const pathname = usePathname();
 	const isTimePage = pathname === "/time";
+	// Only omit admin chrome when this page is nested under the employee layout route.
+	const embedInEmployeeShell = Boolean(pathname?.startsWith("/employee-dashboard"));
+	const sidebarVisible = isDesktopNav ? navPeek : sidebarOpen;
+	const contentPushed = isDesktopNav && navPeek;
+
+	React.useEffect(() => {
+		if (typeof window === "undefined") return;
+		const mq = window.matchMedia("(min-width: 1025px)");
+		const sync = () => setIsDesktopNav(mq.matches);
+		sync();
+		mq.addEventListener("change", sync);
+		return () => mq.removeEventListener("change", sync);
+	}, []);
+
+	React.useEffect(() => {
+		setSidebarOpen(false);
+		setNavPeek(false);
+	}, [pathname]);
 
 	React.useEffect(() => {
 		void fetchShellBranding()
@@ -130,6 +158,49 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 			});
 	}, []);
 
+	// Heal leftover employee keys when admin is logged in (restores full sidebar).
+	React.useEffect(() => {
+		if (typeof window === "undefined") return;
+		if (pathname?.startsWith("/employee-dashboard")) return;
+		if (isAdminBrowserSession()) {
+			markAdminPortal();
+			setAccessRestricted(false);
+		}
+	}, [pathname]);
+
+	// Employee portal on an admin URL → send them back to employee-dashboard equivalents.
+	// Admin portal always keeps the full admin sidebar (never stripped).
+	React.useEffect(() => {
+		if (typeof window === "undefined") return;
+		if (pathname?.startsWith("/employee-dashboard")) return;
+		if (!isEmployeeBrowserSession()) {
+			setAccessRestricted(false);
+			return;
+		}
+
+		setAccessRestricted(true);
+		const path = pathname || "";
+		const mapped = ADMIN_PATH_TO_EMPLOYEE[path];
+		if (mapped) {
+			window.location.replace(mapped);
+			return;
+		}
+		for (const [adminPath, empPath] of Object.entries(ADMIN_PATH_TO_EMPLOYEE)) {
+			if (path === adminPath || path.startsWith(`${adminPath}/`)) {
+				window.location.replace(empPath);
+				return;
+			}
+		}
+		if (
+			path.startsWith("/admin") ||
+			path.startsWith("/summaries") ||
+			path === "/leave" ||
+			path.startsWith("/attendance")
+		) {
+			window.location.replace("/employee-dashboard");
+		}
+	}, [pathname]);
+
 	// Close the mobile drawer whenever the route changes (after a nav tap).
 	React.useEffect(() => {
 		setSidebarOpen(false);
@@ -137,11 +208,17 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 
 	// Attendance dropdown should stay open if any of its links is active
 	React.useEffect(() => {
-		const attendanceLinks = sidebarLinks.find(g => g.group === "HR")?.links.find(l => l.name === "Attendance")?.dropdown || [];
-		if (attendanceLinks.some(l => pathname === l.path)) {
+		const attendanceLinks =
+			navGroups.find((g) => g.group === "HR")?.links.find((l) => l.name === "Attendance")
+				?.dropdown || [];
+		if (attendanceLinks.some((l) => pathname === l.path)) {
 			setAttendanceDropdownOpen(true);
 		}
-	}, [pathname]);
+	}, [pathname, navGroups]);
+
+	if (embedInEmployeeShell) {
+		return <>{children}</>;
+	}
 
 	return (
 		<>
@@ -165,6 +242,7 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 							image={companyLogo}
 							title="Upload company logo"
 							onImage={(dataUrl, file) => {
+								if (accessRestricted) return;
 								const prev = companyLogo;
 								setCompanyLogo(dataUrl);
 								void saveCompanyLogo(file).catch(() => {
@@ -173,6 +251,7 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 								});
 							}}
 							onRemove={() => {
+								if (accessRestricted) return;
 								const prev = companyLogo;
 								setCompanyLogo(null);
 								void removeCompanyLogo().catch(() => {
@@ -206,9 +285,29 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 						aria-hidden
 					/>
 				)}
-				<aside className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`}>
+				{/* Desktop: left-edge hover dock — slide in/out + content width reflow */}
+				<div
+					className={`${styles.sidebarDock}${sidebarVisible ? ` ${styles.sidebarDockOpen}` : ""}`}
+					onMouseEnter={() => {
+						if (isDesktopNav) setNavPeek(true);
+					}}
+					onMouseLeave={() => {
+						if (isDesktopNav) setNavPeek(false);
+					}}
+				>
+					<div className={styles.sidebarRail} aria-hidden title="Hover to open menu" />
+					<aside
+						className={`${styles.sidebar}${sidebarVisible ? ` ${styles.sidebarSlideIn}` : ""}${sidebarOpen && !isDesktopNav ? ` ${styles.sidebarOpen}` : ""}`}
+					>
+					<div className={styles.sidebarHeader}>
+						<InteractGlobeLogo className={styles.sidebarGlobe} />
+						<div className={styles.sidebarBrandText}>
+							<span className={styles.sidebarBrandName}>INTERACT</span>
+							<span className={styles.sidebarBrandSub}>GLOBAL</span>
+						</div>
+					</div>
 					<nav className={styles.nav}>
-						{sidebarLinks.map((group, idx) => (
+						{navGroups.map((group, idx) => (
 							<div key={group.group}>
 								{group.group !== "Main" && (
 									<div className={styles.navGroupLabel}>
@@ -508,8 +607,9 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 						))}
 					</nav>
 				</aside>
+				</div>
 				<div
-					className={`${styles.contentArea} ${isTimePage ? styles.contentAreaTimePage : ""}`}
+					className={`${styles.contentArea}${isTimePage ? ` ${styles.contentAreaTimePage}` : ""}${contentPushed ? ` ${styles.contentPushed}` : ""}`}
 				>
 					<main
 						className={`${styles.main} ${isTimePage ? styles.mainTimePage : ""}`}

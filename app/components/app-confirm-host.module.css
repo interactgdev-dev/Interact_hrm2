@@ -2,7 +2,7 @@
   position: fixed;
   inset: 0;
   z-index: 13000;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(15, 23, 42, 0.38);
   display: flex;
   align-items: safe center;
   justify-content: center;
@@ -11,6 +11,8 @@
   box-sizing: border-box;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
   animation: fadeIn 0.18s ease;
 }
 
@@ -21,29 +23,33 @@
   margin: auto;
   flex-shrink: 0;
   overflow-y: auto;
-  border-radius: 14px;
-  border: 1px solid #e8d9ef;
-  border-left: 5px solid #611f69;
-  background: linear-gradient(135deg, #ffffff 0%, #fdfaff 58%, #f5fbf8 100%);
+  border-radius: 20px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
   box-shadow:
-    0 16px 40px rgba(97, 31, 105, 0.16),
-    0 4px 12px rgba(15, 23, 42, 0.08);
-  padding: 18px 18px 16px;
+    0 28px 64px rgba(15, 23, 42, 0.14),
+    0 8px 20px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  padding: 20px 20px 16px;
   animation: popIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .cardDanger {
-  border-color: #fecaca;
-  border-left-color: #dc2626;
-  background: linear-gradient(135deg, #ffffff 0%, #fffafa 100%);
+  border-color: rgba(254, 202, 202, 0.95);
+  box-shadow:
+    0 28px 64px rgba(220, 38, 38, 0.12),
+    0 8px 20px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .title {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
-  color: #611f69;
-  letter-spacing: 0.02em;
+  color: #0f172a;
+  letter-spacing: -0.01em;
 }
 
 .titleDanger {
@@ -54,7 +60,7 @@
   margin: 0 0 16px;
   font-size: 13px;
   line-height: 1.45;
-  color: #1d1c1d;
+  color: #475569;
 }
 
 .actions {
@@ -65,9 +71,9 @@
 
 .btn {
   padding: 8px 14px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid #e2e8f0;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.85);
   color: #475569;
   font-size: 13px;
   font-weight: 600;
@@ -80,13 +86,13 @@
 }
 
 .btnPrimary {
-  border-color: #007a5a;
-  background: #007a5a;
+  border-color: #14b8a6;
+  background: #14b8a6;
   color: #fff;
 }
 
 .btnPrimary:hover {
-  background: #006b4f;
+  background: #0d9488;
 }
 
 .btnDanger {

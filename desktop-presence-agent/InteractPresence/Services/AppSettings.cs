@@ -31,6 +31,9 @@ public sealed class AppSettings
     /// <summary>Master switch from Admin → Presence / Idle.</summary>
     public bool PresenceEnabled { get; set; } = true;
 
+    /// <summary>When true, agent must shut down permanently (admin retired all agents).</summary>
+    public bool AgentsRetired { get; set; } = false;
+
     /// <summary>
     /// true = idle then camera/face check; false = idle mouse/keyboard only → popup.
     /// </summary>

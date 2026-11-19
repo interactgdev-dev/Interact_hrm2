@@ -1,10 +1,11 @@
-/* Today's Status — Clock / Break / Prayer stacked pills (dashboard mockup) */
+/* Today's desk — 2-col grid uses side space; all actions above the fold */
 
 .row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
   width: 100%;
+  align-items: start;
 }
 
 .card {
@@ -15,6 +16,8 @@
   gap: 2px;
   padding: 0;
   border-radius: 0;
+  width: 100%;
+  max-width: none;
   min-width: 0;
   min-height: 0;
   border: none;
@@ -39,25 +42,24 @@
 
 .btn {
   width: 100%;
+  max-width: none;
   border: none;
-  border-radius: 999px;
-  padding: 11px 14px;
-  min-height: 44px;
-  font-size: 15px;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 11.5px;
   font-weight: 700;
-  line-height: 1.2;
-  white-space: nowrap;
   cursor: pointer;
   font-family: inherit;
   color: #fff;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  box-shadow: none;
+  transition: background 0.12s ease, filter 0.12s ease;
+  white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  filter: brightness(1.05);
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+  transform: none;
+  filter: brightness(1.08);
+  box-shadow: none;
 }
 
 .btn:disabled {
@@ -65,36 +67,42 @@
   cursor: not-allowed;
 }
 
+/* Idle / start — teal + black only */
 .btnClockIn {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: #0f766e;
 }
 
-.btnClockOut {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
+.btnBreak {
+  background: #111827;
 }
 
-/* Idle = green; active/end = red (same for break / prayer / restroom / meeting) */
-.btnBreak,
-.btnPrayer,
-.btnRefreshment,
+.btnPrayer {
+  background: #0f766e;
+}
+
+.btnRefreshment {
+  background: #111827;
+}
+
 .btnMeeting {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  box-shadow: 0 8px 20px rgba(22, 163, 74, 0.28);
+  background: #0f766e;
 }
 
+/* Running / end — red */
+.btnClockOut,
 .btnBreakEnd,
 .btnPrayerEnd,
 .btnRefreshmentEnd,
 .btnMeetingEnd {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.28);
+  background: #b91c1c;
 }
 
 .statusBox,
 .summaryBox {
   margin: 0;
   padding: 0;
+  width: 100%;
+  max-width: none;
   background: transparent;
   box-shadow: none;
   border: none;
@@ -102,39 +110,30 @@
 
 .statusBoxInner,
 .summaryBoxInner {
-  text-align: center;
-  padding: 0 0 2px;
+  text-align: left;
+  padding: 0 2px;
 }
 
 .statusLabel,
 .summaryLabel {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 9.5px;
+  font-weight: 650;
   color: #64748b;
   letter-spacing: 0.02em;
 }
 
 .statusTimer,
 .summaryValue {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
 }
 
-/* While break/prayer is running — timer under the red button stays white */
-.summaryValueActive {
-  color: #fff !important;
-}
-
-.summaryLabelActive {
-  color: rgba(255, 255, 255, 0.85) !important;
-}
-
 .summaryExceed {
-  font-size: 11px;
-  color: #dc2626;
-  font-weight: 600;
+  font-size: 10px;
+  color: #b91c1c;
+  font-weight: 650;
 }
 
 .cardBadge,
@@ -142,4 +141,10 @@
 .titleIcon,
 .cardTitle {
   display: none;
+}
+
+@media (max-width: 520px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
 }

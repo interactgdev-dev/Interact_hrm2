@@ -2,29 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { registerAutoPresenceCron } from "@/lib/register-auto-presence-cron";
 import { enforceBiometricOrRespond } from "@/lib/require-biometric";
 import { isGraceExpiredForEmployee } from "@/lib/attendance-presence";
-import { closeActiveBreaksForEmployee } from "@/lib/auto-clock-out";
-import { getDbDriver, pool } from "../../../lib/db";
-import {
-  mongoAutoCloseOldOpen,
-  mongoClockIn,
-  mongoClockOut,
-  mongoDeleteAttendance,
-  mongoFindOpenAttendance,
-  mongoHasActiveBreak,
-  mongoListAttendance,
-  mongoUpdateAttendance,
-} from "@/lib/mongo-attendance";
+import { performAutoClockOut } from "@/lib/auto-clock-out";
 
 registerAutoPresenceCron();
+import { pool } from "../../../lib/db";
 import { ATTENDANCE_TABLE, ensureAttendanceTable } from "../../../lib/attendance-table";
 import {
   getDateStringInTimeZone,
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
 import { computeClockInLateStatus } from "../../../lib/monthly-attendance-status";
-import { getRequestClientIp } from "../../../lib/client-ip";
-import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 import { breakTypeLabel } from "@/lib/session-break-config";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 // GET: Fetch all attendance records or by employeeId, now with department name
 export async function GET(req: NextRequest) {
@@ -40,30 +29,6 @@ export async function GET(req: NextRequest) {
     const openOnly = searchParams.get("openOnly") === "1";
     /** Lighter payload for summary pages — skips shift subquery + contacts */
     const summaryOnly = searchParams.get("summary") === "1";
-
-    if (getDbDriver() === "mongo") {
-      console.log("[mongo-attendance] GET native", {
-        employeeId,
-        date,
-        fromDate,
-        toDate,
-        openOnly,
-        summaryOnly,
-      });
-      if (activeBreakCheck && employeeId) {
-        const breakStatus = await mongoHasActiveBreak(employeeId);
-        return NextResponse.json({ success: true, ...breakStatus });
-      }
-      const attendance = await mongoListAttendance({
-        employeeId,
-        date,
-        fromDate,
-        toDate,
-        openOnly,
-        summaryOnly,
-      });
-      return NextResponse.json({ success: true, attendance });
-    }
     
     conn = await pool.getConnection();
     if (!conn) {
@@ -90,6 +55,7 @@ export async function GET(req: NextRequest) {
         e.gender AS gender,
         d.name AS department_name,
         sa.start_time AS shift_start_time,
+        sa.end_time AS shift_end_time,
         sa.allow_overtime AS allow_overtime
       FROM ${ATTENDANCE_TABLE} ea
       LEFT JOIN hrm_employees e ON ea.employee_id = e.id
@@ -344,124 +310,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing required fields: employee_id or date" }, { status: 400 });
     }
 
-    if (getDbDriver() === "mongo") {
-      if (clock_in !== undefined && clock_in !== null) {
-        const bioBlock = await enforceBiometricOrRespond(
-          biometric_token,
-          String(employee_id),
-          "clock_in",
-          employee_name
-        );
-        if (bioBlock) return bioBlock;
-        const clockInIp = getRequestClientIp(req);
-        const result = await mongoClockIn({
-          employeeId: employee_id,
-          employeeName: employee_name,
-          date: formattedDate,
-          clockIn: String(clock_in),
-          clockInIp,
-        });
-        if (!result.ok) {
-          return NextResponse.json(
-            { success: false, error: result.error, openAttendanceId: result.openAttendanceId },
-            { status: 400 },
-          );
-        }
-        console.log("Clock-in record inserted successfully", {
-          employee_id,
-          clock_in_ip: clockInIp,
-          driver: "mongo",
-        });
-        void logServerEmployeeActivity(req, {
-          type: "clock_in",
-          employeeId: String(employee_id),
-          employeeName: employee_name,
-          detail: "Clocked In",
-          page: "/employee-dashboard",
-          method: "POST",
-          url: "/api/attendance",
-        });
-        return NextResponse.json({ success: true, message: "inserted" });
-      }
-      if (clock_out !== undefined && clock_out !== null) {
-        // A badge only for real auto clock-out (client/server auto). Never from overnight date or grace.
-        let isAutoClockOut = Boolean(auto_clock_out);
-        let graceExpired = false;
-        if (!isAutoClockOut) {
-          try {
-            const graceConn = await pool.getConnection();
-            try {
-              graceExpired = await isGraceExpiredForEmployee(
-                graceConn,
-                String(employee_id),
-              );
-            } finally {
-              graceConn.release();
-            }
-          } catch (err) {
-            console.warn("[mongo-attendance] grace check failed:", err);
-          }
-        }
-        const relaxChecks = isAutoClockOut || graceExpired;
-        const breakStatus = await mongoHasActiveBreak(employee_id);
-        if (!relaxChecks && breakStatus.hasActiveBreak) {
-          const breakName = breakTypeLabel(breakStatus.breakType);
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Cannot clock out. ${breakName} is still active. Please end your ${breakName.toLowerCase()} first.`,
-              errorCode: "ACTIVE_BREAK",
-            },
-            { status: 400 },
-          );
-        }
-        const openSession = await mongoFindOpenAttendance(employee_id);
-        const openDate = openSession?.clock_in
-          ? getDateStringInTimeZone(openSession.clock_in, SERVER_TIMEZONE)
-          : "";
-        const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-        // Overnight sessions (openDate < today) and grace-expired outs skip face; still not auto-A.
-        if (!relaxChecks && openDate && openDate >= todayKey) {
-          const bioBlock = await enforceBiometricOrRespond(
-            biometric_token,
-            String(employee_id),
-            "clock_out",
-            employee_name,
-          );
-          if (bioBlock) return bioBlock;
-        }
-        const clockOutIp = getRequestClientIp(req);
-        const closed = await mongoClockOut({
-          employeeId: employee_id,
-          clockOut: String(clock_out),
-          employeeName: employee_name || null,
-          autoClockOut: isAutoClockOut,
-          clockOutIp,
-        });
-        if (!closed) {
-          return NextResponse.json({ success: true, message: "already_closed" });
-        }
-        console.log("Clock-out record updated successfully", {
-          employee_id,
-          clock_out_ip: clockOutIp,
-          driver: "mongo",
-        });
-        void logServerEmployeeActivity(req, {
-          type: isAutoClockOut ? "auto_clock_out" : "clock_out",
-          employeeId: String(employee_id),
-          employeeName: employee_name,
-          detail: isAutoClockOut ? "Auto Clocked Out" : "Clocked Out",
-          page: "/employee-dashboard",
-          method: "POST",
-          url: "/api/attendance",
-        });
-        return NextResponse.json({ success: true, message: "updated" });
-      }
-      return NextResponse.json({ success: false, error: "Missing clock_in or clock_out" }, { status: 400 });
-    }
-
     conn = await pool.getConnection();
     await ensureAttendanceTable(conn);
+    let loggedAction: "clock_in" | "clock_out" | "auto_clock_out" | null = null;
 
     if (clock_in !== undefined && clock_in !== null) {
       const bioBlock = await enforceBiometricOrRespond(
@@ -472,16 +323,14 @@ export async function POST(req: NextRequest) {
       );
       if (bioBlock) return bioBlock;
 
-      if (getDbDriver() === "mysql") {
-        lockName = `attendance_clock_in_emp_${String(employee_id).trim()}`;
-        const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
-        const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
-        if (gotLock !== 1) {
-          return NextResponse.json(
-            { success: false, error: "Could not acquire clock-in lock. Please try again." },
-            { status: 409 }
-          );
-        }
+      lockName = `attendance_clock_in_emp_${String(employee_id).trim()}`;
+      const [lockRows] = await conn.execute("SELECT GET_LOCK(?, 5) AS got_lock", [lockName]);
+      const gotLock = Number((lockRows as any[])[0]?.got_lock || 0);
+      if (gotLock !== 1) {
+        return NextResponse.json(
+          { success: false, error: "Could not acquire clock-in lock. Please try again." },
+          { status: 409 }
+        );
       }
 
       // Prevent duplicate clock-ins when multiple taps/concurrent requests happen.
@@ -530,38 +379,38 @@ export async function POST(req: NextRequest) {
         console.warn("Could not compute late_minutes on clock-in:", err);
       }
 
-      const clockInIp = getRequestClientIp(req);
       console.log("Inserting new clock-in record:", {
         employee_id,
         employee_name,
         formattedDate,
         clock_in,
         late_minutes: lateMinutesToStore,
-        clock_in_ip: clockInIp,
       });
       await conn.execute(
         `INSERT INTO ${ATTENDANCE_TABLE}
-           (employee_id, employee_name, date, clock_in, clock_out, total_hours, late_minutes, clock_in_ip, auto_clock_out, last_presence_ack_at)
-         VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, 0, NULL)`,
+           (employee_id, employee_name, date, clock_in, clock_out, total_hours, late_minutes, auto_clock_out, last_presence_ack_at)
+         VALUES (?, ?, ?, ?, NULL, NULL, ?, 0, NULL)`,
         [
           employee_id,
           employee_name || "",
           formattedDate,
           clockInDb,
           lateMinutesToStore,
-          clockInIp,
         ],
       );
       console.log("Clock-in record inserted successfully");
+      loggedAction = "clock_in";
     } else if (clock_out !== undefined && clock_out !== null) {
-      // A badge only when client/server marks real auto — grace only relaxes bio/break checks.
       let isAutoClockOut = Boolean(auto_clock_out);
-      const graceExpired = !isAutoClockOut
-        ? await isGraceExpiredForEmployee(conn, String(employee_id))
-        : false;
-      const relaxChecks = isAutoClockOut || graceExpired;
 
-      if (!relaxChecks) {
+      if (!isAutoClockOut) {
+        const graceExpired = await isGraceExpiredForEmployee(conn, String(employee_id));
+        if (graceExpired) {
+          isAutoClockOut = true;
+        }
+      }
+
+      if (!isAutoClockOut) {
         const bioBlock = await enforceBiometricOrRespond(
           biometric_token,
           String(employee_id),
@@ -571,7 +420,7 @@ export async function POST(req: NextRequest) {
         if (bioBlock) return bioBlock;
       }
 
-      if (!relaxChecks) {
+      if (!isAutoClockOut) {
       // Check for active breaks before allowing clock out
       const { hasActiveBreak, breakType } = await checkActiveBreaks(conn, employee_id);
       
@@ -596,60 +445,49 @@ export async function POST(req: NextRequest) {
       );
       const pending = (pendingRows as any[])[0];
       if (pending) {
-        const formattedClockOut = new Date(clock_out).toISOString().slice(0, 19).replace('T', ' ');
-        const clockOutIp = getRequestClientIp(req);
+        // Auto clock-out: always prefer T.Punch Out (not browser "now"/grace time)
         if (isAutoClockOut) {
-          await closeActiveBreaksForEmployee(
+          await performAutoClockOut(
             conn,
-            String(employee_id),
-            formattedClockOut,
-            new Date(clock_out).toISOString(),
-          );
-        }
-        await conn.execute(
-          `UPDATE ${ATTENDANCE_TABLE}
-           SET clock_out = ?,
-               auto_clock_out = ?,
-               last_presence_ack_at = NULL,
-               total_hours = LEAST(999.99, ROUND(TIMESTAMPDIFF(MINUTE, clock_in, ?)/60, 2)),
-               employee_name = ?,
-               clock_out_ip = ?
-           WHERE id = ?`,
-          [
-            formattedClockOut,
-            isAutoClockOut ? 1 : 0,
-            formattedClockOut,
-            employee_name || null,
-            clockOutIp,
             pending.id,
-          ]
-        );
-        console.log("Clock-out record updated successfully", {
-          employee_id,
-          clock_out_ip: clockOutIp,
-          auto_clock_out: isAutoClockOut,
-        });
+            employee_name || null,
+            clock_out ? new Date(clock_out).getTime() : undefined,
+            String(employee_id),
+          );
+          console.log("Auto clock-out record updated from T.Punch Out");
+          loggedAction = "auto_clock_out";
+        } else {
+          const formattedClockOut = new Date(clock_out).toISOString().slice(0, 19).replace('T', ' ');
+          await conn.execute(
+            `UPDATE ${ATTENDANCE_TABLE}
+             SET clock_out = ?,
+                 auto_clock_out = 0,
+                 last_presence_ack_at = NULL,
+                 total_hours = LEAST(999.99, ROUND(TIMESTAMPDIFF(MINUTE, clock_in, ?)/60, 2)),
+                 employee_name = ?
+             WHERE id = ?`,
+            [formattedClockOut, formattedClockOut, employee_name || null, pending.id]
+          );
+          console.log("Clock-out record updated successfully");
+          loggedAction = "clock_out";
+        }
       } else {
         console.warn("No pending clock-in found for clock-out");
       }
     }
 
-    if (clock_in !== undefined && clock_in !== null) {
+    if (loggedAction) {
+      const detail =
+        loggedAction === "clock_in"
+          ? "Clocked In"
+          : loggedAction === "auto_clock_out"
+            ? "Auto Clocked Out"
+            : "Clocked Out";
       void logServerEmployeeActivity(req, {
-        type: "clock_in",
+        type: loggedAction,
         employeeId: String(employee_id),
         employeeName: employee_name,
-        detail: "Clocked In",
-        page: "/employee-dashboard",
-        method: "POST",
-        url: "/api/attendance",
-      });
-    } else if (clock_out !== undefined && clock_out !== null) {
-      void logServerEmployeeActivity(req, {
-        type: Boolean(auto_clock_out) ? "auto_clock_out" : "clock_out",
-        employeeId: String(employee_id),
-        employeeName: employee_name,
-        detail: Boolean(auto_clock_out) ? "Auto Clocked Out" : "Clocked Out",
+        detail,
         page: "/employee-dashboard",
         method: "POST",
         url: "/api/attendance",
@@ -679,27 +517,6 @@ export async function PUT(req: NextRequest) {
   try {
     const data = await req.json();
     const { id, employee_id, employee_name, date, clock_in, clock_out, autoCloseOldRecords } = data || {};
-
-    if (getDbDriver() === "mongo") {
-      if (autoCloseOldRecords && employee_id) {
-        await mongoAutoCloseOldOpen(employee_id);
-        return NextResponse.json({ success: true, message: 'Old open records closed' });
-      }
-      if (!id || !employee_id || !date) {
-        return NextResponse.json({ success: false, error: "Missing required fields: id, employee_id or date" }, { status: 400 });
-      }
-      const formattedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(date))
-        ? String(date)
-        : getDateStringInTimeZone(date, SERVER_TIMEZONE);
-      await mongoUpdateAttendance({
-        id,
-        employeeName: employee_name,
-        date: formattedDate,
-        clockIn: clock_in || null,
-        clockOut: clock_out || null,
-      });
-      return NextResponse.json({ success: true, message: 'Attendance updated successfully' });
-    }
 
     conn = await pool.getConnection();
     await ensureAttendanceTable(conn);
@@ -794,11 +611,6 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ success: false, error: "Missing required field: id" }, { status: 400 });
-    }
-
-    if (getDbDriver() === "mongo") {
-      await mongoDeleteAttendance(id);
-      return NextResponse.json({ success: true, message: 'Attendance deleted successfully' });
     }
 
     conn = await pool.getConnection();

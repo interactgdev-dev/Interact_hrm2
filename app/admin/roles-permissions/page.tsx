@@ -80,9 +80,6 @@ function accessApiHeaders(extra?: Record<string, string>): HeadersInit {
 
 export default function SystemControlPage() {
   const [activeTab, setActiveTab] = useState<TabId>("roles");
-  const [backlogVisible, setBacklogVisible] = useState(false);
-  const [backlogPwOpen, setBacklogPwOpen] = useState(false);
-  const [backlogUnlocking, setBacklogUnlocking] = useState(false);
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
   const [accessLoading, setAccessLoading] = useState(true);
   const [accessSaving, setAccessSaving] = useState(false);
@@ -115,6 +112,10 @@ export default function SystemControlPage() {
   const [toast, setToast] = useState("");
   const [rolePhotos, setRolePhotos] = useState<Record<string, string>>({});
   const persistTimerRef = React.useRef<number | null>(null);
+  /** Hidden Backlog Tracker — revealed via double-click on System Control title + password. */
+  const [backlogVisible, setBacklogVisible] = useState(false);
+  const [backlogPwOpen, setBacklogPwOpen] = useState(false);
+  const [backlogUnlocking, setBacklogUnlocking] = useState(false);
 
   const customRoles = useMemo(
     () => orgRoles.filter((r) => isCustomRole(r.id)),
@@ -1166,6 +1167,7 @@ export default function SystemControlPage() {
   }
 
   function openBacklogGate() {
+    // Always require password before the tab can appear (never auto-show from cookie).
     if (backlogVisible) {
       setActiveTab("backlog");
       return;
@@ -1198,6 +1200,7 @@ export default function SystemControlPage() {
   function hideBacklogTracker() {
     setBacklogVisible(false);
     if (activeTab === "backlog") setActiveTab("roles");
+    // Lock again so next open always needs password (and list API stays locked).
     void fetch("/api/admin/guard-screenshots/unlock", { method: "DELETE" }).catch(
       () => {},
     );

@@ -41,6 +41,8 @@ type Emp = {
   id: number;
   first_name: string;
   last_name: string;
+  employee_code?: string | null;
+  pseudonym?: string | null;
 };
 
 const PRESET_GROUPS = ["auto", "employee", "hr", "manager"] as const;
@@ -79,8 +81,35 @@ export default function FormatsLibraryPage() {
   const [customFields, setCustomFields] = React.useState<CustomFieldDraft[]>([]);
   const [deletingId, setDeletingId] = React.useState<number | null>(null);
   const [previewTemplateId, setPreviewTemplateId] = React.useState<number | null>(null);
+  const [seedingMedical, setSeedingMedical] = React.useState(false);
 
   const loginId = typeof window !== "undefined" ? localStorage.getItem("loginId") || "hr" : "hr";
+
+  async function seedMedicalForms() {
+    if (seedingMedical) return;
+    setSeedingMedical(true);
+    try {
+      const res = await fetch("/api/admin/form-templates/seed-medical", { method: "POST" });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Could not add medical templates");
+      const parts = [
+        ...(data.created?.length ? [`created ${data.created.length}`] : []),
+        ...(data.updated?.length ? [`updated ${data.updated.length}`] : []),
+      ];
+      showAppToast({
+        message: `Medical templates ready${parts.length ? ` (${parts.join(", ")})` : ""}.`,
+        variant: "success",
+      });
+      await load();
+    } catch (e) {
+      showAppToast({
+        message: e instanceof Error ? e.message : "Could not add medical templates",
+        variant: "error",
+      });
+    } finally {
+      setSeedingMedical(false);
+    }
+  }
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -103,18 +132,60 @@ export default function FormatsLibraryPage() {
   }, [load]);
 
   React.useEffect(() => {
-    if (!sendModal || empQ.length < 2) {
+    if (!sendModal || empQ.trim().length < 1) {
       setEmpResults([]);
       return;
     }
+    const q = empQ.trim();
+    const viewerId =
+      typeof window !== "undefined"
+        ? String(localStorage.getItem("employeeId") || "").trim()
+        : "";
+    let cancelled = false;
     const t = window.setTimeout(() => {
-      void fetch(`/api/admin/employee-files?q=${encodeURIComponent(empQ)}`)
+      const params = new URLSearchParams();
+      params.set("q", q);
+      if (viewerId) params.set("viewerId", viewerId);
+      void fetch(`/api/admin/employee-files?${params.toString()}`, {
+        cache: "no-store",
+        headers: viewerId
+          ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+          : {},
+      })
         .then((r) => r.json())
         .then((d) => {
-          if (d.success) setEmpResults(d.employees || []);
+          if (cancelled || !d.success) return;
+          const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+          const rows = (d.employees || []) as Emp[];
+          // Client-side safety filter (API should already filter).
+          const seen = new Set<number>();
+          const filtered = rows.filter((e) => {
+            const id = Number(e.id);
+            if (!Number.isFinite(id) || seen.has(id)) return false;
+            const hay = [
+              e.first_name,
+              e.last_name,
+              `${e.first_name} ${e.last_name}`,
+              String(e.id),
+              e.employee_code || "",
+              e.pseudonym || "",
+            ]
+              .join(" ")
+              .toLowerCase();
+            if (!tokens.every((tok) => hay.includes(tok))) return false;
+            seen.add(id);
+            return true;
+          });
+          setEmpResults(filtered);
+        })
+        .catch(() => {
+          if (!cancelled) setEmpResults([]);
         });
-    }, 300);
-    return () => window.clearTimeout(t);
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
   }, [empQ, sendModal]);
 
   function openSendModal(t: Template) {
@@ -336,7 +407,7 @@ export default function FormatsLibraryPage() {
       <div className={styles.page}>
         <div className={styles.inner}>
           <header className={styles.header}>
-            <h1 className={styles.title}>Formats Library</h1>
+            <h1 className={styles.title}>Form Templates</h1>
             <p className={styles.subtitle}>
               Company-wide forms (warning, appraisal) and department-specific templates. Send forms to employees for online fill.
             </p>
@@ -349,6 +420,15 @@ export default function FormatsLibraryPage() {
               onClick={openCreateModal}
             >
               + New template
+            </button>
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={() => void seedMedicalForms()}
+              disabled={seedingMedical}
+              title="Add / refresh Medical Subscription + Claim templates"
+            >
+              {seedingMedical ? "Adding…" : "Add medical templates"}
             </button>
           </div>
 
@@ -436,21 +516,33 @@ export default function FormatsLibraryPage() {
               <input
                 className={styles.input}
                 value={empQ}
-                onChange={(e) => setEmpQ(e.target.value)}
-                placeholder="Name or ID"
+                onChange={(e) => {
+                  setEmpQ(e.target.value);
+                  setSelectedEmp(null);
+                }}
+                placeholder="Name or ID (e.g. Waqas or 94)"
+                autoComplete="off"
               />
             </div>
-            {empResults.slice(0, 8).map((e) => (
-              <button
-                key={e.id}
-                type="button"
-                className={`${styles.empItem} ${selectedEmp?.id === e.id ? styles.empItemActive : ""}`}
-                onClick={() => setSelectedEmp(e)}
-                style={{ marginBottom: 4 }}
-              >
-                {e.first_name} {e.last_name} (ID {e.id})
-              </button>
-            ))}
+            {empQ.trim() && empResults.length === 0 ? (
+              <p style={{ margin: "0 0 10px", fontSize: 13, color: "#94a3b8" }}>
+                No employee matched “{empQ.trim()}”.
+              </p>
+            ) : null}
+            <div style={{ maxHeight: 220, overflowY: "auto", marginBottom: 8 }}>
+              {empResults.slice(0, 20).map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  className={`${styles.empItem} ${selectedEmp?.id === e.id ? styles.empItemActive : ""}`}
+                  onClick={() => setSelectedEmp(e)}
+                  style={{ marginBottom: 4, width: "100%", textAlign: "left" }}
+                >
+                  {e.first_name} {e.last_name} (ID {e.id})
+                  {e.pseudonym ? ` · ${e.pseudonym}` : ""}
+                </button>
+              ))}
+            </div>
             {sendModal.category.toLowerCase() === "appraisal" ? (
               <div className={styles.field}>
                 <label className={styles.label}>Review period *</label>
@@ -542,6 +634,7 @@ export default function FormatsLibraryPage() {
                 onChange={(e) => onCategoryChange(e.target.value)}
               >
                 <option value="general">General</option>
+                <option value="medical">Medical</option>
                 <option value="warning">Warning</option>
                 <option value="appraisal">Appraisal</option>
                 <option value="onboarding">Onboarding</option>
@@ -633,6 +726,7 @@ export default function FormatsLibraryPage() {
                         <option value="select">Dropdown</option>
                         <option value="date">Date</option>
                         <option value="checkbox">Checkbox</option>
+                        <option value="file">PDF upload</option>
                       </select>
                     </div>
                     <div className={styles.field} style={{ margin: 0 }}>

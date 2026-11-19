@@ -1,0 +1,29 @@
+---
+description: Guard OCR must always check Policy restricted words, websites/links, and docs — never skip on Image→Text.
+globs: lib/guard-keyword-watch.ts,app/api/admin/guard-screenshots/image-to-text/**,app/api/guard/screenshots/**,image-to-text/**
+alwaysApply: false
+---
+
+# Guard Policy OCR — always check (no skip)
+
+## Rule
+
+Every screenshot OCR / Image→Text path **must** evaluate Guard Policy restricted data:
+
+1. **Words / phrases** (OCR keywords)
+2. **Websites / links** (domains + URL tokens in OCR)
+3. **Uploads / docs** (file extensions + upload phrases)
+4. **Apps** (when present in OCR / activity)
+
+## Do not
+
+- Skip `enforcePolicyAfterOcr` / `evaluateTextPolicy` because OCR cache hit, empty-looking UI, or “admin only scanned for display”
+- Gate policy scan behind `if (scanned.text)` — still call with `""` (returns `no_match`)
+- Put policy alerts in Admin Ticket Inbox — secret Policy inbox only
+
+## Must
+
+- Image→Text API: call `enforcePolicyAfterOcr` after cache **and** after fresh OCR; respond with `policyChecked: true` when the check was queued
+- Screenshot upload API: same `enforcePolicyAfterOcr` (background OK)
+- Matching uses `preparePolicyHaystack` (raw + collapsed slang + extracted URLs/files)
+- Ticket create may still skip for `disabled` / `dedup` / `no_match` — that is not “skip the check”

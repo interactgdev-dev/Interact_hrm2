@@ -1,15 +1,56 @@
 "use client";
 
-import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "./manage-leaves.module.css";
-import tableStyles from "../../break-summary/break-summary.module.css";
+import leaveStyles from "../../leave/leave.module.css";
 import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { ModalPortal } from "@/app/components/ModalPortal";
-import { FaFilter, FaSort, FaSortDown, FaSortUp } from "react-icons/fa";
 import { toastError, toastSuccess } from "@/lib/app-toast";
+import LeaveRequestsPanel from "./LeaveRequestsPanel";
+import LeaveSummaryPanel from "./LeaveSummaryPanel";
+import { normalizeEmployeeGender } from "@/lib/leave-categories";
+import {
+  fetchAccessControlMe,
+  invalidateAccessControlMeCache,
+} from "@/lib/access-control/me-client-cache";
+import { permissionSetHas } from "@/lib/access-control/permission-scope";
+import { isAdminBrowserSession } from "@/lib/access-control/employee-shell";
+
+type LeaveDashTab = "balances" | "requests" | "summary";
+
+const MANAGE_LEAVES_TAB_KEY = "manage-leaves-tab";
+
+function tabFromParam(raw: string | null): LeaveDashTab | null {
+  if (raw === "balances" || raw === "requests" || raw === "summary") return raw;
+  return null;
+}
+
+function persistLeaveTab(tab: LeaveDashTab) {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", tab);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    sessionStorage.setItem(MANAGE_LEAVES_TAB_KEY, tab);
+  } catch {
+    /* ignore */
+  }
+}
+
+function readPersistedLeaveTab(): LeaveDashTab | null {
+  try {
+    const fromUrl = tabFromParam(
+      new URLSearchParams(window.location.search).get("tab"),
+    );
+    if (fromUrl) return fromUrl;
+    return tabFromParam(sessionStorage.getItem(MANAGE_LEAVES_TAB_KEY));
+  } catch {
+    return null;
+  }
+}
 
 interface Employee {
   id: number;
@@ -17,12 +58,19 @@ interface Employee {
   last_name: string;
   employee_code: string;
   employment_status: string;
+  gender?: string | null;
   annual_allowance: number;
   bereavement_allowance: number;
+  maternity_allowance?: number;
+  paternity_allowance?: number;
   annual_used: number;
   bereavement_used: number;
+  maternity_used?: number;
+  paternity_used?: number;
   annual_current_balance: number;
   bereavement_current_balance: number;
+  maternity_current_balance?: number;
+  paternity_current_balance?: number;
   annual_balance_adjustment: number;
   bereavement_balance_adjustment: number;
   department_name?: string;
@@ -52,33 +100,139 @@ function formatLeaveDelta(next: number, current: number): string {
   return delta > 0 ? `+${abs} leaves added` : `-${abs} leaves removed`;
 }
 
-type SortKey =
-  | "id"
-  | "full_name"
-  | "pseudonym"
-  | "department_name"
-  | "employment_status"
-  | "annual_balance"
-  | "bereavement_balance";
-
-type SortDirection = "asc" | "desc";
-
 export default function ManageLeavesPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 24 }}>Loading leaves…</div>}>
+      <ManageLeavesPageInner />
+    </Suspense>
+  );
+}
+
+function ManageLeavesPageInner() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({
     annual_current_balance: "20",
-    bereavement_current_balance: "3"
+    bereavement_current_balance: "3",
+    maternity_current_balance: "90",
+    paternity_current_balance: "5",
   });
   const [saving, setSaving] = useState(false);
-  const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection } | null>(null);
   const [searchName, setSearchName] = useState("");
   const deferredSearchName = useDeferredValue(searchName);
   const [selectedDepartment, setSelectedDepartment] = useState("");
+  const [employmentStatusFilter, setEmploymentStatusFilter] = useState("");
+  const [lowBalanceOnly, setLowBalanceOnly] = useState(false);
+  /** Top month filter (parallel to tabs) — drives activity date range */
+  const [globalMonth, setGlobalMonth] = useState("");
+  /** From–To date range filters employees with leave activity in range */
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [monthActiveIds, setMonthActiveIds] = useState<Set<string> | null>(null);
+
+  const applyGlobalMonth = (monthKey: string) => {
+    setGlobalMonth(monthKey);
+    if (!monthKey) return;
+    const [year, monthNum] = monthKey.split("-");
+    const lastDay = new Date(Number(year), Number(monthNum), 0).getDate();
+    setFromDate(`${monthKey}-01`);
+    setToDate(`${monthKey}-${String(lastDay).padStart(2, "0")}`);
+  };
   const [departments, setDepartments] = useState<{ id: number | string; name?: string; department_name?: string }[]>([]);
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<LeaveDashTab>("requests");
+  /** HR Admin / HR Manager only — leave.balances.edit */
+  const [canEditBalances, setCanEditBalances] = useState(false);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolveCanEdit = async () => {
+      try {
+        // Classic admin login — full leave balance edit.
+        if (isAdminBrowserSession()) {
+          if (!cancelled) setCanEditBalances(true);
+          return;
+        }
+        const eid = String(localStorage.getItem("employeeId") || "").trim();
+        if (!eid) {
+          if (!cancelled) setCanEditBalances(false);
+          return;
+        }
+        invalidateAccessControlMeCache(eid);
+        const data = await fetchAccessControlMe(eid);
+        if (cancelled) return;
+        const perms = Array.isArray(data?.permissions)
+          ? (data.permissions as string[])
+          : [];
+        if (permissionSetHas(perms, "leave.balances.edit")) {
+          setCanEditBalances(true);
+          return;
+        }
+        // Fallback: HR dept + Manager/Team Lead/Admin role slug (API merge may lag cache).
+        const dept = String(
+          (data as { departmentName?: string })?.departmentName || "",
+        ).toLowerCase();
+        const isHr =
+          dept.includes("hr") ||
+          dept.includes("human resource") ||
+          dept === "recruit";
+        const slug = String(
+          (data as { role?: { slug?: string; slugs?: string[] } })?.role?.slug ||
+            "",
+        ).toLowerCase();
+        const slugs = (
+          (data as { role?: { slugs?: string[] } })?.role?.slugs || []
+        ).map((s) => String(s || "").toLowerCase());
+        const legacy = String(
+          (data as { legacyRole?: string })?.legacyRole || "",
+        ).toLowerCase();
+        const adminish =
+          slug.includes("hr_manager") ||
+          slug.includes("dir_hr") ||
+          slug.includes("admin") ||
+          slugs.some(
+            (s) =>
+              s.includes("hr_manager") ||
+              s.includes("dir_hr") ||
+              s.includes("admin"),
+          ) ||
+          legacy === "manager" ||
+          legacy === "team lead" ||
+          legacy === "ceo";
+        setCanEditBalances(Boolean(isHr && adminish));
+      } catch {
+        if (!cancelled) setCanEditBalances(false);
+      }
+    };
+    void resolveCanEdit();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectTab = (tab: LeaveDashTab) => {
+    setActiveTab(tab);
+    persistLeaveTab(tab);
+  };
+
+  useEffect(() => {
+    const fromUrl = tabFromParam(searchParams?.get("tab") ?? null);
+    if (fromUrl) {
+      setActiveTab(fromUrl);
+      try {
+        sessionStorage.setItem(MANAGE_LEAVES_TAB_KEY, fromUrl);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const next = readPersistedLeaveTab() || "requests";
+    setActiveTab(next);
+    persistLeaveTab(next);
+  }, [searchParams]);
 
   useEffect(() => {
     fetchEmployees();
@@ -95,10 +249,64 @@ export default function ManageLeavesPage() {
       .catch((err) => console.error("Error fetching departments:", err));
   }, []);
 
+  useEffect(() => {
+    if (!fromDate && !toDate) {
+      setMonthActiveIds(null);
+      return;
+    }
+    let cancelled = false;
+    const rangeFrom = fromDate || toDate;
+    const rangeTo = toDate || fromDate;
+    void (async () => {
+      try {
+        const viewerId = String(localStorage.getItem("employeeId") || "").trim();
+        const viewerQs = viewerId ? `&viewerId=${encodeURIComponent(viewerId)}` : "";
+        const res = await fetch(
+          `/api/leaves?fromDate=${encodeURIComponent(rangeFrom)}&toDate=${encodeURIComponent(rangeTo)}&ts=${Date.now()}${viewerQs}`,
+          {
+            cache: "no-store",
+            headers: viewerId
+              ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+              : {},
+          },
+        );
+        const data = await res.json();
+        if (cancelled) return;
+        const ids = new Set<string>();
+        for (const l of data?.leaves || []) {
+          const start = String(l?.start_date || "").slice(0, 10);
+          const end = String(l?.end_date || l?.start_date || "").slice(0, 10);
+          if (!start) continue;
+          if (fromDate && (end || start) < fromDate) continue;
+          if (toDate && start > toDate) continue;
+          const id = String(l?.employee_id ?? "").trim();
+          if (id) ids.add(id);
+        }
+        setMonthActiveIds(ids);
+      } catch {
+        if (!cancelled) setMonthActiveIds(new Set());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fromDate, toDate]);
+
   async function fetchEmployees() {
     try {
       setLoading(true);
-      const res = await fetch("/api/employee-leave-allowances");
+      const viewerId =
+        typeof window !== "undefined"
+          ? String(localStorage.getItem("employeeId") || "").trim()
+          : "";
+      const viewerQs = viewerId ? `&viewerId=${encodeURIComponent(viewerId)}` : "";
+      const viewerHeaders: HeadersInit = viewerId
+        ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+        : {};
+      const res = await fetch(
+        `/api/employee-leave-allowances?ts=${Date.now()}${viewerQs}`,
+        { cache: "no-store", headers: viewerHeaders },
+      );
       const data = await res.json();
       if (data.success) {
         const empDetailsMap = new Map<
@@ -107,7 +315,10 @@ export default function ManageLeavesPage() {
         >();
 
         try {
-          const listRes = await fetch("/api/employee-list", { cache: "no-store" });
+          const listRes = await fetch(
+            `/api/employee-list?ts=${Date.now()}${viewerQs}`,
+            { cache: "no-store", headers: viewerHeaders },
+          );
           const listData = await listRes.json();
           const list = Array.isArray(listData?.employees)
             ? listData.employees
@@ -128,7 +339,10 @@ export default function ManageLeavesPage() {
 
         const enrichedEmployees = data.employees.map((emp: Employee) => ({
           ...emp,
-          department_name: empDetailsMap.get(emp.id)?.department_name || "-",
+          department_name:
+            emp.department_name ||
+            empDetailsMap.get(emp.id)?.department_name ||
+            "-",
           pseudonym: empDetailsMap.get(emp.id)?.pseudonym || "-",
         }));
         setEmployees(enrichedEmployees);
@@ -143,10 +357,17 @@ export default function ManageLeavesPage() {
   }
 
   function handleEdit(employee: Employee) {
+    if (!canEditBalances) return;
     setEditingEmployee(employee);
     setFormData({
       annual_current_balance: formatLeaveDays(employee.annual_current_balance),
-      bereavement_current_balance: formatLeaveDays(employee.bereavement_current_balance)
+      bereavement_current_balance: formatLeaveDays(employee.bereavement_current_balance),
+      maternity_current_balance: formatLeaveDays(
+        employee.maternity_current_balance ?? employee.maternity_allowance ?? 90,
+      ),
+      paternity_current_balance: formatLeaveDays(
+        employee.paternity_current_balance ?? employee.paternity_allowance ?? 5,
+      ),
     });
     setShowModal(true);
   }
@@ -156,13 +377,28 @@ export default function ManageLeavesPage() {
 
     try {
       setSaving(true);
+      const viewerId = String(localStorage.getItem("employeeId") || "").trim();
+      const portal =
+        localStorage.getItem("hrmPortal") ||
+        sessionStorage.getItem("hrmPortal") ||
+        "";
       const res = await fetch("/api/employee-leave-allowances", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(viewerId
+            ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+            : {}),
+          ...(portal === "admin" ? { "x-hrm-portal": "admin" } : {}),
+        },
         body: JSON.stringify({
           employee_id: editingEmployee.id,
+          viewerId: viewerId || undefined,
+          portal: portal || undefined,
           annual_current_balance: parseLeaveDays(formData.annual_current_balance),
-          bereavement_current_balance: parseLeaveDays(formData.bereavement_current_balance)
+          bereavement_current_balance: parseLeaveDays(formData.bereavement_current_balance),
+          maternity_current_balance: parseLeaveDays(formData.maternity_current_balance),
+          paternity_current_balance: parseLeaveDays(formData.paternity_current_balance),
         })
       });
 
@@ -191,23 +427,83 @@ export default function ManageLeavesPage() {
     return `${employee.first_name || ""} ${employee.last_name || ""}`.trim();
   };
 
-  const handleFilterClick = (key: SortKey) => {
-    setSortConfig((prev) => {
-      if (prev?.key === key) return null;
-      return { key, direction: "asc" };
-    });
+  const employmentStatusKey = (emp: Employee) => {
+    const s = String(emp.employment_status || "").toLowerCase();
+    if (s.includes("probation")) return "Probation";
+    return "Confirmed";
   };
 
-  const handleSortToggle = (key: SortKey) => {
-    setSortConfig((prev) => {
-      if (!prev || prev.key !== key) return { key, direction: "asc" };
-      return { key, direction: prev.direction === "asc" ? "desc" : "asc" };
-    });
-  };
-
-  const getSortIcon = (key: SortKey) => {
-    if (!sortConfig || sortConfig.key !== key) return <FaSort style={{ opacity: 0.75 }} />;
-    return sortConfig.direction === "asc" ? <FaSortUp /> : <FaSortDown />;
+  /**
+   * Show Annual + Bereavement + Mat/Pat bars.
+   * Available / Total = Annual only (do not sum other categories).
+   */
+  const balanceFor = (emp: Employee) => {
+    const annualAllow = Number(emp.annual_allowance) || 20;
+    const annualCurrent = Number.isFinite(Number(emp.annual_current_balance))
+      ? Number(emp.annual_current_balance)
+      : annualAllow;
+    const annualUsed = Number.isFinite(Number(emp.annual_used))
+      ? Number(emp.annual_used)
+      : Math.max(0, annualAllow - annualCurrent);
+    const berAllow = Number(emp.bereavement_allowance) || 3;
+    const berCurrent = Number.isFinite(Number(emp.bereavement_current_balance))
+      ? Number(emp.bereavement_current_balance)
+      : berAllow;
+    const berUsed = Number.isFinite(Number(emp.bereavement_used))
+      ? Number(emp.bereavement_used)
+      : Math.max(0, berAllow - berCurrent);
+    const gender = normalizeEmployeeGender(emp.gender);
+    const matAllow = Number(emp.maternity_allowance) || 90;
+    const matCurrent = Number.isFinite(Number(emp.maternity_current_balance))
+      ? Number(emp.maternity_current_balance)
+      : matAllow;
+    const matUsed = Number.isFinite(Number(emp.maternity_used))
+      ? Number(emp.maternity_used)
+      : Math.max(0, matAllow - matCurrent);
+    const patAllow = Number(emp.paternity_allowance) || 5;
+    const patCurrent = Number.isFinite(Number(emp.paternity_current_balance))
+      ? Number(emp.paternity_current_balance)
+      : patAllow;
+    const patUsed = Number.isFinite(Number(emp.paternity_used))
+      ? Number(emp.paternity_used)
+      : Math.max(0, patAllow - patCurrent);
+    const available = Math.round(Math.max(0, annualCurrent) * 2) / 2;
+    const annualPct =
+      annualAllow > 0
+        ? Math.min(100, (Math.max(0, annualAllow - annualCurrent) / annualAllow) * 100)
+        : 0;
+    const berPct =
+      berAllow > 0
+        ? Math.min(100, (Math.max(0, berAllow - berCurrent) / berAllow) * 100)
+        : 0;
+    const matPct =
+      matAllow > 0
+        ? Math.min(100, (Math.max(0, matAllow - matCurrent) / matAllow) * 100)
+        : 0;
+    const patPct =
+      patAllow > 0
+        ? Math.min(100, (Math.max(0, patAllow - patCurrent) / patAllow) * 100)
+        : 0;
+    return {
+      annualAllow,
+      annualCurrent,
+      annualUsed,
+      berAllow,
+      berCurrent,
+      berUsed,
+      gender,
+      matAllow,
+      matCurrent,
+      matUsed,
+      patAllow,
+      patCurrent,
+      patUsed,
+      available,
+      annualPct,
+      berPct,
+      matPct,
+      patPct,
+    };
   };
 
   const filteredEmployees = useMemo(() => {
@@ -217,7 +513,8 @@ export default function ManageLeavesPage() {
       rows = rows.filter((emp) => {
         const fullName = getFullName(emp).toLowerCase();
         const pseudo = (emp.pseudonym || "").toLowerCase();
-        return fullName.includes(term) || pseudo.includes(term);
+        const id = String(emp.id || "");
+        return fullName.includes(term) || pseudo.includes(term) || id.includes(term);
       });
     }
     if (selectedDepartment) {
@@ -226,241 +523,369 @@ export default function ManageLeavesPage() {
           (emp.department_name || "").toLowerCase() === selectedDepartment.toLowerCase()
       );
     }
+    if (employmentStatusFilter) {
+      rows = rows.filter((emp) => employmentStatusKey(emp) === employmentStatusFilter);
+    }
+    if (lowBalanceOnly) {
+      rows = rows.filter((emp) => balanceFor(emp).available < 4);
+    }
+    if (monthActiveIds) {
+      rows = rows.filter((emp) => monthActiveIds.has(String(emp.id)));
+    }
     return rows;
-  }, [employees, deferredSearchName, selectedDepartment]);
-
-  const sortedEmployees = useMemo(() => {
-    if (!sortConfig) return filteredEmployees;
-
-    const getText = (value: unknown) => String(value || "").toLowerCase();
-
-    return [...filteredEmployees].sort((a, b) => {
-      let cmp = 0;
-
-      switch (sortConfig.key) {
-        case "id":
-          cmp = Number(a.id || 0) - Number(b.id || 0);
-          break;
-        case "full_name":
-          cmp = getText(getFullName(a)).localeCompare(getText(getFullName(b)), undefined, {
-            sensitivity: "base",
-          });
-          break;
-        case "pseudonym":
-          cmp = getText(a.pseudonym).localeCompare(getText(b.pseudonym), undefined, {
-            sensitivity: "base",
-          });
-          break;
-        case "department_name":
-          cmp = getText(a.department_name).localeCompare(getText(b.department_name), undefined, {
-            sensitivity: "base",
-          });
-          break;
-        case "employment_status":
-          cmp = getText(a.employment_status).localeCompare(getText(b.employment_status), undefined, {
-            sensitivity: "base",
-          });
-          break;
-        case "annual_balance":
-          cmp = Number(a.annual_current_balance || 0) - Number(b.annual_current_balance || 0);
-          break;
-        case "bereavement_balance":
-          cmp = Number(a.bereavement_current_balance || 0) - Number(b.bereavement_current_balance || 0);
-          break;
-        default:
-          cmp = 0;
-      }
-
-      return sortConfig.direction === "asc" ? cmp : -cmp;
-    });
-  }, [filteredEmployees, sortConfig]);
-
-  const sortButtonStyle: React.CSSProperties = {
-    border: "none",
-    background: "transparent",
-    color: "#fff",
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "0",
-    fontSize: "0.8rem",
-  };
-
-  const thStyle: React.CSSProperties = {
-    color: "#fff",
-    fontSize: "12px",
-    padding: "10px 10px",
-    whiteSpace: "nowrap",
-    textAlign: "left",
-    verticalAlign: "middle",
-  };
-
-  const tdStyle: React.CSSProperties = {
-    fontSize: "13px",
-    padding: "8px 10px",
-    whiteSpace: "nowrap",
-    verticalAlign: "middle",
-  };
-
-  const tdAlignedStyle: React.CSSProperties = { ...tdStyle, paddingLeft: 54 };
-  const thActionsStyle: React.CSSProperties = { ...thStyle, minWidth: 200, paddingRight: 30 };
-  const tdActionsStyle: React.CSSProperties = { ...tdStyle, minWidth: 210, paddingRight: 30 };
-
-  const renderSortableHeader = (label: string, key: SortKey) => {
-    const isActive = sortConfig?.key === key;
-
-    return (
-      <div style={{ display: "grid", gridTemplateColumns: "38px 1fr", alignItems: "center", gap: 6, width: "100%" }}>
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <button
-            type="button"
-            onClick={() => handleFilterClick(key)}
-            style={{ ...sortButtonStyle, opacity: isActive ? 1 : 0.78 }}
-            title={isActive ? `Clear ${label} sort` : `Apply ${label} sort`}
-            aria-label={isActive ? `Clear ${label} sort` : `Apply ${label} sort`}
-          >
-            <FaFilter />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSortToggle(key)}
-            style={sortButtonStyle}
-            title={`Toggle sort direction for ${label}`}
-            aria-label={`Toggle sort direction for ${label}`}
-          >
-            {getSortIcon(key)}
-          </button>
-        </div>
-        <span style={{ lineHeight: 1.2 }}>{label}</span>
-      </div>
-    );
-  };
-
-  if (loading) {
-    return (
-      <OptionalAdminShell>
-        <div className={styles.container}>
-          <h1 className={styles.title}>Manage Leaves</h1>
-          <p>Loading employees...</p>
-        </div>
-      </OptionalAdminShell>
-    );
-  }
+  }, [
+    employees,
+    deferredSearchName,
+    selectedDepartment,
+    employmentStatusFilter,
+    lowBalanceOnly,
+    monthActiveIds,
+  ]);
 
   return (
     <OptionalAdminShell>
-      <div className={adminStyles.page}>
-        <div className={adminStyles.inner}>
-          <h1 className={adminStyles.title}>Manage leaves</h1>
-          <p className={adminStyles.subtitle}>Update annual and bereavement leave balances per employee.</p>
+      <div className={`${adminStyles.page} ${styles.pageWhite}`}>
+        <div className={`${adminStyles.inner} ${styles.pageWide}`}>
+          <h1 className={adminStyles.title}>Leaves</h1>
+          <p className={adminStyles.subtitle}>
+            Requests, balances, and monthly summary — one place (scoped to your hierarchy).
+          </p>
 
-          <div className={tableStyles.breakSummaryFilters}>
-            <input
-              type="text"
-              placeholder="Search by name or pseudo name..."
-              value={searchName}
-              onChange={(e) => setSearchName(e.target.value)}
-              className={tableStyles.breakSummaryInput}
-              style={{ width: 220 }}
-            />
-            <select
-              value={selectedDepartment}
-              onChange={(e) => setSelectedDepartment(e.target.value)}
-              className={tableStyles.breakSummaryDate}
-              style={{ width: 180 }}
-            >
-              <option value="">All Departments</option>
-              {departments.map((dept) => {
-                const name = dept.name || dept.department_name || "";
-                return (
-                  <option key={dept.id} value={name}>
-                    {name}
-                  </option>
-                );
-              })}
-            </select>
+          <div className={styles.dashTabsRow}>
+            <div className={styles.dashTabs} role="tablist" aria-label="Leave sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "requests"}
+                className={`${styles.dashTab}${activeTab === "requests" ? ` ${styles.dashTabActive}` : ""}`}
+                onClick={() => selectTab("requests")}
+              >
+                Requests
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "balances"}
+                className={`${styles.dashTab}${activeTab === "balances" ? ` ${styles.dashTabActive}` : ""}`}
+                onClick={() => selectTab("balances")}
+              >
+                Balances
+                <span className={styles.dashTabCount}>{employees.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "summary"}
+                className={`${styles.dashTab}${activeTab === "summary" ? ` ${styles.dashTabActive}` : ""}`}
+                onClick={() => selectTab("summary")}
+              >
+                Summary
+              </button>
+            </div>
+            <div className={styles.dashMonthFilter}>
+              <label htmlFor="leaves-global-month">Month</label>
+              <input
+                id="leaves-global-month"
+                type="month"
+                className={styles.dashMonthInput}
+                value={globalMonth}
+                onChange={(e) => applyGlobalMonth(e.target.value)}
+                aria-label="Filter by month"
+              />
+            </div>
           </div>
 
-          <div className={adminStyles.card}>
-        <div className={tableStyles.breakSummaryTableWrapper} style={{ overflowY: "auto", maxHeight: "74vh" }}>
-          <table className={tableStyles.breakSummaryTable}>
-            <thead>
-              <tr>
-                <th>{renderSortableHeader("Id", "id")}</th>
-                <th>{renderSortableHeader("Full Name", "full_name")}</th>
-                <th>{renderSortableHeader("P.Name", "pseudonym")}</th>
-                <th>{renderSortableHeader("Department", "department_name")}</th>
-                <th>{renderSortableHeader("Employment Status", "employment_status")}</th>
-                <th>{renderSortableHeader("Annual Leave Balance", "annual_balance")}</th>
-                <th>{renderSortableHeader("Bereavement Leave Balance", "bereavement_balance")}</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedEmployees.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className={tableStyles.breakSummaryNoRecords}>
-                    No employees found
-                  </td>
-                </tr>
-              ) : (
-                sortedEmployees.map((emp) => {
-                  return (
-                    <tr key={emp.id}>
-                      <td>{emp.id}</td>
-                      <td>
-                        <EmployeeTableNameCell
-                          name={getFullName(emp)}
-                          employeeId={emp.id}
-                          photo={getPhoto(emp.id)}
-                          onOpen={() =>
-                            openFromRow({
-                              employee_id: emp.id,
-                              first_name: emp.first_name,
-                              last_name: emp.last_name,
-                              pseudonym: emp.pseudonym,
-                              department_name: emp.department_name,
-                            })
-                          }
-                        />
-                      </td>
-                      <td>{emp.pseudonym || "-"}</td>
-                      <td>{emp.department_name || "-"}</td>
-                      <td>
-                        <span className={emp.employment_status === "Permanent" ? styles.statusPermanent : styles.statusProbation}>
-                          {emp.employment_status || "Permanent"}
-                        </span>
-                      </td>
-                      <td>
-                        <span style={{ fontWeight: 600, color: "#007a5a" }}>
-                          {formatLeaveDays(emp.annual_current_balance)} / {formatLeaveDays(emp.annual_allowance)}
-                        </span>
-                      </td>
-                      <td>
-                        <span style={{ fontWeight: 600, color: "#007a5a" }}>
-                          {formatLeaveDays(emp.bereavement_current_balance)} / {formatLeaveDays(emp.bereavement_allowance)}
-                        </span>
-                      </td>
-                      <td>
-                        <button
-                          className={styles.editBtn}
-                          onClick={() => handleEdit(emp)}
-                        >
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-          </div>
+          {activeTab === "requests" ? (
+            <LeaveRequestsPanel externalMonth={globalMonth} />
+          ) : null}
+          {activeTab === "summary" ? (
+            <LeaveSummaryPanel externalMonth={globalMonth} />
+          ) : null}
 
-        {/* Edit Modal */}
-        {showModal && editingEmployee && (
+          {activeTab === "balances" ? (
+            <>
+              <p className={leaveStyles.subtitle} style={{ marginTop: 0 }}>
+                Annual, bereavement, and maternity/paternity balances. Available total
+                counts Annual only.
+              </p>
+              <div className={leaveStyles.toolbar}>
+                <div className={leaveStyles.searchWrap}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <circle cx="11" cy="11" r="7" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="search"
+                    className={leaveStyles.toolbarSearch}
+                    placeholder="Search by name, pseudo name, or ID"
+                    value={searchName}
+                    onChange={(e) => setSearchName(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className={leaveStyles.filterField}>
+                  <label htmlFor="bal-filter-dept">Department</label>
+                  <select
+                    id="bal-filter-dept"
+                    className={leaveStyles.toolbarSelect}
+                    value={selectedDepartment}
+                    onChange={(e) => setSelectedDepartment(e.target.value)}
+                    aria-label="Filter by department"
+                  >
+                    <option value="">All departments</option>
+                    {departments.map((dept) => {
+                      const name = dept.name || dept.department_name || "";
+                      return (
+                        <option key={dept.id} value={name}>
+                          {name}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className={leaveStyles.filterField}>
+                  <label htmlFor="bal-filter-from">From date</label>
+                  <input
+                    id="bal-filter-from"
+                    type="date"
+                    className={leaveStyles.toolbarSelect}
+                    value={fromDate}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFromDate(v);
+                      if (v && toDate && toDate < v) setToDate(v);
+                    }}
+                    aria-label="From date"
+                  />
+                </div>
+                <div className={leaveStyles.filterField}>
+                  <label htmlFor="bal-filter-to">To date</label>
+                  <input
+                    id="bal-filter-to"
+                    type="date"
+                    className={leaveStyles.toolbarSelect}
+                    value={toDate}
+                    min={fromDate || undefined}
+                    onChange={(e) => setToDate(e.target.value)}
+                    aria-label="To date"
+                  />
+                </div>
+                <select
+                  className={leaveStyles.toolbarSelect}
+                  value={employmentStatusFilter}
+                  onChange={(e) => setEmploymentStatusFilter(e.target.value)}
+                  aria-label="Filter by employment status"
+                >
+                  <option value="">All statuses</option>
+                  <option value="Confirmed">Confirmed</option>
+                  <option value="Probation">Probation</option>
+                </select>
+                <label
+                  className={`${leaveStyles.toggleChip}${lowBalanceOnly ? ` ${leaveStyles.toggleChipOn}` : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={lowBalanceOnly}
+                    onChange={(e) => setLowBalanceOnly(e.target.checked)}
+                  />
+                  Low balance only (&lt; 4 days)
+                </label>
+                {fromDate || toDate ? (
+                  <button
+                    type="button"
+                    className={leaveStyles.clearFilters}
+                    onClick={() => {
+                      setFromDate("");
+                      setToDate("");
+                    }}
+                  >
+                    Clear dates
+                  </button>
+                ) : null}
+              </div>
+
+              <div className={leaveStyles.reqTableShell}>
+                <div className={leaveStyles.reqTableScroll}>
+                  {loading ? (
+                    <p className={leaveStyles.loading}>Loading employees…</p>
+                  ) : (
+                    <table className={`${leaveStyles.reqTable} ${leaveStyles.balTable}`}>
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Employee</th>
+                          <th>Department</th>
+                          <th>Status</th>
+                          <th>Annual</th>
+                          <th>Bereavement</th>
+                          <th>Maternity / Paternity</th>
+                          <th>Available</th>
+                          {canEditBalances ? <th>Action</th> : null}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredEmployees.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={8 + (canEditBalances ? 1 : 0)}
+                              className={leaveStyles.reqEmpty}
+                            >
+                              No employees match these filters.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredEmployees.map((emp) => {
+                            const statusKey = employmentStatusKey(emp);
+                            const bal = balanceFor(emp);
+                            const availClass =
+                              bal.available < 2
+                                ? styles.availLow
+                                : bal.available < 5
+                                  ? styles.availMid
+                                  : "";
+                            const showMat = bal.gender === "female";
+                            const showPat = bal.gender === "male";
+                            return (
+                              <tr key={emp.id}>
+                                <td className={leaveStyles.reqId}>{emp.id}</td>
+                                <td>
+                                  <div className={leaveStyles.personCell}>
+                                    <EmployeeTableNameCell
+                                      name={getFullName(emp)}
+                                      employeeId={emp.id}
+                                      photo={getPhoto(emp.id)}
+                                      onOpen={() =>
+                                        openFromRow({
+                                          employee_id: emp.id,
+                                          first_name: emp.first_name,
+                                          last_name: emp.last_name,
+                                          pseudonym: emp.pseudonym,
+                                          department_name: emp.department_name,
+                                        })
+                                      }
+                                    />
+                                    {emp.pseudonym && emp.pseudonym !== "-" ? (
+                                      <div className={leaveStyles.pseudoLine}>{emp.pseudonym}</div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td className={leaveStyles.sumDeptCell} title={emp.department_name || ""}>
+                                  {emp.department_name || "—"}
+                                </td>
+                                <td>
+                                  <span
+                                    className={`${leaveStyles.badge} ${
+                                      statusKey === "Confirmed"
+                                        ? styles.badgeConfirmed
+                                        : styles.badgeProbation
+                                    }`}
+                                  >
+                                    {statusKey}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div className={styles.equity}>
+                                    <div className={styles.equityBar}>
+                                      <div
+                                        className={styles.segAnnual}
+                                        style={{ width: `${bal.annualPct}%` }}
+                                      />
+                                    </div>
+                                    <div className={styles.equityLabel}>
+                                      <span>
+                                        {formatLeaveDays(bal.annualCurrent)} /{" "}
+                                        {formatLeaveDays(bal.annualAllow)}
+                                      </span>
+                                      <b>
+                                        {formatLeaveDays(bal.annualUsed)} used
+                                      </b>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className={styles.equity}>
+                                    <div className={styles.equityBar}>
+                                      <div
+                                        className={styles.segBer}
+                                        style={{ width: `${bal.berPct}%` }}
+                                      />
+                                    </div>
+                                    <div className={styles.equityLabel}>
+                                      <span>
+                                        {formatLeaveDays(bal.berCurrent)} /{" "}
+                                        {formatLeaveDays(bal.berAllow)}
+                                      </span>
+                                      <b>
+                                        {formatLeaveDays(bal.berUsed)} used
+                                      </b>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td>
+                                  {showMat || showPat ? (
+                                    <div className={styles.equity}>
+                                      <div className={styles.equityBar}>
+                                        <div
+                                          className={styles.segAnnual}
+                                          style={{
+                                            width: `${showMat ? bal.matPct : bal.patPct}%`,
+                                            opacity: 0.55,
+                                          }}
+                                        />
+                                      </div>
+                                      <div className={styles.equityLabel}>
+                                        <span>
+                                          {showMat ? "Mat " : "Pat "}
+                                          {formatLeaveDays(
+                                            showMat ? bal.matCurrent : bal.patCurrent,
+                                          )}{" "}
+                                          /{" "}
+                                          {formatLeaveDays(
+                                            showMat ? bal.matAllow : bal.patAllow,
+                                          )}
+                                        </span>
+                                        <b>
+                                          {formatLeaveDays(
+                                            showMat ? bal.matUsed : bal.patUsed,
+                                          )}{" "}
+                                          used
+                                        </b>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className={leaveStyles.actionStamp}>—</span>
+                                  )}
+                                </td>
+                                <td>
+                                  <span className={`${styles.availableCell} ${availClass}`}>
+                                    {formatLeaveDays(bal.available)}d
+                                  </span>
+                                </td>
+                                {canEditBalances ? (
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className={styles.editBtn}
+                                      onClick={() => handleEdit(emp)}
+                                    >
+                                      Edit
+                                    </button>
+                                  </td>
+                                ) : null}
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : null}
+
+        {/* Edit Modal — HR Admin only */}
+        {showModal && editingEmployee && canEditBalances ? (
           <ModalPortal>
           <div className={styles.modalOverlay} data-hrm-modal-overlay>
             <div className={styles.modal}>
@@ -472,7 +897,19 @@ export default function ManageLeavesPage() {
               </p>
 
               <p className={styles.infoText}>
-                Total Allowance: <strong>{editingEmployee.annual_allowance}</strong> Annual, <strong>{editingEmployee.bereavement_allowance}</strong> Bereavement (Fixed)
+                Total Allowance: <strong>{editingEmployee.annual_allowance}</strong> Annual,{" "}
+                <strong>{editingEmployee.bereavement_allowance}</strong> Bereavement
+                {normalizeEmployeeGender(editingEmployee.gender) === "female" ? (
+                  <>
+                    , <strong>{editingEmployee.maternity_allowance ?? 90}</strong> Maternity
+                  </>
+                ) : null}
+                {normalizeEmployeeGender(editingEmployee.gender) === "male" ? (
+                  <>
+                    , <strong>{editingEmployee.paternity_allowance ?? 5}</strong> Paternity
+                  </>
+                ) : null}{" "}
+                (Fixed)
               </p>
 
               <div className={styles.currentBalances}>
@@ -493,6 +930,44 @@ export default function ManageLeavesPage() {
                     <span className={styles.total}>{formatLeaveDays(editingEmployee.bereavement_allowance)}</span>
                   </div>
                 </div>
+
+                {normalizeEmployeeGender(editingEmployee.gender) === "female" ? (
+                  <div className={styles.balanceCard}>
+                    <div className={styles.balanceLabel}>Current Maternity Leave</div>
+                    <div className={styles.balanceValue}>
+                      <span className={styles.remaining}>
+                        {formatLeaveDays(
+                          editingEmployee.maternity_current_balance ??
+                            editingEmployee.maternity_allowance ??
+                            90,
+                        )}
+                      </span>
+                      <span className={styles.separator}>/</span>
+                      <span className={styles.total}>
+                        {formatLeaveDays(editingEmployee.maternity_allowance ?? 90)}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+
+                {normalizeEmployeeGender(editingEmployee.gender) === "male" ? (
+                  <div className={styles.balanceCard}>
+                    <div className={styles.balanceLabel}>Current Paternity Leave</div>
+                    <div className={styles.balanceValue}>
+                      <span className={styles.remaining}>
+                        {formatLeaveDays(
+                          editingEmployee.paternity_current_balance ??
+                            editingEmployee.paternity_allowance ??
+                            5,
+                        )}
+                      </span>
+                      <span className={styles.separator}>/</span>
+                      <span className={styles.total}>
+                        {formatLeaveDays(editingEmployee.paternity_allowance ?? 5)}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className={styles.formGroup}>
@@ -571,6 +1046,98 @@ export default function ManageLeavesPage() {
                 </div>
               </div>
 
+              {normalizeEmployeeGender(editingEmployee.gender) === "female" ? (
+                <div className={styles.formGroup}>
+                  <label>Update Maternity Current Balance</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={formData.maternity_current_balance}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(",", ".");
+                      if (!isLeaveDaysInput(raw)) return;
+                      setFormData({ ...formData, maternity_current_balance: raw });
+                    }}
+                    className={styles.input}
+                  />
+                  <div className={styles.helpText}>
+                    {formatLeaveDelta(
+                      parseLeaveDays(formData.maternity_current_balance),
+                      editingEmployee.maternity_current_balance ??
+                        editingEmployee.maternity_allowance ??
+                        90,
+                    ) ? (
+                      <span
+                        style={{
+                          color:
+                            parseLeaveDays(formData.maternity_current_balance) >
+                            (editingEmployee.maternity_current_balance ??
+                              editingEmployee.maternity_allowance ??
+                              90)
+                              ? "#10b981"
+                              : "#ef4444",
+                        }}
+                      >
+                        {formatLeaveDelta(
+                          parseLeaveDays(formData.maternity_current_balance),
+                          editingEmployee.maternity_current_balance ??
+                            editingEmployee.maternity_allowance ??
+                            90,
+                        )}
+                      </span>
+                    ) : (
+                      <span>No change</span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {normalizeEmployeeGender(editingEmployee.gender) === "male" ? (
+                <div className={styles.formGroup}>
+                  <label>Update Paternity Current Balance</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={formData.paternity_current_balance}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(",", ".");
+                      if (!isLeaveDaysInput(raw)) return;
+                      setFormData({ ...formData, paternity_current_balance: raw });
+                    }}
+                    className={styles.input}
+                  />
+                  <div className={styles.helpText}>
+                    {formatLeaveDelta(
+                      parseLeaveDays(formData.paternity_current_balance),
+                      editingEmployee.paternity_current_balance ??
+                        editingEmployee.paternity_allowance ??
+                        5,
+                    ) ? (
+                      <span
+                        style={{
+                          color:
+                            parseLeaveDays(formData.paternity_current_balance) >
+                            (editingEmployee.paternity_current_balance ??
+                              editingEmployee.paternity_allowance ??
+                              5)
+                              ? "#10b981"
+                              : "#ef4444",
+                        }}
+                      >
+                        {formatLeaveDelta(
+                          parseLeaveDays(formData.paternity_current_balance),
+                          editingEmployee.paternity_current_balance ??
+                            editingEmployee.paternity_allowance ??
+                            5,
+                        )}
+                      </span>
+                    ) : (
+                      <span>No change</span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
               <div className={styles.modalActions}>
                 <button
                   className={styles.cancelBtn}
@@ -590,7 +1157,7 @@ export default function ManageLeavesPage() {
             </div>
           </div>
           </ModalPortal>
-        )}
+        ) : null}
         </div>
       </div>
       {popup}

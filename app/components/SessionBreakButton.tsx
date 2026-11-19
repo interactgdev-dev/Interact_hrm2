@@ -212,6 +212,8 @@ export function SessionBreakButton({
         </div>
       )}
       <button
+        type="button"
+        data-action={isOn ? `end-${config.kind}` : `start-${config.kind}`}
         onClick={
           isOn
             ? () =>
@@ -229,12 +231,12 @@ export function SessionBreakButton({
           isSlack
             ? undefined
             : {
-                background: isOn ? "#e74c3c" : "#16a34a",
+                background: isOn ? "#e74c3c" : config.accentColor,
                 color: "#fff",
                 border: "none",
                 borderRadius: 8,
                 padding: "8px 18px",
-                fontSize: "1.1rem",
+                fontSize: "1rem",
                 fontWeight: 600,
                 cursor: disabled || actionPending || bioStatusLoading ? "not-allowed" : "pointer",
                 opacity: disabled || actionPending || bioStatusLoading ? 0.6 : 1,

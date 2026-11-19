@@ -1,7 +1,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(15, 23, 42, 0.38);
   display: flex;
   align-items: safe center;
   justify-content: center;
@@ -11,114 +11,111 @@
   box-sizing: border-box;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  backdrop-filter: blur(3px);
-  animation: fadeIn 0.18s ease;
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  animation: fadeIn 0.2s ease;
 }
 
 .modal {
   position: relative;
-  background: linear-gradient(135deg, #ffffff 0%, #fdfaff 55%, #f5fbf8 100%);
-  border-radius: 20px;
-  padding: 30px 34px 26px;
-  max-width: 430px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+  border-radius: 22px;
+  padding: 32px 34px 26px;
+  max-width: 420px;
   width: 100%;
   max-height: min(92vh, 720px);
   margin: auto;
   flex-shrink: 0;
-  border: 1px solid #e8d9ef;
+  border: 1px solid rgba(226, 232, 240, 0.95);
   box-shadow:
-    0 24px 60px rgba(97, 31, 105, 0.20),
-    0 6px 16px rgba(15, 23, 42, 0.08);
+    0 28px 64px rgba(15, 23, 42, 0.16),
+    0 8px 20px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
   text-align: center;
-  font-family: "Inter", system-ui, sans-serif;
   overflow-x: hidden;
   overflow-y: auto;
-  animation: popIn 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: popIn 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* thin brand accent strip at the very top of the card */
-.modal::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #611f69 0%, #8e44ad 50%, #007a5a 100%);
-}
-
-.iconWrap {
+.ringWrap {
   position: relative;
-  width: 62px;
-  height: 62px;
-  margin: 6px auto 18px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #f3e8f6 0%, #eef7f3 100%);
-  border: 1px solid #e8d9ef;
+  width: 132px;
+  height: 132px;
+  margin: 4px auto 10px;
+}
+
+.ringSvg {
+  width: 132px;
+  height: 132px;
+  transform: rotate(-90deg);
+}
+
+.ringTrack {
+  fill: none;
+  stroke: #e2e8f0;
+  stroke-width: 8;
+}
+
+.ringProgress {
+  fill: none;
+  stroke: #14b8a6;
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s linear, stroke 0.3s ease;
+}
+
+.ringProgressUrgent {
+  stroke: #f87171;
+}
+
+.ringTime {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.6rem;
-  color: #611f69;
+  font-size: 1.55rem;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }
 
-/* soft pulsing ring for a lively, friendly feel */
-.iconWrap::after {
-  content: "";
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  border: 2px solid rgba(97, 31, 105, 0.28);
-  animation: pulseRing 1.8s ease-out infinite;
+.ringTimeUrgent {
+  color: #dc2626;
 }
 
 .title {
   font-weight: 800;
-  font-size: 1.28rem;
-  color: #611f69;
-  margin-bottom: 10px;
-  letter-spacing: 0.2px;
+  font-size: 1.35rem;
+  color: #0f172a;
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
 }
 
 .message {
-  color: #475569;
-  margin-bottom: 20px;
-  line-height: 1.6;
-  font-size: 0.96rem;
+  color: #64748b;
+  margin-bottom: 8px;
+  line-height: 1.55;
+  font-size: 0.95rem;
 }
 
 .message strong {
-  color: #611f69;
+  color: #0f172a;
   font-weight: 700;
-}
-
-.timerWrap {
-  background: linear-gradient(135deg, #fdf6ff 0%, #f4fbf8 100%);
-  border: 1px solid #ecdcf1;
-  border-radius: 16px;
-  padding: 15px 20px;
-  margin-bottom: 22px;
 }
 
 .timerLabel {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #7c6a86;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 6px;
-}
-
-.timer {
-  font-size: 2.1rem;
-  font-weight: 800;
-  color: #ea580c;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #94a3b8;
+  margin-bottom: 20px;
 }
 
 .ackButton {
-  background: linear-gradient(120deg, #007a5a 0%, #04a171 100%);
+  background: #14b8a6;
   color: #fff;
   border: none;
   border-radius: 14px;
@@ -126,15 +123,15 @@
   font-size: 1.02rem;
   font-weight: 700;
   cursor: pointer;
-  width: 100%;
-  box-shadow: 0 8px 20px rgba(0, 122, 90, 0.28);
+  width: min(220px, 100%);
+  box-shadow: 0 10px 24px rgba(20, 184, 166, 0.28);
   transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
 .ackButton:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 10px 26px rgba(0, 122, 90, 0.34);
-  filter: brightness(1.03);
+  box-shadow: 0 12px 28px rgba(20, 184, 166, 0.34);
+  filter: brightness(1.04);
 }
 
 .ackButton:active:not(:disabled) {
@@ -169,20 +166,5 @@
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
-  }
-}
-
-@keyframes pulseRing {
-  0% {
-    transform: scale(0.9);
-    opacity: 0.7;
-  }
-  70% {
-    transform: scale(1.15);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.15);
-    opacity: 0;
   }
 }

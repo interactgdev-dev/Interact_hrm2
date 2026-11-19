@@ -4,7 +4,7 @@ import { registerAutoPresenceCron } from "@/lib/register-auto-presence-cron";
 registerAutoPresenceCron();
 import { pool } from "@/lib/db";
 import { ATTENDANCE_TABLE, ensureAttendanceTable } from "@/lib/attendance-table";
-import { performAutoClockOut } from "@/lib/auto-clock-out";
+import { performAutoClockOut, reconcileAutoClockOutsWithTPunch } from "@/lib/auto-clock-out";
 import { getDateStringInTimeZone, SERVER_TIMEZONE } from "@/lib/timezone";
 
 export const runtime = "nodejs";
@@ -51,6 +51,16 @@ export async function POST(req: NextRequest) {
         undefined,
         employeeId,
       );
+
+      // Also fix any recent auto-outs where T.Punch Out arrived after grace close
+      try {
+        await reconcileAutoClockOutsWithTPunch(conn, {
+          lookbackDays: 7,
+          employeeId,
+        });
+      } catch {
+        /* non-fatal */
+      }
 
       return NextResponse.json({
         success: true,

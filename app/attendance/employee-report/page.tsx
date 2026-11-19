@@ -21,8 +21,6 @@ import {
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "@/lib/timezone";
-import { parseAttendanceDateTimeMs } from "@/lib/shift-timing";
-import { parseZkbioDateTimeMs } from "@/lib/zkbio-time";
 import { FaFileExcel } from "react-icons/fa";
 import { toastInfo } from "@/lib/app-toast";
 import {
@@ -32,6 +30,7 @@ import {
   resolveZkIdentity,
 } from "@/lib/zkbio-employee-resolve";
 import { pairTungstenWithSessions } from "@/lib/tungsten-punch-pairing";
+import { parseAttendanceDateTimeMs } from "@/lib/shift-timing";
 
 type ReportRow = {
   source: "H" | "T";
@@ -450,9 +449,8 @@ export default function EmployeeReportPage() {
 
         const raw = z.event_time || z.imported_at;
         if (!raw) continue;
-        const atMs = parseZkbioDateTimeMs(raw);
-        if (atMs == null) continue;
-        const at = new Date(atMs);
+        const at = new Date(String(raw).includes("T") ? String(raw) : String(raw).replace(" ", "T"));
+        if (Number.isNaN(at.getTime())) continue;
         const eventDate = getDateStringInTimeZone(at, SERVER_TIMEZONE);
 
         if (!tungstenEventInScope(eventDate, applied)) continue;

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDbDriver, pool } from "@/lib/db";
-import { mongoZkbioPinProfiles } from "@/lib/mongo-zkbio";
+import { pool } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -10,11 +9,6 @@ export const runtime = "nodejs";
  */
 export async function GET() {
   try {
-    if (getDbDriver() === "mongo") {
-      const profiles = await mongoZkbioPinProfiles();
-      return NextResponse.json({ success: true, profiles });
-    }
-
     const [rows] = await pool.query(
       `SELECT z.pin, z.first_name, z.last_name, z.dept_name
        FROM zkbio_punch_log z

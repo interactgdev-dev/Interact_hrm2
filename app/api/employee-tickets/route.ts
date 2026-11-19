@@ -142,21 +142,21 @@ export async function GET(req: NextRequest) {
 
     // Single-ticket fetch: owner or HR inbox viewer (for HR tickets) or admin (non-HR).
     if (ticketId) {
-      let viewerTeamIds: Set<string> | undefined;
+      let viewerDirectReports: Set<string> | undefined;
       if (viewer?.employeeId) {
-        const { listHierarchyVisibleEmployeeIds } = await import(
+        const { listDirectReportIds } = await import(
           "@/lib/employee-hierarchy-table"
         );
-        viewerTeamIds = new Set(
-          await listHierarchyVisibleEmployeeIds(viewer.employeeId),
+        viewerDirectReports = new Set(
+          await listDirectReportIds(viewer.employeeId),
         );
       }
       tickets = tickets.filter((t) => {
         if (viewer && String(t.employee_id) === viewer.employeeId) return true;
         if (isLeaveTicketType(t.ticket_type)) {
-          // Leave: owner / HR inbox viewer (all leave) / hierarchy / dept-head owned chips.
-          if (viewer?.isHrStaff && viewer.canViewHrInbox) return true;
-          if (viewerTeamIds?.has(String(t.employee_id))) return true;
+          // Leave: HR inbox / dept-head owned chips / direct reports / classic admin.
+          if (viewerDirectReports?.has(String(t.employee_id))) return true;
+          if (viewer?.canViewHrInbox) return true;
           if (viewer?.deptHead?.headHint) {
             const chip = empChips.get(String(t.employee_id));
             return Boolean(
@@ -199,46 +199,23 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Inbox lists — HR hierarchy-team leave; admin hides HR non-leave; dept heads get owned leave.
+    // Inbox lists — HR sees all leave; admin hides HR non-leave; dept heads get owned leave.
     let directReportIds: Set<string> | undefined;
-    let hierarchyTeamIds: Set<string> | undefined;
     if (viewer?.employeeId) {
-      const {
-        listDirectReportIds,
-        listHierarchyVisibleEmployeeIds,
-      } = await import("@/lib/employee-hierarchy-table");
-      directReportIds = new Set(await listDirectReportIds(viewer.employeeId));
-      hierarchyTeamIds = new Set(
-        await listHierarchyVisibleEmployeeIds(viewer.employeeId),
+      const { listDirectReportIds } = await import(
+        "@/lib/employee-hierarchy-table"
       );
+      directReportIds = new Set(await listDirectReportIds(viewer.employeeId));
     }
-    let filtered = filterTicketsForInbox(tickets, {
+    const filtered = filterTicketsForInbox(tickets, {
       inbox,
       viewer,
       hrIds,
       empChips,
       directReportIds,
-      hierarchyTeamIds,
     });
 
-    // Leaves page approve must show on Ticket Inbox (not stuck in Pending).
-    try {
-      const { repairPendingTicketsFromLeaves } = await import(
-        "@/lib/leave-ticket-sync"
-      );
-      filtered = await repairPendingTicketsFromLeaves(filtered);
-      if (status === "open") {
-        filtered = filtered.filter((t) =>
-          ["pending", "in_progress"].includes(
-            String(t.status || "").toLowerCase(),
-          ),
-        );
-      }
-    } catch {
-      /* optional repair */
-    }
-
-    // Per-ticket moderation flags + meta for inbox search filters.
+    // Per-ticket moderation flags (HR Manager may view all leave but approve only in-scope).
     const metaMap = await getEmployeeTicketMetaMap(
       filtered.map((t) => t.employee_id),
     );
@@ -386,6 +363,8 @@ export async function POST(req: NextRequest) {
             error: gate.error,
             annualBalance: bal.annualBalance,
             bereavementBalance: bal.bereavementBalance,
+            maternityBalance: bal.maternityBalance,
+            paternityBalance: bal.paternityBalance,
           },
           { status: 400 }
         );
@@ -571,6 +550,7 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    // Acknowledge bumps pending → in_progress unless an explicit status was sent.
     let newStatus = (hasStatus ? String(status) : current.status) as TicketStatus;
     if (wantAcknowledge && !hasStatus && newStatus === "pending") {
       newStatus = "in_progress";

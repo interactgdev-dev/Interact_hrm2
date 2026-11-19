@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pool } from "../../../lib/db";
 import bcrypt from "bcryptjs";
 import {
+  employeeDisplayNameFromRecord,
   employeeLoginIdLower,
   normalizeEmployeeLoginId,
   parseHrmEmployeeId,
@@ -22,7 +23,8 @@ export async function POST(req: NextRequest) {
     const hrmEmployeeId = parseHrmEmployeeId(loginId);
     const idMatch = hrmEmployeeId ?? -1;
 
-    // Keep WHERE mongo-sql-adapter friendly: LOWER(TRIM(col)) = ? is supported.
+    // Keep WHERE mongo-sql-adapter friendly: LOWER(TRIM(col)) = ? is supported;
+    // avoid nesting IS NOT NULL AND … which used to drop the whole login match.
     const [rows]: any = await pool.query(
       `SELECT e.*, ec.email_work AS email
        FROM hrm_employees e
@@ -61,10 +63,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Account is inactive. Please contact admin." }, { status: 403 });
     }
 
+    const displayName = employeeDisplayNameFromRecord(employee);
+    const { password: _pw, ...safeEmployee } = employee;
     const empId = String(employee.id ?? "").trim();
-    const displayName =
-      `${employee.first_name || ""} ${employee.last_name || ""}`.trim() ||
-      String(employee.username || loginId);
+
     void logServerEmployeeActivity(req, {
       type: "employee_login",
       employeeId: empId,
@@ -78,8 +80,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      employee,
+      employee: {
+        ...safeEmployee,
+        full_name: displayName,
+        name: displayName,
+        display_name: displayName,
+      },
       username: employee.username || employee.email || loginId,
+      display_name: displayName,
     });
   } catch (err) {
     return NextResponse.json({ success: false, error: String(err) }, { status: 500 });

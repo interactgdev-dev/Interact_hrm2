@@ -9,6 +9,7 @@ export function formCategoryLabel(category: string | undefined | null): string {
     asset: "Asset",
     leave: "Leave",
     disciplinary: "Disciplinary",
+    medical: "Medical",
     general: "General",
     custom: "Custom",
   };
@@ -47,6 +48,9 @@ export function canPreviewMime(mime: string): boolean {
 export function defaultHrMessageForCategory(category: string | undefined | null): string {
   const c = (category || "").toLowerCase();
   if (c === "appraisal") return "Please fill your appraisal form as soon as possible.";
+  if (c === "medical") {
+    return "Please complete this medical form and submit.";
+  }
   return "";
 }
 

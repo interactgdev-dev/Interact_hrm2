@@ -13,6 +13,15 @@ import tableStyles from "../break-summary/break-summary.module.css";
 import styles from "./leave.module.css";
 import { EmployeeTableNameCell } from "../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../components/use-employee-detail-popup";
+import { leaveStatusLabel, overallLeaveStatus } from "@/lib/leave-approval";
+import { rowAllowedByScope, useViewerDataScope } from "@/lib/access-control/use-viewer-scope";
+import { toastError } from "@/lib/app-toast";
+import {
+  isCeoOrgRole,
+  isManagerOrgRole,
+  isTeamLeadOrgRole,
+} from "@/lib/org-role";
+import { displayLeaveReason } from "@/lib/leave-reason-display";
 
 type LeaveSortKey =
   | "employee_id"
@@ -56,28 +65,40 @@ function parseDocs(document_paths?: string | string[]) {
 }
 
 function statusBadgeClass(status: string) {
-  if (status === "approved") return styles.badgeApproved;
-  if (status === "rejected") return styles.badgeRejected;
+  const s = status.toLowerCase();
+  if (s === "approved" || s.startsWith("approved")) return styles.badgeApproved;
+  if (s === "rejected" || s.includes("rejected")) return styles.badgeRejected;
   return styles.badgePending;
 }
 
-/** Prefer "Approved by Name (Team Lead)" when approver was stored. */
-function formatLeaveStatusLabel(leave: {
-  status?: string;
-  step1_by?: string | null;
-  step2_by?: string | null;
-  approved_by_name?: string | null;
-}): string {
-  const status = String(leave?.status || "pending").toLowerCase();
-  const by = String(
-    leave?.step2_by || leave?.step1_by || leave?.approved_by_name || "",
-  ).trim();
-  if (status === "approved") return by ? `Approved by ${by}` : "Approved";
-  if (status === "rejected") return by ? `Rejected by ${by}` : "Rejected";
-  return status.charAt(0).toUpperCase() + status.slice(1);
+function readViewerEmployeeId(): string {
+  try {
+    const id = String(localStorage.getItem("employeeId") || "").trim();
+    if (/^\d+$/.test(id)) return id;
+  } catch {
+    /* ignore */
+  }
+  return "";
 }
 
 export default function LeavePage() {
+  const viewerScope = useViewerDataScope();
+  const viewerEmployeeId = readViewerEmployeeId();
+  const canApproveLeaves =
+    isManagerOrgRole(viewerScope.orgRole) ||
+    isTeamLeadOrgRole(viewerScope.orgRole) ||
+    isCeoOrgRole(viewerScope.orgRole);
+  const canActOnLeave = (leave: { employee_id?: string | number } | null) => {
+    if (!canApproveLeaves || !leave) return false;
+    // Nobody approves their own leave (use Leaves page for team/dept only).
+    if (
+      viewerEmployeeId &&
+      String(leave.employee_id || "").trim() === viewerEmployeeId
+    ) {
+      return false;
+    }
+    return true;
+  };
   const [leaves, setLeaves] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -85,13 +106,17 @@ export default function LeavePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [rejectRemark, setRejectRemark] = useState("");
   const [balanceInfo, setBalanceInfo] = useState<any | null>(null);
-  const [viewerId, setViewerId] = useState("");
+  const [balanceByEmp, setBalanceByEmp] = useState<
+    Record<string, { annualBalance: number; annualAllowance: number; bereavementBalance: number }>
+  >({});
   const [sortConfig, setSortConfig] = useState<{ key: LeaveSortKey; direction: SortDirection } | null>(
     null
   );
   const [searchText, setSearchText] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  /** "" = all; pending | approved | rejected */
+  const [statusFilter, setStatusFilter] = useState<"" | "pending" | "approved" | "rejected">("");
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
   const leaveDayKey = (l: any) => {
@@ -104,48 +129,70 @@ export default function LeavePage() {
     }
   };
 
-  const leaveRecencyMs = (l: any) => {
-    let best = 0;
-    for (const c of [l?.updated_at, l?.step2_at, l?.step1_at, l?.requested_at]) {
-      const raw = String(c || "").trim();
-      if (!raw) continue;
-      const ms = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T"));
-      if (Number.isFinite(ms) && ms > best) best = ms;
+  const loadBalancesForLeaves = async (list: any[]) => {
+    const ids = [
+      ...new Set(
+        list
+          .map((l) => String(l.employee_id || "").trim())
+          .filter((id) => /^\d+$/.test(id)),
+      ),
+    ].slice(0, 80);
+    if (!ids.length) {
+      setBalanceByEmp({});
+      return;
     }
-    return best || Number(l?.id) || 0;
+    const entries = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const res = await fetch(
+            `/api/leave-balance?employee_id=${encodeURIComponent(id)}&ts=${Date.now()}`,
+            { cache: "no-store" },
+          );
+          const data = await res.json();
+          if (!data?.success) return null;
+          return [
+            id,
+            {
+              annualBalance: Number(data.annualBalance) || 0,
+              annualAllowance: Number(data.annualAllowance) || 0,
+              bereavementBalance: Number(data.bereavementBalance) || 0,
+            },
+          ] as const;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const next: typeof balanceByEmp = {};
+    for (const e of entries) {
+      if (e) next[e[0]] = e[1];
+    }
+    setBalanceByEmp(next);
   };
 
-  useEffect(() => {
-    try {
-      const id =
-        localStorage.getItem("employeeId") ||
-        localStorage.getItem("loginId") ||
-        "";
-      setViewerId(String(id).trim());
-    } catch {
-      setViewerId("");
-    }
-  }, []);
-
-  const fetchLeaves = async () => {
+  const fetchLeaves = async (scope = viewerScope) => {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ ts: String(Date.now()) });
-      if (viewerId) params.set("viewerId", viewerId);
-      const res = await fetch(`/api/leaves?${params}`, {
+      const params = new URLSearchParams();
+      params.set("ts", String(Date.now()));
+      if (viewerEmployeeId) params.set("viewerId", viewerEmployeeId);
+      // TL / Manager: own department / team only (never company-wide dump).
+      if (scope.mode !== "all" && scope.employeeIds.length) {
+        params.set("employees", scope.employeeIds.join(","));
+      }
+      const res = await fetch(`/api/leaves?${params.toString()}`, {
         cache: "no-store",
-        headers: viewerId
-          ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+        headers: viewerEmployeeId
+          ? {
+              "x-employee-id": viewerEmployeeId,
+              "x-hrm-employee-id": viewerEmployeeId,
+            }
           : undefined,
       });
       const data = await res.json();
       if (data.success) {
-        const empRes = await fetch("/api/employee-list", {
-          headers: viewerId
-            ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
-            : undefined,
-        });
+        const empRes = await fetch("/api/employee-list", { cache: "no-store" });
         const empData = await empRes.json();
         const empMap = new Map<string, { employee_name: string; pseudonym: string; department_name: string }>();
         if (empData.success && Array.isArray(empData.employees)) {
@@ -164,17 +211,22 @@ export default function LeavePage() {
             }
           });
         }
-        const enrichedLeaves = (data.leaves || []).map((l: any) => {
-          const employeeKey = String(l?.employee_id ?? "").trim();
-          const emp = empMap.get(employeeKey);
-          return {
-            ...l,
-            employee_name: l?.employee_name || emp?.employee_name || "-",
-            pseudonym: emp?.pseudonym || "-",
-            department_name: emp?.department_name || "-",
-          };
-        });
+        const enrichedLeaves = (data.leaves || [])
+          .map((l: any) => {
+            const employeeKey = String(l?.employee_id ?? "").trim();
+            const emp = empMap.get(employeeKey);
+            return {
+              ...l,
+              employee_name: l?.employee_name || emp?.employee_name || "-",
+              pseudonym: emp?.pseudonym || "-",
+              department_name: emp?.department_name || "-",
+            };
+          })
+          .filter((l: any) =>
+            rowAllowedByScope(scope, l.employee_id, l.department_name),
+          );
         setLeaves(enrichedLeaves);
+        void loadBalancesForLeaves(enrichedLeaves);
       } else {
         setError(data.error || "Failed to fetch leaves");
       }
@@ -206,8 +258,16 @@ export default function LeavePage() {
   }, []);
 
   useEffect(() => {
-    void fetchLeaves();
-  }, [viewerId]);
+    if (!viewerScope.loaded) return;
+    void fetchLeaves(viewerScope);
+    // Refetch when scope finishes loading / changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    viewerScope.loaded,
+    viewerScope.mode,
+    viewerScope.employeeIds.join(","),
+    viewerScope.orgRole,
+  ]);
 
   const stats = useMemo(() => {
     let pending = 0;
@@ -230,26 +290,31 @@ export default function LeavePage() {
     link.click();
   };
 
-  const handleAction = async (id: number, status: "approved" | "rejected") => {
+  const handleAction = async (
+    id: number,
+    action: "approve_step1" | "approve_step2" | "approve" | "reject",
+  ) => {
     try {
+      let actor: string | undefined;
+      try {
+        const eid = String(localStorage.getItem("employeeId") || "").trim();
+        if (/^\d+$/.test(eid)) actor = eid;
+      } catch {
+        /* ignore */
+      }
       const res = await fetch("/api/leaves", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...(viewerId
-            ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
-            : {}),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id,
-          status,
-          admin_remark: status === "rejected" ? rejectRemark : undefined,
-          viewerId: viewerId || undefined,
+          action,
+          actor,
+          admin_remark: action === "reject" ? rejectRemark : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.success === false) {
-        setError(data?.error || "Not allowed to update this leave");
+        toastError(data?.error || "Leave action failed");
         return;
       }
       void fetchLeaves();
@@ -305,11 +370,28 @@ export default function LeavePage() {
     return sortConfig.direction === "asc" ? <FaSortUp /> : <FaSortDown />;
   };
 
+  /** Newest request first — prefer submitted time, then id. */
+  const leaveRequestMs = (l: any) => {
+    for (const c of [l?.requested_at, l?.created_at, l?.updated_at]) {
+      const raw = String(c || "").trim();
+      if (!raw) continue;
+      const ms = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T"));
+      if (Number.isFinite(ms) && ms > 0) return ms;
+    }
+    return Number(l?.id) || 0;
+  };
+
   const sortedLeaves = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     const from = dateFrom.trim();
     const to = dateTo.trim();
     const scoped = leaves.filter((l) => {
+      if (statusFilter) {
+        const s = String(l?.status || "pending").toLowerCase();
+        const normalized =
+          s === "approved" ? "approved" : s === "rejected" ? "rejected" : "pending";
+        if (normalized !== statusFilter) return false;
+      }
       if (q) {
         const name = String(l.employee_name || "").toLowerCase();
         const pseudo = String(l.pseudonym || "").toLowerCase();
@@ -324,9 +406,10 @@ export default function LeavePage() {
       return true;
     });
 
+    // Default: latest submitted request on top.
     if (!sortConfig) {
       return [...scoped].sort((a, b) => {
-        const diff = leaveRecencyMs(b) - leaveRecencyMs(a);
+        const diff = leaveRequestMs(b) - leaveRequestMs(a);
         return diff !== 0 ? diff : (Number(b.id) || 0) - (Number(a.id) || 0);
       });
     }
@@ -347,24 +430,30 @@ export default function LeavePage() {
           cmp = getText(a[key]).localeCompare(getText(b[key]), undefined, { sensitivity: "base" });
           break;
         case "status":
-          cmp = getText(a.status).localeCompare(getText(b.status), undefined, { sensitivity: "base" });
+          cmp = getText(a.status).localeCompare(getText(b.status), undefined, {
+            sensitivity: "base",
+          });
           break;
         case "start_date":
           cmp = new Date(a.start_date || 0).getTime() - new Date(b.start_date || 0).getTime();
           break;
         case "requested_at":
-          cmp = leaveRecencyMs(a) - leaveRecencyMs(b);
+          cmp = leaveRequestMs(a) - leaveRequestMs(b);
           break;
         default:
           cmp = 0;
       }
       return direction === "asc" ? cmp : -cmp;
     });
-  }, [leaves, sortConfig, searchText, dateFrom, dateTo]);
+  }, [leaves, sortConfig, searchText, dateFrom, dateTo, statusFilter]);
 
   const hasActiveFilters = Boolean(
-    searchText.trim() || dateFrom.trim() || dateTo.trim(),
+    searchText.trim() || dateFrom.trim() || dateTo.trim() || statusFilter,
   );
+
+  const toggleStatusFilter = (next: "pending" | "approved" | "rejected" | "") => {
+    setStatusFilter((prev) => (prev === next ? "" : next));
+  };
 
   const sortButtonStyle: React.CSSProperties = {
     border: "none",
@@ -407,13 +496,20 @@ export default function LeavePage() {
     );
   };
 
-  const selectedStatus = String(selectedLeave?.status || "pending").toLowerCase();
+  const selectedStatus = leaveStatusLabel(selectedLeave || {});
+  const selectedPending =
+    Boolean(selectedLeave) &&
+    canActOnLeave(selectedLeave) &&
+    overallLeaveStatus(selectedLeave || {}) === "pending";
 
   return (
     <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <h1 className={styles.title}>Leave requests</h1>
+          <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: 14 }}>
+            Review pending leave, approve or reject, and open request details.
+          </p>
 
           <div className={styles.filterBar}>
             <div className={`${styles.filterField} ${styles.searchField}`}>
@@ -456,6 +552,7 @@ export default function LeavePage() {
                   setSearchText("");
                   setDateFrom("");
                   setDateTo("");
+                  setStatusFilter("");
                 }}
               >
                 Clear filters
@@ -466,22 +563,61 @@ export default function LeavePage() {
             <p className={styles.searchMeta}>
               Showing {sortedLeaves.length} of {leaves.length} leave
               {sortedLeaves.length === 1 ? "" : "s"}
+              {statusFilter ? ` · ${statusFilter}` : ""}
             </p>
           ) : null}
 
           <div className={styles.statRow}>
-            <div className={`${styles.statCard} ${styles.statCardGold}`}>
+            <button
+              type="button"
+              className={`${styles.statCard} ${styles.statCardGold}${
+                statusFilter === "pending" ? ` ${styles.statCardActive}` : ""
+              }`}
+              onClick={() => toggleStatusFilter("pending")}
+              aria-pressed={statusFilter === "pending"}
+            >
               <p className={styles.statLabel}>Pending</p>
               <p className={styles.statValue}>{stats.pending}</p>
-            </div>
-            <div className={`${styles.statCard} ${styles.statCardGreen}`}>
+              <p className={styles.statSub}>Awaiting a decision</p>
+            </button>
+            <button
+              type="button"
+              className={`${styles.statCard} ${styles.statCardGreen}${
+                statusFilter === "approved" ? ` ${styles.statCardActive}` : ""
+              }`}
+              onClick={() => toggleStatusFilter("approved")}
+              aria-pressed={statusFilter === "approved"}
+            >
               <p className={styles.statLabel}>Approved</p>
               <p className={styles.statValue}>{stats.approved}</p>
-            </div>
-            <div className={`${styles.statCard} ${styles.statCardPurple}`}>
+              <p className={styles.statSub}>This leave year</p>
+            </button>
+            <button
+              type="button"
+              className={`${styles.statCard} ${styles.statCardRed}${
+                statusFilter === "rejected" ? ` ${styles.statCardActive}` : ""
+              }`}
+              onClick={() => toggleStatusFilter("rejected")}
+              aria-pressed={statusFilter === "rejected"}
+            >
+              <p className={styles.statLabel}>Rejected</p>
+              <p className={styles.statValue}>{stats.rejected}</p>
+              <p className={styles.statSub}>This leave year</p>
+            </button>
+            <button
+              type="button"
+              className={`${styles.statCard} ${styles.statCardPurple}${
+                statusFilter === "" ? ` ${styles.statCardActive}` : ""
+              }`}
+              onClick={() => setStatusFilter("")}
+              aria-pressed={statusFilter === ""}
+            >
               <p className={styles.statLabel}>Total requests</p>
               <p className={styles.statValue}>{stats.total}</p>
-            </div>
+              <p className={styles.statSub}>
+                {statusFilter ? "Click to show all" : "All statuses"}
+              </p>
+            </button>
           </div>
 
           {loading ? (
@@ -501,7 +637,9 @@ export default function LeavePage() {
                       <th>{renderSortableHeader("Category", "leave_category")}</th>
                       <th>{renderSortableHeader("Dates", "start_date")}</th>
                       <th>{renderSortableHeader("Days", "total_days")}</th>
+                      <th>Balance</th>
                       <th>{renderSortableHeader("Status", "status")}</th>
+                      <th>Decided by</th>
                       <th>{renderSortableHeader("Requested", "requested_at")}</th>
                       <th>Actions</th>
                     </tr>
@@ -509,7 +647,7 @@ export default function LeavePage() {
                   <tbody>
                     {sortedLeaves.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className={tableStyles.breakSummaryNoRecords}>
+                        <td colSpan={12} className={tableStyles.breakSummaryNoRecords}>
                           {hasActiveFilters
                             ? "No leave requests match your filters."
                             : "No leave requests yet."}
@@ -517,8 +655,21 @@ export default function LeavePage() {
                       </tr>
                     ) : (
                       sortedLeaves.map((l, idx) => {
-                        const status = String(l?.status || "pending").toLowerCase();
-                        const statusLabel = formatLeaveStatusLabel(l);
+                        const statusLabel = leaveStatusLabel(l);
+                        const pending =
+                          canActOnLeave(l) && overallLeaveStatus(l) === "pending";
+                        const bal = balanceByEmp[String(l.employee_id)];
+                        const isBereavement =
+                          String(l.leave_category || "").toLowerCase() === "bereavement";
+                        const currentBal = bal
+                          ? isBereavement
+                            ? bal.bereavementBalance
+                            : bal.annualBalance
+                          : null;
+                        const afterApprove =
+                          currentBal != null
+                            ? Math.max(0, currentBal - Number(l.total_days || 0))
+                            : null;
                         return (
                           <tr
                             key={
@@ -542,10 +693,51 @@ export default function LeavePage() {
                               {formatDate(l.start_date)} – {formatDate(l.end_date)}
                             </td>
                             <td>{l.total_days}</td>
+                            <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                              {currentBal == null ? (
+                                "…"
+                              ) : (
+                                <>
+                                  {currentBal}
+                                  {bal && !isBereavement ? (
+                                    <span style={{ color: "#94a3b8", fontWeight: 500 }}>
+                                      {" "}
+                                      / {bal.annualAllowance}
+                                    </span>
+                                  ) : null}
+                                  {pending && afterApprove != null ? (
+                                    <div style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>
+                                      After approve: {afterApprove}
+                                    </div>
+                                  ) : null}
+                                </>
+                              )}
+                            </td>
                             <td>
-                              <span className={`${styles.badge} ${statusBadgeClass(status)}`}>
+                              <span className={`${styles.badge} ${statusBadgeClass(statusLabel)}`}>
                                 {statusLabel}
                               </span>
+                              {l.decided_by_label ? (
+                                <div
+                                  style={{
+                                    marginTop: 4,
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color:
+                                      String(statusLabel).toLowerCase() === "rejected"
+                                        ? "#b91c1c"
+                                        : "#0f766e",
+                                  }}
+                                >
+                                  {l.decided_by_label}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td style={{ whiteSpace: "nowrap" }}>
+                              {l.approved_by_name &&
+                              (statusLabel === "approved" || statusLabel === "rejected")
+                                ? l.approved_by_name
+                                : "—"}
                             </td>
                             <td>{l.requested_at ? formatDateTime(l.requested_at) : "—"}</td>
                             <td>
@@ -553,30 +745,23 @@ export default function LeavePage() {
                                 <button type="button" className={styles.btnView} onClick={() => openModal(l)}>
                                   View
                                 </button>
-                                {status === "pending" &&
-                                  l.can_moderate !== false && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className={styles.btnApprove}
-                                      onClick={() => handleAction(l.id, "approved")}
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={styles.btnReject}
-                                      onClick={() => openModal(l)}
-                                    >
-                                      Reject
-                                    </button>
-                                  </>
+                                {pending && (
+                                  <button
+                                    type="button"
+                                    className={styles.btnApprove}
+                                    onClick={() => handleAction(l.id, "approve")}
+                                  >
+                                    Approve
+                                  </button>
                                 )}
-                                {status === "pending" &&
-                                  l.can_moderate === false && (
-                                  <span style={{ fontSize: 12, color: "#94a3b8" }}>
-                                    View only
-                                  </span>
+                                {pending && (
+                                  <button
+                                    type="button"
+                                    className={styles.btnReject}
+                                    onClick={() => openModal(l)}
+                                  >
+                                    Reject
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -616,20 +801,30 @@ export default function LeavePage() {
                 <div className={styles.modalRow}>
                   <b>Status:</b>{" "}
                   <span className={`${styles.badge} ${statusBadgeClass(selectedStatus)}`}>
-                    {formatLeaveStatusLabel(selectedLeave)}
+                    {selectedStatus}
                   </span>
                 </div>
+                {selectedLeave.decided_by_label || selectedLeave.approved_by_name ? (
+                  <div className={styles.modalRow}>
+                    <b>
+                      {String(selectedStatus).toLowerCase() === "rejected"
+                        ? "Rejected by:"
+                        : "Approved by:"}
+                    </b>{" "}
+                    {selectedLeave.approved_by_name || selectedLeave.decided_by_label}
+                  </div>
+                ) : null}
                 <div className={styles.modalRow}>
-                  <b>Reason:</b> {selectedLeave.reason}
+                  <b>Reason:</b> {displayLeaveReason(selectedLeave.reason) || "—"}
                 </div>
                 {selectedLeave.admin_remark ? (
                   <div className={styles.modalRow}>
-                    <b>Remarks:</b> {selectedLeave.admin_remark}
+                    <b>Admin remarks:</b> {selectedLeave.admin_remark}
                   </div>
                 ) : null}
                 {balanceInfo ? (
                   <div className={styles.balanceBox}>
-                    <b>Current balances</b>
+                    <b>Current leave balance (before this action)</b>
                     <div>
                       {balanceInfo.employment_status === "Probation"
                         ? "Leave balance"
@@ -639,6 +834,12 @@ export default function LeavePage() {
                     <div>
                       Bereavement: {balanceInfo.bereavementBalance} / 3
                     </div>
+                    {selectedPending ? (
+                      <div style={{ marginTop: 8, fontSize: 13, color: "#334155" }}>
+                        Approve → balance minus {selectedLeave.total_days || 1} day(s). Reject →
+                        balance unchanged.
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className={styles.modalRow}>
@@ -662,11 +863,10 @@ export default function LeavePage() {
                   <b>Requested:</b>{" "}
                   {selectedLeave.requested_at ? formatDateTime(selectedLeave.requested_at) : "—"}
                 </div>
-                {selectedStatus === "pending" &&
-                selectedLeave.can_moderate !== false ? (
+                {selectedPending ? (
                   <div style={{ marginTop: 14 }}>
                     <label className={styles.modalRow}>
-                      <b>Remarks for Rejection</b>
+                      <b>Remarks (for rejection)</b>
                       <textarea
                         className={styles.textarea}
                         value={rejectRemark}
@@ -678,25 +878,19 @@ export default function LeavePage() {
                       <button
                         type="button"
                         className={styles.btnApprove}
-                        onClick={() => handleAction(selectedLeave.id, "approved")}
+                        onClick={() => handleAction(selectedLeave.id, "approve")}
                       >
                         Approve
                       </button>
                       <button
                         type="button"
                         className={styles.btnReject}
-                        onClick={() => handleAction(selectedLeave.id, "rejected")}
+                        onClick={() => handleAction(selectedLeave.id, "reject")}
                       >
                         Reject
                       </button>
                     </div>
                   </div>
-                ) : selectedStatus === "pending" &&
-                  selectedLeave.can_moderate === false ? (
-                  <p style={{ marginTop: 14, color: "#64748b", fontSize: "0.9rem" }}>
-                    View only — you can approve leave only for your own team /
-                    department.
-                  </p>
                 ) : null}
                 <button type="button" className={styles.modalClose} onClick={closeModal}>
                   Close

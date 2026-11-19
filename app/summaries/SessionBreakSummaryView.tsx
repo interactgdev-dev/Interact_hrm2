@@ -2,6 +2,7 @@
 
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import styles from "../break-summary/break-summary.module.css";
+import leaveStyles from "../leave/leave.module.css";
 import { EmployeeTableNameCell } from "../components/EmployeeTableNameCell";
 import {
   EmployeeDetailPopup,
@@ -208,20 +209,26 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
     <>
       <div className={styles.breakSummaryContainer}>
         <h1 className={styles.pageTitle}>{config.label} Summary</h1>
-        <div className={styles.breakSummaryFilters}>
-          <input
-            type="text"
-            placeholder="Search by name or pseudo name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className={styles.breakSummaryInput}
-            style={{ width: 180 }}
-          />
+        <div className={leaveStyles.toolbar}>
+          <div className={leaveStyles.searchWrap}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="search"
+              className={leaveStyles.toolbarSearch}
+              placeholder="Search by name or pseudo name"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
           <select
             value={department}
             onChange={(e) => setDepartment(e.target.value)}
-            className={styles.breakSummaryDate}
-            style={{ width: 180 }}
+            className={leaveStyles.toolbarSelect}
+            aria-label="Filter by department"
           >
             <option value="">All Departments</option>
             {departments.map((dept: any) => (
@@ -234,81 +241,88 @@ export default function SessionBreakSummaryView({ config }: { config: SessionBre
             type="date"
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
-            className={styles.breakSummaryDate}
-            placeholder="From Date"
+            className={leaveStyles.toolbarSelect}
+            aria-label="From date"
           />
           <input
             type="date"
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
-            className={styles.breakSummaryDate}
-            placeholder="To Date"
+            className={leaveStyles.toolbarSelect}
+            aria-label="To date"
           />
-          <button onClick={downloadCSV} className={styles.breakSummaryXLSButton} title="Download XLS">
-            <FaFileExcel size={20} />
-            <span>Export XLS</span>
-          </button>
+          <div className={leaveStyles.toolbarActions}>
+            <button
+              type="button"
+              onClick={downloadCSV}
+              className={styles.breakSummaryXLSButton}
+              title="Download XLS"
+            >
+              <FaFileExcel size={14} />
+              <span>Export XLS</span>
+            </button>
+          </div>
         </div>
 
-        <div className={styles.breakSummaryTableWrapper}>
-          {loading ? (
-            <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
-              Loading...
-            </div>
-          ) : (
-            <table className={styles.breakSummaryTable}>
-              <thead>
-                <tr>
-                  <th>Id</th>
-                  <th>Full Name</th>
-                  <th>P.Name</th>
-                  <th>Department</th>
-                  <th>Date</th>
-                  <th>{config.label} Start</th>
-                  <th>{config.label} End</th>
-                  <th>Total {config.label} Time</th>
-                  <th>Total {config.label}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.length === 0 ? (
+        <div className={leaveStyles.reqTableShell}>
+          <div className={leaveStyles.reqTableScroll}>
+            {loading ? (
+              <div className={leaveStyles.loading}>Loading…</div>
+            ) : (
+              <table className={`${leaveStyles.reqTable} ${styles.breakSumTableFit}`}>
+                <thead>
                   <tr>
-                    <td colSpan={9} className={styles.breakSummaryNoRecords}>
-                      No records found.
-                    </td>
+                    <th>ID</th>
+                    <th>Full Name</th>
+                    <th>P.Name</th>
+                    <th>Department</th>
+                    <th>Date</th>
+                    <th>{config.label} Start</th>
+                    <th>{config.label} End</th>
+                    <th>Total {config.label} Time</th>
+                    <th>Total {config.label}</th>
                   </tr>
-                ) : (
-                  tableRows.map((p, idx) => (
-                    <tr key={p.id || idx}>
-                      <td className={styles.cellMuted}>{p.employee_id}</td>
-                      <td className={styles.nameCol}>
-                        <EmployeeTableNameCell
-                          key={`${p.employee_id}-${getPhoto(p.employee_id) ?? "none"}`}
-                          name={p.employee_name || ""}
-                          employeeId={p.employee_id}
-                          photo={getPhoto(p.employee_id)}
-                          onOpen={() => openEmployeeDetail(p)}
-                        />
+                </thead>
+                <tbody>
+                  {tableRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className={leaveStyles.reqEmpty}>
+                        No records found.
                       </td>
-                      <td>{p.pseudonym || "-"}</td>
-                      <td>{p.department_name || "-"}</td>
-                      <td>{p.date_display}</td>
-                      <td>{p.start_display}</td>
-                      <td>
-                        {p[startField] && !p[endField] ? (
-                          <span className={styles.badgeRunning}>Running</span>
-                        ) : (
-                          p.end_display
-                        )}
-                      </td>
-                      <td>{p.total_time}</td>
-                      <td>{p.total_time_today}</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          )}
+                  ) : (
+                    tableRows.map((p, idx) => (
+                      <tr key={p.id || idx}>
+                        <td className={leaveStyles.reqId}>{p.employee_id}</td>
+                        <td>
+                          <EmployeeTableNameCell
+                            key={`${p.employee_id}-${getPhoto(p.employee_id) ?? "none"}`}
+                            name={p.employee_name || ""}
+                            employeeId={p.employee_id}
+                            photo={getPhoto(p.employee_id)}
+                            onOpen={() => openEmployeeDetail(p)}
+                          />
+                        </td>
+                        <td>{p.pseudonym || "—"}</td>
+                        <td>{p.department_name || "—"}</td>
+                        <td>{p.date_display}</td>
+                        <td>{p.start_display}</td>
+                        <td>
+                          {p[startField] && !p[endField] ? (
+                            <span className={styles.badgeRunning}>Running</span>
+                          ) : (
+                            p.end_display
+                          )}
+                        </td>
+                        <td>{p.total_time}</td>
+                        <td>{p.total_time_today}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
       {detail ? <EmployeeDetailPopup data={detail} onClose={() => setDetail(null)} /> : null}

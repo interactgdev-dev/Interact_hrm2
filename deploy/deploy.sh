@@ -3,14 +3,15 @@
 # Interact HRM — auto-deploy (pull + conditional install + build + restart)
 #
 # Runs on each Ubuntu server via cron every minute. Because the servers sit on
-# private IPs (10.6.x.x staging, 10.40.x.x production) GitHub cannot reach them
+# private IPs (10.6 staging, 10.98 production) GitHub cannot reach them
 # with webhooks/Actions, so the server PULLS from GitHub instead.
 #
 # Per-server config (edit these on each box, or export before calling):
 #   APP_DIR   – absolute path to the checkout
 #   REMOTE    – git remote for this environment
 #               staging     -> waqas         (waqasahmad18/Interact_hrm.git)
-#               production  -> interactgdev  (interactgdev-dev/Interact_hrm2.git)
+#               production  -> interactgdev  (interactgdev-dev/Interact_hrm2.git, server 10.98)
+#               legacy 10.40 decommissioned — do not deploy there
 #   BRANCH    – deploy branch (main)
 #   PM2_NAME  – pm2 process name
 #
@@ -34,33 +35,22 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >>"$LOG_FILE"; }
 
 cd "$APP_DIR"
 
-# After git reset the running script can keep old file contents (open fd).
-# Re-exec the on-disk script to finish install/migrate/build with the new code.
-if [ "${CONTINUE_DEPLOY:-}" = "1" ]; then
-  LOCK_BEFORE="${LOCK_BEFORE:-none}"
-  REMOTE_HEAD="$(git rev-parse HEAD)"
-else
-  git fetch "$REMOTE" "$BRANCH" --quiet
+git fetch "$REMOTE" "$BRANCH" --quiet
 
-  LOCAL="$(git rev-parse HEAD)"
-  REMOTE_HEAD="$(git rev-parse "${REMOTE}/${BRANCH}")"
+LOCAL="$(git rev-parse HEAD)"
+REMOTE_HEAD="$(git rev-parse "${REMOTE}/${BRANCH}")"
 
-  # Nothing new — exit quietly (keeps logs clean on every-minute cron).
-  if [ "$LOCAL" = "$REMOTE_HEAD" ]; then
-    exit 0
-  fi
-
-  log "New commit detected: ${LOCAL:0:7} -> ${REMOTE_HEAD:0:7}. Deploying…"
-
-  LOCK_BEFORE="$(md5sum package-lock.json 2>/dev/null | awk '{print $1}' || echo none)"
-
-  git reset --hard "${REMOTE}/${BRANCH}" >>"$LOG_FILE" 2>&1
-
-  export CONTINUE_DEPLOY=1
-  export LOCK_BEFORE
-  export APP_DIR REMOTE BRANCH PM2_NAME
-  exec /usr/bin/bash "$APP_DIR/deploy/deploy.sh"
+# Nothing new — exit quietly (keeps logs clean on every-minute cron).
+if [ "$LOCAL" = "$REMOTE_HEAD" ]; then
+  exit 0
 fi
+
+log "New commit detected: ${LOCAL:0:7} -> ${REMOTE_HEAD:0:7}. Deploying…"
+
+# Remember lockfile state so we only reinstall deps when they actually change.
+LOCK_BEFORE="$(md5sum package-lock.json 2>/dev/null | awk '{print $1}' || echo none)"
+
+git reset --hard "${REMOTE}/${BRANCH}" >>"$LOG_FILE" 2>&1
 
 LOCK_AFTER="$(md5sum package-lock.json 2>/dev/null | awk '{print $1}' || echo none)"
 
@@ -71,7 +61,7 @@ else
   log "Dependencies unchanged — skipping install."
 fi
 
-# Mongo (10.98) has no MySQL schema_migrations — skip SQL runner there.
+# Mongo has no MySQL schema_migrations — skip SQL runner when DB_DRIVER=mongo.
 DRIVER="$(
   grep -E '^DB_DRIVER=' "$APP_DIR/.env.local" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '\r' || true
 )"

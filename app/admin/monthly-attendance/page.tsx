@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import OptionalAdminShell from "@/app/components/OptionalAdminShell";
-import styles from "../../break-summary/break-summary.module.css";
+import styles from "./monthly-attendance.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { FaFileExcel } from "react-icons/fa";
@@ -12,6 +13,7 @@ import {
   type MonthlyAttendanceExcelRow,
 } from "../../../lib/monthly-attendance-excel";
 import {
+  DEDUCTION_SUMMARY_HEADERS,
   downloadDeductionSummaryExcel,
   type DeductionSummaryDayRow,
   type DeductionSummaryEmployeeBlock,
@@ -25,22 +27,23 @@ import {
 import { compareAttendanceRows } from "../../../lib/attendance-sort";
 import {
   deductionForAttendanceStatus,
-  isAllowedMonthlyAttendanceStatus,
+  isAbsentOrHalfDayStatus,
+  isTardyStatus,
   MONTHLY_ATTENDANCE_STATUS_OPTIONS,
   normalizeAttendanceStatus,
   uiStatusTextColor,
 } from "../../../lib/attendance-status";
-import { ManualStatusBadge } from "../../components/ManualStatusBadge";
-import {
-  StatusChangeReasonModal,
-  type StatusChangeReasonDraft,
-} from "../../components/StatusChangeReasonModal";
 import {
   approvedLeaveOnDay,
   attendanceFromApprovedLeaveDay,
   buildApprovedLeavesMap,
   type ApprovedLeavesMap,
 } from "../../../lib/leave-duration";
+import {
+  employeeIdKeys,
+  lookupByEmployeeId,
+  setForEmployeeIdKeys,
+} from "@/lib/employee-id-keys";
 import {
   aggregateDayPunches,
   classifyDayAttendance,
@@ -55,33 +58,69 @@ import {
   importedEmployeeUsesFiveHourShift,
   importedSnapshotToAttendanceEmployees,
   loadImportedMonthlySnapshot,
-  parseMonthlyAttendanceWorkbook,
-  saveImportedMonthlySnapshot,
   type ImportedMonthlyDay,
   type ImportedMonthlySnapshot,
 } from "../../../lib/monthly-attendance-import";
 import {
   buildEmployeeReportSessions,
+  buildShiftPunchOnlySessions,
   employeeHasZkPunchesInRange,
+  hrmEmployeesFromList,
   loadTungstenPunchContext,
   monthlyDash,
-  type EmployeeMatchKeys,
   type EmployeeReportSession,
-  type ShiftDayTiming,
+  type EmployeeShiftResolver,
+  type HrmEmployeeRef,
   type TungstenPunchContext,
 } from "../../../lib/tungsten-punch-pairing";
 import { AutoClockOutBadge } from "../../components/AutoClockOutBadge";
-import { isAutoClockOutRecord } from "../../../lib/attendance-auto-clock-out";
+import { ManualStatusBadge } from "../../components/ManualStatusBadge";
+import {
+  StatusChangeReasonModal,
+  type StatusChangeReasonDraft,
+} from "../../components/StatusChangeReasonModal";
+import { isAutoClockOutRecord, applyAutoClockOutTPunchDisplay } from "../../../lib/attendance-auto-clock-out";
+import { resolveBillableOvertimeSeconds } from "../../../lib/attendance-overtime";
 import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
+
+/** Admin / Admin Staff department. */
+function isAdminStaffDepartment(departmentName: string | null | undefined): boolean {
+  const d = String(departmentName || "").trim().toLowerCase();
+  if (!d) return false;
+  return d === "admin" || d === "admin staff" || d.startsWith("admin ");
+}
+
+/**
+ * T.Punch column visibility:
+ * - Non-Admin: show (values only exist when paired with Clock In — no ZK-only invent).
+ * - Admin staff: only when opened via department filter or name search.
+ */
+function shouldRevealTPunches(
+  departmentName: string | null | undefined,
+  selectedDepartment: string,
+  searchName: string,
+): boolean {
+  if (!isAdminStaffDepartment(departmentName)) return true;
+  return Boolean(String(selectedDepartment || "").trim() || String(searchName || "").trim());
+}
+
+function maskTPunch(
+  value: string | null | undefined,
+  reveal: boolean,
+): string {
+  if (!reveal) return "---";
+  const v = String(value ?? "").trim();
+  if (!v || v === "-" || v === "---") return "---";
+  return v;
+}
 
 type MonthlyAttendanceEmployeeRow = {
   employeeId: string;
   employeeName: string;
+  employeeCode?: string;
   pseudonym: string;
   departmentName: string;
   gender: string;
-  /** Device / HRM employee_code when known (helps ZK PIN match). */
-  employeeCode?: string;
   byDate: Record<string, any[]>;
   dateMeta: Record<
     string,
@@ -92,23 +131,42 @@ type MonthlyAttendanceEmployeeRow = {
       autoStatusLabel?: string;
       statusColor: string;
       deduction: string;
-      /** Admin manually set this day's status. */
-      isManual?: boolean;
       /** Billable late after 1h relaxation (0 on Absent / Half Day). */
       lateMinutes?: number;
+      /** Admin manually set this day's status. */
+      isManual?: boolean;
     }
   >;
   isImported?: boolean;
-  /** True when card exists only because Tungsten punches exist (no HRM clock-in). */
-  zkOnlyCard?: boolean;
   importedDays?: ImportedMonthlyDay[];
   importedFooter?: { totalDeduction?: string; extraHours?: string; workingDays?: string };
 };
 
+import {
+  PUNCH_ONLY_DEFAULT_SHIFT,
+  PUNCH_ONLY_EMPLOYEE_IDS,
+  PUNCH_ONLY_EMPLOYEES,
+  punchOnlyById,
+  punchOnlyDisplayName,
+  punchOnlyPinForId,
+} from "../../../lib/punch-only-employees";
+
+/**
+ * Who may appear as a "punch-only" employee card with no HRM clock-in rows.
+ * Admin dept / punch-only roster only. Normal staff cards still come from attendance.
+ * (ZK T.Punch on Absent days is enabled separately via includeZkOnlyDays=true.)
+ */
+function allowsPunchWithoutClockIn(
+  employeeId: string | number | null | undefined,
+  departmentName: string | null | undefined,
+): boolean {
+  const id = String(employeeId || "").trim();
+  if (id && PUNCH_ONLY_EMPLOYEE_IDS.has(id)) return true;
+  return isAdminStaffDepartment(departmentName);
+}
+
 /** Billable late is already after 1h relaxation — show/sum any minutes > 0. */
 const EXCESS_LATE_SHOW_AFTER_MINUTES = 0;
-
-// ...existing code...
 
 interface AttendanceRecord {
   id: number;
@@ -149,27 +207,22 @@ function addDaysToDateKey(dateKey: string, daysToAdd: number) {
   return `${utc.getUTCFullYear()}-${String(utc.getUTCMonth() + 1).padStart(2, "0")}-${String(utc.getUTCDate()).padStart(2, "0")}`;
 }
 
-function isFutureAttendanceDay(dateKey: string): boolean {
+/** Coming days (after today Asia/Karachi) — no Absent/100% until the day arrives. */
+function isFutureAttendanceDay(dateKey: string) {
   if (!dateKey) return false;
   const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-  return Boolean(todayKey && dateKey > todayKey);
+  return dateKey > todayKey;
 }
 
-function parseDeductionPercent(deduction: string | number | null | undefined): number {
-  if (deduction == null || deduction === "") return 0;
-  return parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
-}
-
-/** Empty cell: approved leave always wins; else Off / future --- / Absent. */
+/** Empty working-day cell: Leave / future --- / past Absent. */
 function emptyWorkingDayStatus(
   dateKey: string,
   workingDay: boolean,
   leaveKind: ReturnType<typeof approvedLeaveOnDay>,
 ): { statusLabel: string; deduction: string } {
-  // Full / 1st-half / 2nd-half leave must show even on Off or future dates.
-  if (leaveKind) return attendanceFromApprovedLeaveDay(leaveKind);
   if (!workingDay) return { statusLabel: "Off", deduction: "" };
-  if (isFutureAttendanceDay(dateKey)) return { statusLabel: "---", deduction: "" };
+  if (leaveKind) return attendanceFromApprovedLeaveDay(leaveKind);
+  if (isFutureAttendanceDay(dateKey)) return { statusLabel: "---", deduction: "0%" };
   return { statusLabel: "Absent", deduction: "100%" };
 }
 
@@ -177,7 +230,6 @@ function emptyWorkingDayStatus(
 const OVERTIME_MIN_SECONDS = 60 * 60;
 
 export default function MonthlyAttendancePage() {
-    // Calculate total working days for the month (excluding leaves and off days)
     // Month working days: Mon–Fri (or calendar "working"), minus calendar "off" only.
     // Full-day leave does NOT reduce this — leave stays paid against the month base.
     function getTotalWorkingDays(monthInfo: any) {
@@ -198,6 +250,7 @@ export default function MonthlyAttendancePage() {
     return duration;
   }
 
+  // Calculate overtime in seconds (actual - shift duration)
   // Calculate assigned shift duration in seconds
   function getAssignedShiftSeconds(shiftStart: string | null | undefined, shiftEnd: string | null | undefined): number | null {
     const timeRegex = /^\d{2}:\d{2}(:\d{2})?$/;
@@ -217,15 +270,25 @@ export default function MonthlyAttendancePage() {
     return shiftSeconds;
   }
 
-  /** Extra hours ≥1h past assigned shift (match production 10.40; no auto/allow gate). */
+  /**
+   * Monthly Attendance OT display: when shift allows overtime, show hours beyond
+   * assigned shift (≥1h). allow_overtime must be on the record (filled from
+   * shift-assignments). Auto clock-out does not hide OT here.
+   */
   function calculateOvertime(
     totalSeconds: number,
     assignedShiftSeconds: number | null,
+    record?: {
+      allow_overtime?: boolean | number | string | null;
+    },
   ): number | null {
-    if (!assignedShiftSeconds || assignedShiftSeconds <= 0) return null;
-    const overtime = totalSeconds - assignedShiftSeconds;
-    if (overtime >= OVERTIME_MIN_SECONDS) return overtime;
-    return null;
+    return resolveBillableOvertimeSeconds({
+      totalSeconds,
+      assignedShiftSeconds,
+      allowOvertime: record?.allow_overtime,
+      autoClockOut: false,
+      minSeconds: OVERTIME_MIN_SECONDS,
+    });
   }
 
   function formatDurationHM(seconds: number | null) {
@@ -286,6 +349,20 @@ export default function MonthlyAttendancePage() {
   }
 
   const [attendance, setAttendance] = useState<any[]>([]);
+  /** Day-level manual status (attendance_id = 0). */
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, Record<string, string>>>({});
+  /** Per attendance-session manual status (same calendar day can differ). */
+  const [statusOverridesByAttendanceId, setStatusOverridesByAttendanceId] = useState<
+    Record<string, string>
+  >({});
+  const [statusOverrideNotes, setStatusOverrideNotes] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [statusOverrideNotesByAttendanceId, setStatusOverrideNotesByAttendanceId] = useState<
+    Record<string, string>
+  >({});
+  const [statusSavingKey, setStatusSavingKey] = useState<string>("");
+  const [statusReasonDraft, setStatusReasonDraft] = useState<StatusChangeReasonDraft | null>(null);
   const [tardyNotes, setTardyNotes] = useState<Record<string, Record<string, string>>>({});
   const [tardyNotesByAttendanceId, setTardyNotesByAttendanceId] = useState<Record<string, string>>({});
   const [departments, setDepartments] = useState<any[]>([]);
@@ -307,38 +384,96 @@ export default function MonthlyAttendancePage() {
   );
   const [calendarOverrides, setCalendarOverrides] = useState<Record<string, CalendarDayOverride>>({});
   const [approvedLeavesMap, setApprovedLeavesMap] = useState<ApprovedLeavesMap>({});
-  /** Day-level manual status (attendance_id = 0). */
-  const [statusOverrides, setStatusOverrides] = useState<Record<string, Record<string, string>>>({});
-  /** Per attendance-session manual status (same calendar day can differ). */
-  const [statusOverridesByAttendanceId, setStatusOverridesByAttendanceId] = useState<
-    Record<string, string>
-  >({});
-  const [statusOverrideNotes, setStatusOverrideNotes] = useState<
-    Record<string, Record<string, string>>
-  >({});
-  const [statusOverrideNotesByAttendanceId, setStatusOverrideNotesByAttendanceId] = useState<
-    Record<string, string>
-  >({});
-  const [statusReasonDraft, setStatusReasonDraft] = useState<StatusChangeReasonDraft | null>(null);
-  const [statusSavingKey, setStatusSavingKey] = useState("");
   const [importedSnapshot, setImportedSnapshot] = useState<ImportedMonthlySnapshot | null>(null);
   const [tungstenCtx, setTungstenCtx] = useState<TungstenPunchContext | null>(null);
+  const [hrmEmployeesList, setHrmEmployeesList] = useState<HrmEmployeeRef[]>([]);
+  const [shiftAssignments, setShiftAssignments] = useState<
+    {
+      employeeId: string;
+      startTime: string;
+      endTime: string;
+      assignedDate: string;
+      allowOvertime: boolean;
+    }[]
+  >([]);
   const [pairingNow, setPairingNow] = useState(() => Date.now());
-  /** Latest assigned shift per employee (for Absent-day / forgot-clock-in T.Punch). */
-  const [shiftByEmployeeId, setShiftByEmployeeId] = useState<
-    Record<string, ShiftDayTiming>
-  >({});
   /** Collapsed by default — full month tables for every employee freeze the browser */
   const [expandedEmployeeIds, setExpandedEmployeeIds] = useState<Record<string, boolean>>({});
+  const [selectedDeductionIds, setSelectedDeductionIds] = useState<Record<string, boolean>>({});
+  const [deductionPreview, setDeductionPreview] = useState<{
+    employeeId: string;
+    block: DeductionSummaryEmployeeBlock;
+  } | null>(null);
+  const [deductionPreviewLoadingId, setDeductionPreviewLoadingId] = useState<string>("");
+  const [metricModal, setMetricModal] = useState<
+    null | "employees" | "workingDays" | "expanded" | "departments"
+  >(null);
+  const [exportMenuEmployeeId, setExportMenuEmployeeId] = useState<string>("");
   const fetchGenRef = useRef(0);
-  const importInputRef = useRef<HTMLInputElement>(null);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (deductionPreview) {
+        setDeductionPreview(null);
+        return;
+      }
+      if (metricModal) {
+        setMetricModal(null);
+        return;
+      }
+      if (exportMenuEmployeeId) {
+        setExportMenuEmployeeId("");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deductionPreview, metricModal, exportMenuEmployeeId]);
+
+  useEffect(() => {
+    if (!exportMenuEmployeeId) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest?.("[data-export-menu]")) return;
+      setExportMenuEmployeeId("");
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown);
+  }, [exportMenuEmployeeId]);
 
   const showingImported =
     Boolean(importedSnapshot?.month && importedSnapshot.month === selectedMonth && importedSnapshot.employees.length);
 
   function toggleEmployeeExpanded(employeeId: string) {
     setExpandedEmployeeIds((prev) => ({ ...prev, [employeeId]: !prev[employeeId] }));
+  }
+
+  function toggleDeductionSelected(employeeId: string) {
+    const id = String(employeeId);
+    setSelectedDeductionIds((prev) => {
+      const next = { ...prev };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return next;
+    });
+  }
+
+  function setAllDeductionSelected(ids: string[], selected: boolean) {
+    setSelectedDeductionIds((prev) => {
+      if (!selected) {
+        const next = { ...prev };
+        ids.forEach((id) => {
+          delete next[id];
+        });
+        return next;
+      }
+      const next = { ...prev };
+      ids.forEach((id) => {
+        next[id] = true;
+      });
+      return next;
+    });
   }
 
   // Re-pair T.Punch out as new ZKBio punches sync (background only — never blocks first paint)
@@ -351,9 +486,51 @@ export default function MonthlyAttendancePage() {
         .then(setTungstenCtx)
         .catch(() => {});
     };
+    refreshPairing();
     const id = setInterval(refreshPairing, 60_000);
     return () => clearInterval(id);
   }, [fromDate, toDate, showingImported]);
+
+  useEffect(() => {
+    fetch("/api/employee-list", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.employees)) {
+          setHrmEmployeesList(hrmEmployeesFromList(data.employees));
+        }
+      })
+      .catch(() => {});
+    fetch("/api/hrm-shifts-assignments", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.success || !Array.isArray(data.employees)) return;
+        setShiftAssignments(
+          data.employees
+            .filter((e: { id?: number; start_time?: string; end_time?: string }) =>
+              Boolean(e.id && e.start_time && e.end_time),
+            )
+            .map(
+              (e: {
+                id: number;
+                start_time: string;
+                end_time: string;
+                assigned_date?: string;
+                allow_overtime?: boolean | number | string | null;
+              }) => ({
+                employeeId: String(e.id),
+                startTime: String(e.start_time).slice(0, 8),
+                endTime: String(e.end_time).slice(0, 8),
+                assignedDate: String(e.assigned_date || "").slice(0, 10),
+                allowOvertime:
+                  e.allow_overtime === true ||
+                  e.allow_overtime === 1 ||
+                  e.allow_overtime === "1",
+              }),
+            ),
+        );
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch departments
   useEffect(() => {
@@ -365,30 +542,6 @@ export default function MonthlyAttendancePage() {
         }
       })
       .catch(err => console.error('Error fetching departments:', err));
-  }, []);
-
-  // Bulk shift assignments — needed so Absent / forgot-clock-in days still get
-  // shift-aware first punch (before start) + midnight last punch.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/hrm-shifts-assignments")
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled || !data?.success || !Array.isArray(data.employees)) return;
-        const next: Record<string, ShiftDayTiming> = {};
-        for (const e of data.employees) {
-          const id = String(e?.id ?? "").trim();
-          const start = String(e?.start_time ?? "").trim();
-          const end = String(e?.end_time ?? "").trim();
-          if (!id || !start || !end) continue;
-          next[id] = { startTime: start, endTime: end };
-        }
-        setShiftByEmployeeId(next);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // Fetch attendance first (unblocks UI), then tardy/leaves/tungsten in background
@@ -409,7 +562,10 @@ export default function MonthlyAttendancePage() {
     }
 
     try {
-      const res = await fetch(url, { cache: "no-store" });
+      const [res, shiftRes] = await Promise.all([
+        fetch(url, { cache: "no-store" }),
+        fetch("/api/hrm-shifts-assignments", { cache: "no-store" }),
+      ]);
       const data = await res.json();
       if (gen !== fetchGenRef.current) return;
       if (!data.success) {
@@ -417,7 +573,42 @@ export default function MonthlyAttendancePage() {
         return;
       }
 
-      const empShiftMap: Record<string, { start: string; end: string; seconds: number }> = {};
+      let liveShifts = shiftAssignments;
+      try {
+        const shiftData = await shiftRes.json();
+        if (shiftData.success && Array.isArray(shiftData.employees)) {
+          liveShifts = shiftData.employees
+            .filter((e: { id?: number; start_time?: string; end_time?: string }) =>
+              Boolean(e.id && e.start_time && e.end_time),
+            )
+            .map(
+              (e: {
+                id: number;
+                start_time: string;
+                end_time: string;
+                assigned_date?: string;
+                allow_overtime?: boolean | number | string | null;
+              }) => ({
+                employeeId: String(e.id),
+                startTime: String(e.start_time).slice(0, 8),
+                endTime: String(e.end_time).slice(0, 8),
+                assignedDate: String(e.assigned_date || "").slice(0, 10),
+                allowOvertime:
+                  e.allow_overtime === true ||
+                  e.allow_overtime === 1 ||
+                  e.allow_overtime === "1",
+              }),
+            );
+          setShiftAssignments(liveShifts);
+        }
+      } catch {
+        /* keep existing shiftAssignments */
+      }
+
+      const empShiftMap: Record<
+        string,
+        { start: string; end: string; seconds: number; allow_overtime?: boolean }
+      > = {};
       (data.attendance || []).forEach((record: any) => {
         const assignedShiftSeconds = getAssignedShiftSeconds(
           record.shift_start_time,
@@ -430,15 +621,32 @@ export default function MonthlyAttendancePage() {
           assignedShiftSeconds &&
           assignedShiftSeconds > 0
         ) {
-          empShiftMap[record.employee_id] = {
+          empShiftMap[String(record.employee_id)] = {
             start: record.shift_start_time,
             end: record.shift_end_time,
             seconds: assignedShiftSeconds,
+            allow_overtime:
+              record.allow_overtime === true ||
+              record.allow_overtime === 1 ||
+              record.allow_overtime === "1",
           };
         }
       });
+      // Fill from shift-assignments API (source of allow_overtime on staging/Mongo).
+      for (const s of liveShifts) {
+        const secs = getAssignedShiftSeconds(s.startTime, s.endTime);
+        if (!secs || secs <= 0) continue;
+        const prev = empShiftMap[s.employeeId];
+        empShiftMap[s.employeeId] = {
+          start: s.startTime,
+          end: s.endTime,
+          seconds: secs,
+          allow_overtime: s.allowOvertime || prev?.allow_overtime,
+        };
+      }
 
       let records = (data.attendance || []).map((record: any) => {
+        const empId = String(record.employee_id ?? "");
         const totalSeconds =
           record.total_seconds && record.total_seconds > 0
             ? record.total_seconds
@@ -447,15 +655,20 @@ export default function MonthlyAttendancePage() {
           record.shift_start_time,
           record.shift_end_time,
         );
-        if (
-          (!assignedShiftSeconds || assignedShiftSeconds <= 0) &&
-          empShiftMap[record.employee_id]
-        ) {
-          assignedShiftSeconds = empShiftMap[record.employee_id].seconds;
+        if ((!assignedShiftSeconds || assignedShiftSeconds <= 0) && empShiftMap[empId]) {
+          assignedShiftSeconds = empShiftMap[empId].seconds;
         }
-        const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds);
+        const allowOt =
+          record.allow_overtime !== undefined && record.allow_overtime !== null
+            ? record.allow_overtime
+            : empShiftMap[empId]?.allow_overtime;
+        const overtimeSeconds = calculateOvertime(totalSeconds, assignedShiftSeconds, {
+          ...record,
+          allow_overtime: allowOt,
+        });
         return {
           ...record,
+          allow_overtime: allowOt,
           total_hours: formatDuration(totalSeconds),
           assigned_shift_seconds: assignedShiftSeconds,
           overtime: overtimeSeconds,
@@ -473,16 +686,20 @@ export default function MonthlyAttendancePage() {
       setAttendance(records);
       setLoading(false); // Show list immediately — do not wait for ZKBio / notes
 
-      const uniqueEmployees = [...new Set(records.map((r: any) => String(r.employee_id)))] as string[];
-      if (uniqueEmployees.length > 0) {
-        void fetchApprovedLeaves(uniqueEmployees, fromDate, toDate);
-        void (async () => {
+      if (fromDate && toDate) {
+        void fetchApprovedLeaves(fromDate, toDate);
+      }
+
+      // Background enrichment (T.Punch pairing is the slow part)
+      void (async () => {
+        if (fromDate && toDate) {
           try {
             const ovRes = await fetch(
               `/api/monthly-attendance-status-overrides?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`,
               { cache: "no-store" },
             );
             const ovData = await ovRes.json();
+            if (gen !== fetchGenRef.current) return;
             if (ovData.success && Array.isArray(ovData.overrides)) {
               const map: Record<string, Record<string, string>> = {};
               const byAtt: Record<string, string> = {};
@@ -506,11 +723,13 @@ export default function MonthlyAttendancePage() {
                     if (reason) notesByAtt[String(attId)] = reason;
                     return;
                   }
-                  if (!map[eid]) map[eid] = {};
-                  map[eid][dk] = status;
-                  if (reason) {
-                    if (!notes[eid]) notes[eid] = {};
-                    notes[eid][dk] = reason;
+                  for (const idKey of employeeIdKeys(eid)) {
+                    if (!map[idKey]) map[idKey] = {};
+                    map[idKey][dk] = status;
+                    if (reason) {
+                      if (!notes[idKey]) notes[idKey] = {};
+                      notes[idKey][dk] = reason;
+                    }
                   }
                 },
               );
@@ -532,12 +751,6 @@ export default function MonthlyAttendancePage() {
               setStatusOverrideNotesByAttendanceId({});
             }
           }
-        })();
-      }
-
-      // Background enrichment (T.Punch pairing is the slow part)
-      void (async () => {
-        if (fromDate && toDate) {
           try {
             const noteRes = await fetch(
               `/api/tardy-notes?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`,
@@ -593,43 +806,15 @@ export default function MonthlyAttendancePage() {
     }
   };
 
-  const handleImportClick = () => importInputRef.current?.click();
-
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const buffer = await file.arrayBuffer();
-      const snapshot = parseMonthlyAttendanceWorkbook(buffer);
-      if (!snapshot.employees.length) {
-        toastInfo("No employee sheets found. Use monthly attendance export format (one tab per employee).");
-        return;
-      }
-      if (!snapshot.month) {
-        toastError("Could not detect month from file dates.");
-        return;
-      }
-      saveImportedMonthlySnapshot(snapshot);
-      setImportedSnapshot(snapshot);
-      setSelectedMonth(snapshot.month);
-      toastSuccess(`Loaded ${snapshot.employees.length} employees for ${snapshot.month}. Select that month to view.`);
-    } catch (err) {
-      toastError(String(err));
-    } finally {
-      e.target.value = "";
-    }
-  };
-
-  // Fetch approved leaves for given employees and date range
-  const fetchApprovedLeaves = async (employeeIds: string[], from: string, to: string) => {
+  // Fetch approved leaves for the month. Do NOT require attendance employee IDs —
+  // punch-only / search-only rows still need Leave status from ticket approvals.
+  const fetchApprovedLeaves = async (from: string, to: string) => {
     try {
       const params = new URLSearchParams();
-      params.append("employees", employeeIds.join(","));
+      params.append("status", "approved");
       params.append("fromDate", from);
       params.append("toDate", to);
-      // Include all statuses; map builder keeps approved only.
-      // Use Asia/Karachi calendar day (not UTC ISO prefix) so BSON/ISO midnights
-      // map to the same business date the monthly grid uses (e.g. 10/29 leave).
+
       const response = await fetch(`/api/leaves?${params.toString()}`, { cache: "no-store" });
       const data = await response.json();
 
@@ -666,28 +851,6 @@ export default function MonthlyAttendancePage() {
     setExpandedEmployeeIds({});
     fetchAttendance();
   }, [fromDate, toDate, selectedDepartment, showingImported]);
-
-  // After TL/HR approve leave elsewhere, refresh Leave / half-day cells on focus.
-  useEffect(() => {
-    if (showingImported) return;
-    const onFocus = () => {
-      const ids = [
-        ...new Set(attendance.map((r: any) => String(r.employee_id))),
-      ].filter(Boolean) as string[];
-      if (ids.length && fromDate && toDate) {
-        void fetchApprovedLeaves(ids, fromDate, toDate);
-      }
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") onFocus();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [attendance, fromDate, toDate, showingImported]);
 
   useEffect(() => {
     if (!selectedMonth) return;
@@ -797,9 +960,15 @@ export default function MonthlyAttendancePage() {
       tungstenPunchOut: "-",
     });
 
+    const withAutoTPunch = (
+      session: EmployeeReportSession,
+      record: any | undefined,
+    ): EmployeeReportSession =>
+      applyAutoClockOutTPunchDisplay(session, record?.auto_clock_out);
+
     if (daySessions.length === 0) {
       return dayRecords.map((record) => ({
-        session: sessionFromRecord(record),
+        session: withAutoTPunch(sessionFromRecord(record), record),
         record,
       }));
     }
@@ -808,13 +977,16 @@ export default function MonthlyAttendancePage() {
     const rows = daySessions.map((session) => {
       const record = findRecordForSession(dayRecords, session, usedIds);
       if (record?.id != null) usedIds.add(record.id);
-      return { session, record };
+      return { session: withAutoTPunch(session, record), record };
     });
 
     dayRecords.forEach((record) => {
       if (record?.id != null && usedIds.has(record.id)) return;
       if (record?.id == null && rows.some((row) => row.record === record)) return;
-      rows.push({ session: sessionFromRecord(record), record });
+      rows.push({
+        session: withAutoTPunch(sessionFromRecord(record), record),
+        record,
+      });
       if (record?.id != null) usedIds.add(record.id);
     });
 
@@ -847,7 +1019,7 @@ export default function MonthlyAttendancePage() {
     return typeof minutes === "number" && minutes > EXCESS_LATE_SHOW_AFTER_MINUTES;
   }
 
-  /** Billable late: never on Absent/Half Day; 1h already stripped (match production 10.40). */
+  /** Resolve billable late for a day: never on Absent/Half Day; 1h already stripped. */
   function billableLateForDay(
     statusLabel: string,
     dayStatusLateMinutes: number,
@@ -866,16 +1038,6 @@ export default function MonthlyAttendancePage() {
   function statusCellText(statusLabel: string, lateMinutes?: number | null) {
     if (!isExcessLateMinutes(lateMinutes)) return statusLabel;
     return `${statusLabel} (${formatLateTime(lateMinutes)})`;
-  }
-
-  /** Same-day multi-session: show running tardy count only on Tardy rows. */
-  function tardyCountCell(
-    statusLabel: string,
-    runningLate: number | string | null | undefined,
-  ): string | number {
-    if (normalizeAttendanceStatus(statusLabel) !== "Tardy") return "";
-    if (runningLate == null || runningLate === "") return "";
-    return runningLate;
   }
 
   function renderStatusWithExcessLate(
@@ -919,41 +1081,8 @@ export default function MonthlyAttendancePage() {
       const session = statusOverridesByAttendanceId[String(att)];
       return session ? normalizeAttendanceStatus(session) : null;
     }
-    const v = statusOverrides[String(employeeId)]?.[dateKey];
+    const v = lookupByEmployeeId(statusOverrides, employeeId)?.[dateKey];
     return v ? normalizeAttendanceStatus(v) : null;
-  }
-
-  /** Session-level manual statuses for a day (same-day multi-record). */
-  function sessionOverrideStatusesForDay(
-    employeeId: string,
-    dateKey: string,
-    dayRecords: Array<{ id?: number | null }> | undefined,
-  ): string[] {
-    const out: string[] = [];
-    for (const rec of dayRecords || []) {
-      const attId = normalizeOverrideAttendanceId(rec?.id);
-      if (attId <= 0) continue;
-      const s = overrideStatusFor(employeeId, dateKey, attId);
-      if (s) out.push(s);
-    }
-    return out;
-  }
-
-  /**
-   * Day-level effective manual override for meta / totals.
-   * Day override wins; else any session Tardy; else first session override.
-   */
-  function resolveEffectiveDayOverride(
-    employeeId: string,
-    dateKey: string,
-    dayRecords?: Array<{ id?: number | null }>,
-  ): string | null {
-    const dayOverride = overrideStatusFor(employeeId, dateKey);
-    if (dayOverride) return dayOverride;
-    const sessionStatuses = sessionOverrideStatusesForDay(employeeId, dateKey, dayRecords);
-    if (!sessionStatuses.length) return null;
-    if (sessionStatuses.includes("Tardy")) return "Tardy";
-    return sessionStatuses[0];
   }
 
   async function saveManualStatus(
@@ -1152,11 +1281,7 @@ export default function MonthlyAttendancePage() {
     }
     const attId = normalizeOverrideAttendanceId(attendanceId);
     const saving = statusSavingKey === statusSaveKey(employeeId, dateKey, attId);
-    const raw = normalizeAttendanceStatus(displayStatus);
-    // Invalid/empty auto values must not fall through to the first <option> ("On Time").
-    const current = isAllowedMonthlyAttendanceStatus(raw)
-      ? raw
-      : emptyWorkingDayStatus(dateKey, isWorkingDay(dateKey), null).statusLabel;
+    const current = normalizeAttendanceStatus(displayStatus);
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
         <select
@@ -1206,55 +1331,14 @@ export default function MonthlyAttendancePage() {
   }
 
   function getRecordDateKey(record: any) {
-    return getDateKey(record.clock_in || record.clock_out || record.date || "");
-  }
-
-  /**
-   * Same status/deduction the table cell shows.
-   * Order: manual override → approved leave (full/half, any day) → empty Off/---/Absent → meta.
-   */
-  function resolveDayAttendanceDisplay(
-    employee: any,
-    dateKey: string,
-  ): { statusLabel: string; deduction: string } {
-    const meta = employee.dateMeta?.[dateKey];
-    const dayRecords = employee.byDate?.[dateKey] || [];
-    const workingDay = isWorkingDay(dateKey);
-    // Day + any-session manual override (for empty-day / monthly totals).
-    // Per-session rows must NOT use this alone — they resolve session override first.
-    const override = resolveEffectiveDayOverride(
-      employee.employeeId,
-      dateKey,
-      dayRecords,
-    );
-    if (override) {
-      return {
-        statusLabel: override,
-        deduction: deductionForAttendanceStatus(override, meta?.runningLate),
-      };
+    // Prefer calendar `date` so BSON/UTC clock_in does not shift the day key.
+    const rawDate = record?.date != null ? String(record.date) : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return rawDate;
+    if (rawDate) {
+      const fromDate = getDateKey(rawDate);
+      if (fromDate) return fromDate;
     }
-    const leaveKind = approvedLeaveOnDay(
-      approvedLeavesMap,
-      employee.employeeId,
-      dateKey,
-    );
-    if (leaveKind) {
-      return attendanceFromApprovedLeaveDay(leaveKind);
-    }
-    if (!dayRecords.length) {
-      return emptyWorkingDayStatus(dateKey, workingDay, null);
-    }
-    // Prefer auto status so a sibling session's manual override does not bleed here.
-    const auto = normalizeAttendanceStatus(
-      meta?.autoStatusLabel || meta?.statusLabel || "-",
-    );
-    return {
-      statusLabel: auto,
-      deduction:
-        meta?.autoStatusLabel != null
-          ? deductionForAttendanceStatus(auto, meta?.runningLate)
-          : meta?.deduction || "",
-    };
+    return getDateKey(record.clock_in || record.clock_out || "");
   }
 
   function calculateTotalDeduction(employee: any) {
@@ -1263,80 +1347,61 @@ export default function MonthlyAttendancePage() {
         let total = 0;
         (employee.importedDays as ImportedMonthlyDay[]).forEach((day) => {
           const { deduction } = getImportedDayDisplayFields(day, { fiveHourShift: true });
-          if (deduction) total += parseDeductionPercent(deduction);
+          if (deduction) total += parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
         });
         return total;
       }
       const fromFooter = employee.importedFooter?.totalDeduction;
       if (fromFooter != null && String(fromFooter).trim() !== "") {
-        return parseDeductionPercent(fromFooter);
+        return parseInt(String(fromFooter).replace(/%/g, ""), 10) || 0;
       }
       let total = 0;
       (employee.importedDays || []).forEach((day: ImportedMonthlyDay) => {
         const ded = day.sheetDeduction ?? day.deduction ?? employee.dateMeta?.[day.dateKey]?.deduction;
-        if (ded) total += parseDeductionPercent(ded);
+        if (ded) total += parseInt(String(ded).replace(/%/g, ""), 10) || 0;
       });
       return total;
     }
 
     let totalDeduction = 0;
     monthInfo.days.forEach((day) => {
-      totalDeduction += parseDeductionPercent(
-        resolveDayAttendanceDisplay(employee, day.dateKey).deduction,
-      );
-    });
-    return totalDeduction;
-  }
-
-  function getEmployeeAbsenceHalfDayStats(employee: any): {
-    absences: number;
-    halfDays: number;
-    absenceDeduction: number;
-    halfDayDeduction: number;
-  } {
-    let absences = 0;
-    let halfDays = 0;
-    let absenceDeduction = 0;
-    let halfDayDeduction = 0;
-    if (employee.isImported) {
-      (employee.importedDays || []).forEach((day: ImportedMonthlyDay) => {
-        const fields = getImportedDayDisplayFields(day, {
-          fiveHourShift: importedEmployeeUsesFiveHourShift(employee.importedDays || []),
-        });
-        const status = normalizeAttendanceStatus(fields.status || "");
-        const pct = parseDeductionPercent(fields.deduction);
-        if (status === "Absent") {
-          absences += 1;
-          absenceDeduction += pct;
-        } else if (
-          status === STATUS_FIRST_HALF_DAY ||
-          status === STATUS_SECOND_HALF_DAY
-        ) {
-          halfDays += 1;
-          halfDayDeduction += pct;
-        }
-      });
-      return { absences, halfDays, absenceDeduction, halfDayDeduction };
-    }
-    monthInfo.days.forEach((day) => {
-      const { statusLabel, deduction } = resolveDayAttendanceDisplay(
-        employee,
+      const dayRecords = employee.byDate[day.dateKey] || [];
+      const meta = employee.dateMeta[day.dateKey];
+      const workingDay = isWorkingDay(day.dateKey);
+      
+      let dayDeduction = 0;
+      const leaveKind = approvedLeaveOnDay(
+        approvedLeavesMap,
+        employee.employeeId,
         day.dateKey,
       );
-      const status = normalizeAttendanceStatus(statusLabel);
-      const pct = parseDeductionPercent(deduction);
-      if (status === "Absent") {
-        absences += 1;
-        absenceDeduction += pct;
-      } else if (
-        status === STATUS_FIRST_HALF_DAY ||
-        status === STATUS_SECOND_HALF_DAY
-      ) {
-        halfDays += 1;
-        halfDayDeduction += pct;
+      if (leaveKind) {
+        dayDeduction =
+          parseInt(
+            String(attendanceFromApprovedLeaveDay(leaveKind).deduction).replace(/%/g, ""),
+            10,
+          ) || 0;
+      } else if (dayRecords.length === 0) {
+        const emptyOverride = overrideStatusFor(employee.employeeId, day.dateKey);
+        if (emptyOverride) {
+          dayDeduction =
+            parseInt(
+              String(deductionForAttendanceStatus(emptyOverride, 0)).replace(/%/g, ""),
+              10,
+            ) || 0;
+        } else {
+          const { deduction } = emptyWorkingDayStatus(day.dateKey, workingDay, null);
+          dayDeduction = parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
+        }
+      } else {
+        // Has records, use meta deduction
+        if (meta?.deduction) {
+          dayDeduction = parseInt(meta.deduction) || 0;
+        }
       }
+      totalDeduction += dayDeduction;
     });
-    return { absences, halfDays, absenceDeduction, halfDayDeduction };
+    return totalDeduction;
   }
 
   function tardyNoteForCell(
@@ -1367,15 +1432,15 @@ export default function MonthlyAttendancePage() {
       return "-";
     }
 
-    for (const rec of dayRecords || []) {
-      if (rec?.id == null) continue;
-      const bySession = tardyNotesByAttendanceId[String(rec.id)];
-      if (bySession) return bySession;
+    if (dayRecords?.length) {
+      for (const rec of dayRecords) {
+        if (rec?.id == null) continue;
+        const bySession = tardyNotesByAttendanceId[String(rec.id)];
+        if (bySession) return bySession;
+      }
     }
-
     const saved = tardyNotes[employeeId]?.[dateKey];
-    if (saved) return saved;
-    return "-";
+    return saved || "-";
   }
 
   function isWorkingDay(dateKey: string) {
@@ -1392,45 +1457,39 @@ export default function MonthlyAttendancePage() {
     return weekday !== 0 && weekday !== 6;
   }
 
-  function matchKeysForEmployee(employee: {
+  function employeeMatchKeys(employee: {
     employeeId: string;
     employeeName: string;
-    pseudonym?: string;
     employeeCode?: string;
-  }): EmployeeMatchKeys {
+    pseudonym?: string;
+  }) {
+    const empId = String(employee.employeeId ?? "").trim();
+    const hrm = hrmEmployeesList.find((e) => String(e.employeeId) === empId);
+    const rosterPin = punchOnlyPinForId(empId) || "";
     return {
-      employeeId: String(employee.employeeId),
       employeeName: employee.employeeName,
-      employeeCode: employee.employeeCode || null,
-      pseudonym: employee.pseudonym || null,
+      employeeCode: String(
+        employee.employeeCode || hrm?.employeeCode || rosterPin || "",
+      ).trim(),
+      employeeId: empId,
+      pseudonym: employee.pseudonym,
     };
   }
 
-  function resolveShiftForEmployee(
-    employeeId: string,
-    sessionDate: string,
-    allRecords: any[],
-  ): ShiftDayTiming | null {
-    for (const r of allRecords) {
-      if (!r?.clock_in || !r?.shift_start_time || !r?.shift_end_time) continue;
-      const dk = getDateStringInTimeZone(new Date(String(r.clock_in)), SERVER_TIMEZONE);
-      if (dk === sessionDate) {
-        return {
-          startTime: String(r.shift_start_time),
-          endTime: String(r.shift_end_time),
-        };
-      }
+  function shiftResolverForEmployee(employeeId: string): EmployeeShiftResolver {
+    const row = shiftAssignments.find((s) => s.employeeId === String(employeeId));
+    const punchOnly = PUNCH_ONLY_EMPLOYEE_IDS.has(String(employeeId));
+    if (!row) {
+      if (!punchOnly) return () => null;
+      return () => ({
+        startTime: PUNCH_ONLY_DEFAULT_SHIFT.startTime,
+        endTime: PUNCH_ONLY_DEFAULT_SHIFT.endTime,
+      });
     }
-    // Fallback: any known shift on this employee's attendance rows
-    for (const r of allRecords) {
-      if (r?.shift_start_time && r?.shift_end_time) {
-        return {
-          startTime: String(r.shift_start_time),
-          endTime: String(r.shift_end_time),
-        };
-      }
-    }
-    return shiftByEmployeeId[String(employeeId)] || null;
+    return (sessionDate: string) => {
+      if (!punchOnly && row.assignedDate && sessionDate < row.assignedDate) return null;
+      return { startTime: row.startTime, endTime: row.endTime };
+    };
   }
 
   /** Pair T.Punch for this employee even if their card is collapsed (export needs every sheet). */
@@ -1438,29 +1497,40 @@ export default function MonthlyAttendancePage() {
     employee: {
       employeeId: string;
       employeeName: string;
-      pseudonym?: string;
       employeeCode?: string;
+      departmentName?: string;
       isImported?: boolean;
     },
     ctx: TungstenPunchContext | null,
   ): EmployeeReportSession[] {
     if (employee.isImported) return [];
+    if (!ctx || !fromDate || !toDate) return [];
+    const empId = String(employee.employeeId);
+    if (PUNCH_ONLY_EMPLOYEE_IDS.has(empId)) {
+      return buildShiftPunchOnlySessions(
+        employeeMatchKeys(employee),
+        ctx,
+        fromDate,
+        toDate,
+        shiftResolverForEmployee(empId),
+      );
+    }
     const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-    const zkFrom = fromDate ? addDaysToDateKey(fromDate, -1) : "";
-    const zkTo = toDate ? addDaysToDateKey(toDate, 1) : "";
+    const zkFrom = addDaysToDateKey(fromDate, -1);
+    const zkTo = addDaysToDateKey(toDate, 1);
     const allRecords = attendance.filter(
-      (record: any) => String(record.employee_id) === String(employee.employeeId),
+      (record: any) => String(record.employee_id) === empId,
     );
+    // All employees: invent ZK-only T.Punch rows; status stays HRM clock-in/out based.
     return buildEmployeeReportSessions(
-      matchKeysForEmployee(employee),
+      employeeMatchKeys(employee),
       allRecords,
       ctx,
       todayKey,
       Date.now(),
       zkFrom,
       zkTo,
-      (sessionDate) =>
-        resolveShiftForEmployee(String(employee.employeeId), sessionDate, allRecords),
+      shiftResolverForEmployee(empId),
       true,
     );
   }
@@ -1482,6 +1552,11 @@ export default function MonthlyAttendancePage() {
   ): MonthlyAttendanceExcelRow[] {
     const dataRows: MonthlyAttendanceExcelRow[] = [];
     if (!monthInfo.days) return dataRows;
+    const revealPunches = shouldRevealTPunches(
+      employee.departmentName,
+      selectedDepartment,
+      deferredSearchName,
+    );
 
     if (employee.isImported && employee.importedDays?.length) {
       const days = [...employee.importedDays].sort((a: ImportedMonthlyDay, b: ImportedMonthlyDay) =>
@@ -1497,10 +1572,10 @@ export default function MonthlyAttendancePage() {
           cells: [
             day.weekday,
             day.dateDisplay,
-            day.tPunchIn && day.tPunchIn !== "---" ? day.tPunchIn : "---",
+            maskTPunch(day.tPunchIn, revealPunches),
             day.clockIn,
             day.clockOut,
-            day.tPunchOut && day.tPunchOut !== "---" ? day.tPunchOut : "---",
+            maskTPunch(day.tPunchOut, revealPunches),
             day.totalWH,
             day.assignedWH,
             day.overtime,
@@ -1571,17 +1646,25 @@ export default function MonthlyAttendancePage() {
     }
 
     const employeeSessions =
-      pairedSessions ?? sessionsByEmployeeId.get(employee.employeeId) ?? [];
+      pairedSessions ?? sessionsByEmployeeId.get(String(employee.employeeId)) ?? [];
 
     monthInfo.days.forEach((day) => {
       const dayRecords = employee.byDate[day.dateKey] || [];
       const meta = employee.dateMeta[day.dateKey];
+      const workingDay = isWorkingDay(day.dateKey);
+      // Show ZK-only sessions too; status still from HRM / leave / Absent fallback.
       const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
 
       if (daySessions.length === 0 && dayRecords.length === 0) {
-        const { statusLabel, deduction } = resolveDayAttendanceDisplay(
-          employee,
+        const leaveKind = approvedLeaveOnDay(
+          approvedLeavesMap,
+          employee.employeeId,
           day.dateKey,
+        );
+        const { statusLabel, deduction } = emptyWorkingDayStatus(
+          day.dateKey,
+          workingDay,
+          leaveKind,
         );
         dataRows.push({
           cells: [
@@ -1594,7 +1677,7 @@ export default function MonthlyAttendancePage() {
             "---",
             "---",
             "---",
-            tardyCountCell(statusLabel, meta?.runningLate),
+            meta?.runningLate ?? "",
             statusLabel,
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, undefined, dayRecords),
             deduction,
@@ -1605,62 +1688,48 @@ export default function MonthlyAttendancePage() {
       }
 
       const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
-      const dayLevelOverride = overrideStatusFor(employee.employeeId, day.dateKey);
-      const leaveKind = approvedLeaveOnDay(
+
+      if (sessionsToExport.length === 0) {
+        // handled above when no sessions and no records
+      }
+
+      const leaveKindSession = approvedLeaveOnDay(
         approvedLeavesMap,
         employee.employeeId,
         day.dateKey,
       );
-      const leaveDisplay = leaveKind
-        ? attendanceFromApprovedLeaveDay(leaveKind)
+      const leaveAttSession = leaveKindSession
+        ? attendanceFromApprovedLeaveDay(leaveKindSession)
         : null;
-      const dayAutoStatus = normalizeAttendanceStatus(
-        meta?.autoStatusLabel ||
-          emptyWorkingDayStatus(day.dateKey, isWorkingDay(day.dateKey), null).statusLabel,
+      // No HRM clock-in meta → Absent (or leave/off). Punches do not change status.
+      const emptySessionFallback = emptyWorkingDayStatus(
+        day.dateKey,
+        workingDay,
+        leaveKindSession,
       );
 
       sessionsToExport.forEach(({ session, record }, sessionIndex) => {
-        // Match on-screen row: session override → day override → leave/auto.
-        const attId = normalizeOverrideAttendanceId(record?.id);
-        const sessionOverride =
-          attId > 0
-            ? overrideStatusFor(employee.employeeId, day.dateKey, attId)
-            : null;
-        const effectiveOverride = sessionOverride || dayLevelOverride;
-        const hasHrmClockIn =
-          Boolean(record?.clock_in) ||
-          (session.hrmClockIn != null &&
-            String(session.hrmClockIn).trim() !== "" &&
-            session.hrmClockIn !== "-");
-        const punchesOnlyStatus = emptyWorkingDayStatus(
-          day.dateKey,
-          isWorkingDay(day.dateKey),
-          null,
-        ).statusLabel;
-        const statusLabel =
-          effectiveOverride ||
-          leaveDisplay?.statusLabel ||
-          (hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus);
-        const deduction = effectiveOverride
-          ? deductionForAttendanceStatus(effectiveOverride, meta?.runningLate)
-          : leaveDisplay?.deduction ||
-            deductionForAttendanceStatus(
-              hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus,
-              meta?.runningLate,
-            );
+        const statusLabel = normalizeAttendanceStatus(
+          leaveAttSession?.statusLabel ||
+            meta?.statusLabel ||
+            emptySessionFallback.statusLabel,
+        );
+        const deduction =
+          leaveAttSession?.deduction ||
+          meta?.deduction ||
+          emptySessionFallback.deduction;
         dataRows.push({
           cells: [
             day.weekday,
             formatDateKey(day.dateKey),
-            monthlyDash(session.tungstenPunchIn),
+            maskTPunch(monthlyDash(session.tungstenPunchIn), revealPunches),
             session.hrmClockIn === "-" ? "---" : session.hrmClockIn,
             session.hrmClockOut === "-" ? "---" : session.hrmClockOut,
-            monthlyDash(session.tungstenPunchOut),
+            maskTPunch(monthlyDash(session.tungstenPunchOut), revealPunches),
             record ? excelTotalHoursForExport(record) : "---",
             record ? excelAssignedWHForExport(record) : "---",
             record ? excelOvertimeForExport(record) : "---",
-            // Only on Tardy rows when same day has multiple sessions.
-            tardyCountCell(statusLabel, meta?.runningLate),
+            meta?.runningLate ?? "",
             sessionIndex === 0
               ? statusCellText(statusLabel, meta?.lateMinutes)
               : statusLabel,
@@ -1733,29 +1802,39 @@ export default function MonthlyAttendancePage() {
       return;
     }
 
-    const ctx = await ensureTungstenCtx();
-    const sheets = attendanceByEmployee.map((employee) => ({
-      name: excelEmployeeLabel(employee.employeeName, employee.pseudonym),
-      rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
-    }));
+    try {
+      const ctx = await ensureTungstenCtx();
+      const sheets = attendanceByEmployee.map((employee) => ({
+        name: excelEmployeeLabel(employee.employeeName, employee.pseudonym),
+        rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
+      }));
 
-    const dateRange = fromDate && toDate ? `-${fromDate}-to-${toDate}` : "";
-    const departmentSuffix = selectedDepartment ? `-${selectedDepartment}` : "";
-    const fileName = `monthly-attendance${departmentSuffix}${dateRange}.xlsx`;
-    await downloadMonthlyAttendanceExcel(sheets, fileName);
+      const dateRange = fromDate && toDate ? `-${fromDate}-to-${toDate}` : "";
+      const departmentSuffix = selectedDepartment ? `-${selectedDepartment}` : "";
+      const fileName = `monthly-attendance${departmentSuffix}${dateRange}.xlsx`;
+      await downloadMonthlyAttendanceExcel(sheets, fileName);
+      toastSuccess("Attendance Excel downloaded", "Export");
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : String(err), "Export failed");
+    }
   }
 
   async function downloadEmployeeExcel(employee: any) {
-    const ctx = await ensureTungstenCtx();
-    const label = excelEmployeeLabel(employee.employeeName, employee.pseudonym);
-    const sheets = [
-      {
-        name: label,
-        rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
-      },
-    ];
-    const fileName = `attendance-${label.replace(/\s+/g, "_")}-${selectedMonth}.xlsx`;
-    await downloadMonthlyAttendanceExcel(sheets, fileName);
+    try {
+      const ctx = await ensureTungstenCtx();
+      const label = excelEmployeeLabel(employee.employeeName, employee.pseudonym);
+      const sheets = [
+        {
+          name: label,
+          rows: buildEmployeeExcelRows(employee, pairSessionsForEmployee(employee, ctx)),
+        },
+      ];
+      const fileName = `attendance-${label.replace(/\s+/g, "_")}-${selectedMonth}.xlsx`;
+      await downloadMonthlyAttendanceExcel(sheets, fileName);
+      toastSuccess("Attendance Excel downloaded", "Export");
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : String(err), "Export failed");
+    }
   }
 
   function shouldIncludeInDeductionSummary(statusLabel: string): boolean {
@@ -1827,13 +1906,21 @@ export default function MonthlyAttendancePage() {
       options.record ??
       (session ? findRecordForSession(dayRecords, session) : dayRecords[0]);
 
+    const revealPunches = shouldRevealTPunches(
+      employee.departmentName,
+      selectedDepartment,
+      deferredSearchName,
+    );
     rows.push({
       date: formatDateKey(dateKey),
-      tPunchIn: importedDay
-        ? deductionSummaryTungsten(importedDay.tPunchIn || "---")
-        : session
-          ? deductionSummaryTungsten(monthlyDash(session.tungstenPunchIn))
-          : "--",
+      tPunchIn: maskTPunch(
+        importedDay
+          ? deductionSummaryTungsten(importedDay.tPunchIn || "---")
+          : session
+            ? deductionSummaryTungsten(monthlyDash(session.tungstenPunchIn))
+            : "--",
+        revealPunches,
+      ),
       clockIn:
         session && session.hrmClockIn !== "-"
           ? session.hrmClockIn
@@ -1842,11 +1929,14 @@ export default function MonthlyAttendancePage() {
         session && session.hrmClockOut !== "-"
           ? session.hrmClockOut
           : deductionSummaryClock(record, employee, dateKey, "out"),
-      tPunchOut: importedDay
-        ? deductionSummaryTungsten(importedDay.tPunchOut || "---")
-        : session
-          ? deductionSummaryTungsten(monthlyDash(session.tungstenPunchOut))
-          : "--",
+      tPunchOut: maskTPunch(
+        importedDay
+          ? deductionSummaryTungsten(importedDay.tPunchOut || "---")
+          : session
+            ? deductionSummaryTungsten(monthlyDash(session.tungstenPunchOut))
+            : "--",
+        revealPunches,
+      ),
       totalWorkingHours: importedDay
         ? deductionSummaryTungsten(importedDay.totalWH || "---")
         : record?.total_hours
@@ -1898,7 +1988,7 @@ export default function MonthlyAttendancePage() {
       });
     } else {
       const employeeSessions =
-        pairedSessions ?? sessionsByEmployeeId.get(employee.employeeId) ?? [];
+        pairedSessions ?? sessionsByEmployeeId.get(String(employee.employeeId)) ?? [];
 
       monthInfo.days.forEach((day) => {
         if (!isWorkingDay(day.dateKey)) return;
@@ -1907,57 +1997,50 @@ export default function MonthlyAttendancePage() {
         const meta = employee.dateMeta[day.dateKey];
         const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
 
-        const resolvedDay = resolveDayAttendanceDisplay(employee, day.dateKey);
-        const dayLevelOverride = overrideStatusFor(employee.employeeId, day.dateKey);
-        const leaveKind = approvedLeaveOnDay(
-          approvedLeavesMap,
-          employee.employeeId,
-          day.dateKey,
-        );
-        const leaveDisplay = leaveKind
-          ? attendanceFromApprovedLeaveDay(leaveKind)
-          : null;
-        const dayAutoStatus = normalizeAttendanceStatus(meta?.autoStatusLabel || "-");
         if (dayRecords.length === 0 && daySessions.length === 0) {
-          if (!shouldIncludeInDeductionSummary(resolvedDay.statusLabel)) return;
-          pushDeductionSummaryRow(
-            rows,
-            employee,
+          const leaveKind = approvedLeaveOnDay(
+            approvedLeavesMap,
+            employee.employeeId,
             day.dateKey,
-            resolvedDay.statusLabel,
-            resolvedDay.deduction,
-            tardyCountCell(resolvedDay.statusLabel, meta?.runningLate),
           );
-          return;
-        }
-
-        const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
-        sessionsToExport.forEach(({ session, record }) => {
-          const attId = normalizeOverrideAttendanceId(record?.id);
-          const sessionOverride =
-            attId > 0
-              ? overrideStatusFor(employee.employeeId, day.dateKey, attId)
-              : null;
-          const effectiveOverride = sessionOverride || dayLevelOverride;
-          const statusLabel =
-            effectiveOverride || leaveDisplay?.statusLabel || dayAutoStatus;
+          const { statusLabel, deduction } = emptyWorkingDayStatus(
+            day.dateKey,
+            true,
+            leaveKind,
+          );
           if (!shouldIncludeInDeductionSummary(statusLabel)) return;
-          const deduction = effectiveOverride
-            ? deductionForAttendanceStatus(effectiveOverride, meta?.runningLate)
-            : leaveDisplay?.deduction ||
-              deductionForAttendanceStatus(dayAutoStatus, meta?.runningLate);
           pushDeductionSummaryRow(
             rows,
             employee,
             day.dateKey,
             statusLabel,
             deduction,
-            tardyCountCell(statusLabel, meta?.runningLate),
-            {
-              session,
-              record,
-            },
+            meta?.runningLate ?? "",
           );
+          return;
+        }
+
+        const leaveKind = approvedLeaveOnDay(
+          approvedLeavesMap,
+          employee.employeeId,
+          day.dateKey,
+        );
+        const leaveAtt = leaveKind ? attendanceFromApprovedLeaveDay(leaveKind) : null;
+        const emptyFallback = emptyWorkingDayStatus(day.dateKey, true, leaveKind);
+        // ZK punches never invent "On Time" — status from HRM / leave / Absent only.
+        const exportStatus =
+          leaveAtt?.statusLabel || meta?.statusLabel || emptyFallback.statusLabel;
+        if (!shouldIncludeInDeductionSummary(exportStatus)) return;
+        const deduction =
+          leaveAtt?.deduction || meta?.deduction || emptyFallback.deduction;
+        const tardyCount = meta?.runningLate ?? "";
+        const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
+
+        sessionsToExport.forEach(({ session, record }) => {
+          pushDeductionSummaryRow(rows, employee, day.dateKey, exportStatus, deduction, tardyCount, {
+            session,
+            record,
+          });
         });
       });
     }
@@ -1975,15 +2058,67 @@ export default function MonthlyAttendancePage() {
       return;
     }
 
+    const selectedEmployees = attendanceByEmployee.filter(
+      (e) => selectedDeductionIds[String(e.employeeId)],
+    );
+    const exportEmployees =
+      selectedEmployees.length > 0 ? selectedEmployees : attendanceByEmployee;
+
+    if (selectedEmployees.length === 0) {
+      toastInfo("No cards selected — exporting all visible employees");
+    }
+
     const ctx = await ensureTungstenCtx();
-    const blocks = attendanceByEmployee.map((employee) =>
+    const blocks = exportEmployees.map((employee) =>
       buildDeductionSummaryBlock(employee, pairSessionsForEmployee(employee, ctx)),
     );
 
     const dateRange = fromDate && toDate ? `-${fromDate}-to-${toDate}` : "";
     const departmentSuffix = selectedDepartment ? `-${selectedDepartment}` : "";
-    const fileName = `deduction-summary${departmentSuffix}${dateRange}.xlsx`;
+    const selectedSuffix =
+      selectedEmployees.length > 0 ? `-selected-${selectedEmployees.length}` : "";
+    const fileName = `deduction-summary${departmentSuffix}${selectedSuffix}${dateRange}.xlsx`;
     await downloadDeductionSummaryExcel(blocks, fileName);
+  }
+
+  async function openDeductionSummaryPreview(employee: MonthlyAttendanceEmployeeRow) {
+    const id = String(employee.employeeId);
+    setDeductionPreviewLoadingId(id);
+    try {
+      const ctx = await ensureTungstenCtx();
+      const block = buildDeductionSummaryBlock(
+        employee,
+        pairSessionsForEmployee(employee, ctx),
+      );
+      setDeductionPreview({ employeeId: id, block });
+    } catch (err) {
+      toastError(String(err));
+    } finally {
+      setDeductionPreviewLoadingId("");
+    }
+  }
+
+  async function downloadOneDeductionSummary(block: DeductionSummaryEmployeeBlock) {
+    const dateRange = fromDate && toDate ? `-${fromDate}-to-${toDate}` : "";
+    const safeName = String(block.employeeName || "employee")
+      .replace(/[^\w\-]+/g, "_")
+      .slice(0, 40);
+    const fileName = `deduction-summary-${safeName}${dateRange}.xlsx`;
+    await downloadDeductionSummaryExcel([block], fileName);
+  }
+
+  async function downloadEmployeeDeductionSummary(employee: MonthlyAttendanceEmployeeRow) {
+    try {
+      const ctx = await ensureTungstenCtx();
+      const block = buildDeductionSummaryBlock(
+        employee,
+        pairSessionsForEmployee(employee, ctx),
+      );
+      await downloadOneDeductionSummary(block);
+      toastSuccess("Deduction Summary downloaded", "Export");
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : String(err), "Export failed");
+    }
   }
 
   const monthInfo = useMemo(() => {
@@ -2027,66 +2162,36 @@ export default function MonthlyAttendancePage() {
     attendance.forEach((record: any) => {
       if (!record.employee_id) return;
       const empId = String(record.employee_id);
-      if (!map[empId]) {
-        map[empId] = {
-          employeeId: empId,
-          employeeName: record.employee_name || "-",
-          pseudonym: record.pseudonym || "-",
-          departmentName: record.department_name || "-",
-          gender: record.gender || "",
-          employeeCode: record.employee_code ? String(record.employee_code) : undefined,
-          byDate: {},
-          dateMeta: {},
-        };
-      }
-      if (!map[empId].gender && record.gender) {
-        map[empId].gender = record.gender;
-      }
-      if (!map[empId].employeeCode && record.employee_code) {
-        map[empId].employeeCode = String(record.employee_code);
+      // Admin Staff punch-only: Tungsten punches only — never apply 1st/2nd half / tardy rules
+      if (employeeIdKeys(empId).some((k) => PUNCH_ONLY_EMPLOYEE_IDS.has(k))) return;
+      const bucket =
+        lookupByEmployeeId(map, empId) ||
+        (() => {
+          const fresh: MonthlyAttendanceEmployeeRow = {
+            employeeId: empId,
+            employeeName: record.employee_name || "-",
+            pseudonym: record.pseudonym || "-",
+            departmentName: record.department_name || "-",
+            gender: record.gender || "",
+            byDate: {},
+            dateMeta: {},
+          };
+          setForEmployeeIdKeys(map, empId, fresh);
+          return fresh;
+        })();
+      if (!bucket.gender && record.gender) {
+        bucket.gender = record.gender;
       }
       const dateKey = getRecordDateKey(record);
       if (!dateKey) return;
-      if (!map[empId].byDate[dateKey]) map[empId].byDate[dateKey] = [];
-      map[empId].byDate[dateKey].push(record);
+      if (!bucket.byDate[dateKey]) bucket.byDate[dateKey] = [];
+      bucket.byDate[dateKey].push(record);
     });
 
-    // Employees who punch Tungsten but never HRM-clock-in this month still need a card
-    // so Absent days can show shift-aware T.Punch In/Out (e.g. Aqsa Durrani).
-    if (tungstenCtx && fromDate && toDate) {
-      for (const hrm of tungstenCtx.hrmEmployees || []) {
-        const empId = String(hrm.employeeId || "").trim();
-        if (!empId || map[empId]) continue;
-        // Auto-card only for active profiles that already have shift + Tungsten punches.
-        const status = String(hrm.status || "").toLowerCase();
-        if (status && status !== "active") continue;
-        if (!shiftByEmployeeId[empId]) continue;
-        if (selectedDepartment) {
-          const dept = (hrm.departmentName || "").toLowerCase();
-          if (dept !== selectedDepartment.toLowerCase()) continue;
-        }
-        const keys: EmployeeMatchKeys = {
-          employeeId: empId,
-          employeeName: hrm.employeeName,
-          employeeCode: hrm.employeeCode || null,
-          pseudonym: hrm.pseudonym || null,
-        };
-        if (!employeeHasZkPunchesInRange(tungstenCtx, keys, fromDate, toDate)) continue;
-        map[empId] = {
-          employeeId: empId,
-          employeeName: hrm.employeeName || "-",
-          pseudonym: hrm.pseudonym || "-",
-          departmentName: hrm.departmentName || "-",
-          gender: hrm.gender || "",
-          employeeCode: hrm.employeeCode || undefined,
-          byDate: {},
-          dateMeta: {},
-          zkOnlyCard: true,
-        };
-      }
-    }
-
+    const seenEmployees = new Set<object>();
     Object.values(map).forEach((employee) => {
+      if (seenEmployees.has(employee)) return;
+      seenEmployees.add(employee);
       Object.keys(employee.byDate).forEach((dateKey) => {
         employee.byDate[dateKey].sort(compareAttendanceRows);
       });
@@ -2106,12 +2211,7 @@ export default function MonthlyAttendancePage() {
         });
 
         const autoStatusLabel = normalizeAttendanceStatus(dayStatus.statusLabel);
-        // Include per-session manual overrides (same-day multi-record), not only day-level.
-        const override = resolveEffectiveDayOverride(
-          employee.employeeId,
-          dateKey,
-          dayRecords,
-        );
+        const override = overrideStatusFor(employee.employeeId, dateKey);
         const isManual = Boolean(override);
         const statusLabel = override || autoStatusLabel;
         const statusColor = uiStatusTextColor(statusLabel);
@@ -2154,7 +2254,9 @@ export default function MonthlyAttendancePage() {
       });
     });
 
-    return Object.values(map).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+    return [...seenEmployees]
+      .map((e) => e as MonthlyAttendanceEmployeeRow)
+      .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
   }, [
     attendance,
     showingImported,
@@ -2164,21 +2266,155 @@ export default function MonthlyAttendancePage() {
     toDate,
     statusOverrides,
     statusOverridesByAttendanceId,
+  ]);
+
+  /** Enrich employee_code + include Tungsten-only employees (no HRM clock-in). */
+  const attendanceByEmployeeAllMerged = useMemo((): MonthlyAttendanceEmployeeRow[] => {
+    if (showingImported) {
+      return attendanceByEmployeeAll;
+    }
+
+    const allHrmEmployees =
+      tungstenCtx?.hrmEmployees?.length ? tungstenCtx.hrmEmployees : hrmEmployeesList;
+    if (!allHrmEmployees.length) {
+      return attendanceByEmployeeAll;
+    }
+
+    const searchTerm = deferredSearchName.trim().toLowerCase();
+    const hrmById = new Map(
+      allHrmEmployees.map((e) => [e.employeeId, e] as const),
+    );
+    const enriched = attendanceByEmployeeAll.map((row) => {
+      const hrm = hrmById.get(row.employeeId);
+      const rosterPin = punchOnlyPinForId(row.employeeId) || "";
+      return {
+        ...row,
+        employeeCode: row.employeeCode || hrm?.employeeCode || rosterPin || "",
+        departmentName:
+          row.departmentName && row.departmentName !== "-"
+            ? row.departmentName
+            : hrm?.departmentName || row.departmentName,
+        gender: row.gender || hrm?.gender || "",
+        pseudonym:
+          row.pseudonym && row.pseudonym !== "-"
+            ? row.pseudonym
+            : hrm?.pseudonym || row.pseudonym,
+      };
+    });
+
+    const existing = new Set(enriched.map((e) => e.employeeId));
+    const extra: MonthlyAttendanceEmployeeRow[] = [];
+
+    for (const hrm of allHrmEmployees) {
+      if (existing.has(hrm.employeeId)) continue;
+      if (
+        selectedDepartment &&
+        hrm.departmentName.toLowerCase() !== selectedDepartment.toLowerCase()
+      ) {
+        continue;
+      }
+
+      const matchesSearch =
+        Boolean(searchTerm) &&
+        (hrm.employeeName.toLowerCase().includes(searchTerm) ||
+          hrm.pseudonym.toLowerCase().includes(searchTerm) ||
+          String(hrm.employeeId).includes(searchTerm) ||
+          hrm.employeeCode.toLowerCase().includes(searchTerm));
+
+      const hasApprovedLeave = Boolean(
+        approvedLeavesMap[String(hrm.employeeId)] &&
+          Object.keys(approvedLeavesMap[String(hrm.employeeId)] || {}).length > 0,
+      );
+
+      // Punch-without-clock-in cards are Admin / punch-only only.
+      // Normal employees appear from HRM clock-in attendance rows, not ZK punches alone.
+      const canPunchOnlyCard = allowsPunchWithoutClockIn(
+        hrm.employeeId,
+        hrm.departmentName,
+      );
+      const hasPunches =
+        canPunchOnlyCard &&
+        Boolean(tungstenCtx) &&
+        Boolean(fromDate) &&
+        Boolean(toDate) &&
+        Boolean(hrm.employeeCode || punchOnlyPinForId(String(hrm.employeeId))) &&
+        employeeHasZkPunchesInRange(
+          tungstenCtx as TungstenPunchContext,
+          {
+            employeeName: hrm.employeeName,
+            employeeCode:
+              hrm.employeeCode || punchOnlyPinForId(String(hrm.employeeId)) || "",
+            employeeId: hrm.employeeId,
+            pseudonym: hrm.pseudonym,
+          },
+          fromDate,
+          toDate,
+        );
+
+      const forcePunchOnlyCard = PUNCH_ONLY_EMPLOYEE_IDS.has(String(hrm.employeeId));
+      if (!hasPunches && !matchesSearch && !forcePunchOnlyCard && !hasApprovedLeave) continue;
+
+      const roster = punchOnlyById(String(hrm.employeeId));
+      extra.push({
+        employeeId: hrm.employeeId,
+        employeeName: hrm.employeeName,
+        employeeCode: hrm.employeeCode || roster?.pin || "",
+        pseudonym: hrm.pseudonym,
+        departmentName: hrm.departmentName,
+        gender: hrm.gender,
+        byDate: {},
+        dateMeta: {},
+      });
+    }
+
+    // Restore punch-only cards even if HRM rows 153–156 were deleted from staging.
+    for (const roster of PUNCH_ONLY_EMPLOYEES) {
+      if (existing.has(roster.id) || extra.some((e) => e.employeeId === roster.id)) continue;
+      if (
+        selectedDepartment &&
+        roster.departmentName.toLowerCase() !== selectedDepartment.toLowerCase()
+      ) {
+        continue;
+      }
+      extra.push({
+        employeeId: roster.id,
+        employeeName: punchOnlyDisplayName(roster),
+        employeeCode: roster.pin,
+        pseudonym: "-",
+        departmentName: roster.departmentName,
+        gender: "",
+        byDate: {},
+        dateMeta: {},
+      });
+    }
+
+    if (!extra.length) return enriched;
+    return [...enriched, ...extra].sort((a, b) =>
+      a.employeeName.localeCompare(b.employeeName),
+    );
+  }, [
+    attendanceByEmployeeAll,
     tungstenCtx,
-    shiftByEmployeeId,
+    hrmEmployeesList,
+    showingImported,
+    selectedDepartment,
+    fromDate,
+    toDate,
+    deferredSearchName,
+    approvedLeavesMap,
   ]);
 
   /** Cheap name / pseudo / ID filter — deferred so typing does not block the input */
   const attendanceByEmployee = useMemo(() => {
     const term = deferredSearchName.trim().toLowerCase();
-    if (!term) return attendanceByEmployeeAll;
-    return attendanceByEmployeeAll.filter((e) => {
+    if (!term) return attendanceByEmployeeAllMerged;
+    return attendanceByEmployeeAllMerged.filter((e) => {
       const name = (e.employeeName || "").toLowerCase();
       const pseudo = (e.pseudonym || "").toLowerCase();
       const id = String(e.employeeId || "").toLowerCase();
       return name.includes(term) || pseudo.includes(term) || id.includes(term);
     });
-  }, [attendanceByEmployeeAll, deferredSearchName]);
+  }, [attendanceByEmployeeAllMerged, deferredSearchName]);
 
   const sessionsByEmployeeId = useMemo(() => {
     const out = new Map<string, EmployeeReportSession[]>();
@@ -2194,23 +2430,36 @@ export default function MonthlyAttendancePage() {
       list.push(record);
       recordsByEmployeeId.set(id, list);
     });
-    // Only pair Tungsten for expanded cards — pairing everyone on load freezes the UI
-    attendanceByEmployeeAll.forEach((emp) => {
+    // Pair Tungsten for every employee so T.Punch shows without expanding the card.
+    attendanceByEmployeeAllMerged.forEach((emp) => {
       const empId = String(emp.employeeId);
-      if (!expandedEmployeeIds[empId]) return;
+      if (!tungstenCtx || !fromDate || !toDate) return;
+      if (PUNCH_ONLY_EMPLOYEE_IDS.has(empId)) {
+        out.set(
+          String(emp.employeeId),
+          buildShiftPunchOnlySessions(
+            employeeMatchKeys(emp),
+            tungstenCtx,
+            fromDate,
+            toDate,
+            shiftResolverForEmployee(empId),
+          ),
+        );
+        return;
+      }
       const allRecords = recordsByEmployeeId.get(empId) || [];
       out.set(
-        empId,
-        // Invent ZK-only T.Punch rows when forgot HRM clock-in; status stays Absent/etc.
+        String(emp.employeeId),
+        // All employees: invent ZK-only T.Punch rows; status stays HRM clock-in/out based.
         buildEmployeeReportSessions(
-          matchKeysForEmployee(emp),
+          employeeMatchKeys(emp),
           allRecords,
           tungstenCtx,
           todayKey,
           pairingNow,
           zkFrom,
           zkTo,
-          (sessionDate) => resolveShiftForEmployee(empId, sessionDate, allRecords),
+          shiftResolverForEmployee(empId),
           true,
         ),
       );
@@ -2218,14 +2467,14 @@ export default function MonthlyAttendancePage() {
     return out;
   }, [
     attendance,
-    attendanceByEmployeeAll,
-    expandedEmployeeIds,
+    attendanceByEmployeeAllMerged,
     tungstenCtx,
     showingImported,
     fromDate,
     toDate,
     pairingNow,
-    shiftByEmployeeId,
+    shiftAssignments,
+    hrmEmployeesList,
   ]);
 
   // Narrow search → auto-expand matched employees so results are one click less
@@ -2251,7 +2500,7 @@ export default function MonthlyAttendancePage() {
       const v = emp.importedFooter.extraHours.trim();
       return v && v !== "-" ? v : "-";
     }
-    const employeeSessions = sessionsByEmployeeId.get(emp.employeeId) || [];
+    const employeeSessions = sessionsByEmployeeId.get(String(emp.employeeId)) || [];
     const countedKeys = new Set<string>();
     let totalMinutes = 0;
 
@@ -2300,162 +2549,367 @@ export default function MonthlyAttendancePage() {
     return `${h}h ${m}m`;
   }
 
+  const expandedCount = useMemo(
+    () =>
+      attendanceByEmployee.reduce(
+        (n, e) => n + (expandedEmployeeIds[e.employeeId] ? 1 : 0),
+        0,
+      ),
+    [attendanceByEmployee, expandedEmployeeIds],
+  );
+  const workingDaysCount = getTotalWorkingDays(monthInfo);
+  const workingDayRows = useMemo(
+    () =>
+      (monthInfo.days || []).filter((day: { dateKey: string }) => isWorkingDay(day.dateKey)),
+    // monthInfo + calendar overrides drive isWorkingDay
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [monthInfo, calendarOverrides, selectedMonth],
+  );
+  const expandedEmployees = useMemo(
+    () => attendanceByEmployee.filter((e) => expandedEmployeeIds[e.employeeId]),
+    [attendanceByEmployee, expandedEmployeeIds],
+  );
+  const departmentMetricRows = useMemo(() => {
+    if (selectedDepartment) {
+      return [{ id: selectedDepartment, name: selectedDepartment }];
+    }
+    return (departments || [])
+      .map((d: any) => ({
+        id: String(d.id ?? d.name ?? d.department_name ?? ""),
+        name: String(d.name || d.department_name || "").trim(),
+      }))
+      .filter((d: { name: string }) => d.name)
+      .sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name));
+  }, [departments, selectedDepartment]);
+  const departmentMetricCount = selectedDepartment ? 1 : departmentMetricRows.length;
+  const attendanceIds = useMemo(
+    () => attendanceByEmployee.map((e) => String(e.employeeId)),
+    [attendanceByEmployee],
+  );
+  const selectedDeductionCount = useMemo(
+    () => attendanceIds.filter((id) => selectedDeductionIds[id]).length,
+    [attendanceIds, selectedDeductionIds],
+  );
+  const allDeductionSelected =
+    attendanceIds.length > 0 && selectedDeductionCount === attendanceIds.length;
+
+  const metricModalTitle =
+    metricModal === "employees"
+      ? "Employees"
+      : metricModal === "workingDays"
+        ? "Working days"
+        : metricModal === "expanded"
+          ? "Expanded attendance"
+          : metricModal === "departments"
+            ? "Departments"
+            : "";
+
   return (
     <OptionalAdminShell>
-      <div className={styles.breakSummaryContainer}>
-        <div style={{ marginBottom: 20 }}>
-          <h1 className={styles.pageTitle}>
-            Monthly Attendance {monthInfo.label && `- ${monthInfo.label}`}
-          </h1>
-          <p style={{ color: "#64748b", fontSize: "0.9rem", marginTop: 4 }}>
-            View and manage all employee attendance records
-          </p>
-          {showingImported && (
-            <p style={{ color: "#611f69", fontSize: "0.85rem", marginTop: 8, fontWeight: 600 }}>
-              Showing imported Excel data for {monthInfo.label} (sheet values as-is)
+      <div className={styles.page}>
+        <header className={styles.topBar}>
+          <div className={styles.topLeft}>
+            <p className={styles.eyebrow}>
+              <span className={styles.eyebrowDot} aria-hidden />
+              Interact Attendance
             </p>
-          )}
+            <h1 className={styles.heroTitle}>
+              Monthly attendance
+              {monthInfo.label ? ` — ${monthInfo.label}` : ""}
+            </h1>
+            <p className={styles.heroSub}>
+              Review clock-in/out, shift punches, status, and deductions for the selected month.
+            </p>
+            {showingImported ? (
+              <p className={styles.importBanner}>
+                Showing imported Excel data for {monthInfo.label} (sheet values as-is)
+              </p>
+            ) : null}
+          </div>
+          <div className={styles.topRight}>
+            <label className={styles.monthChip}>
+              <span>Month</span>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                aria-label="Attendance month"
+              />
+            </label>
+            <button type="button" className={styles.secondaryBtn} onClick={fetchAttendance}>
+              {loading ? "…" : "Refresh"}
+            </button>
+          </div>
+        </header>
+
+        <div className={styles.metricStrip}>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricAccent} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("employees")}
+            title="View employee list"
+          >
+            <div className={styles.metricLabel}>Employees</div>
+            <div className={styles.metricValue}>{attendanceByEmployee.length}</div>
+          </button>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("workingDays")}
+            title="View working days"
+          >
+            <div className={styles.metricLabel}>Working days</div>
+            <div className={styles.metricValue}>{workingDaysCount}</div>
+          </button>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("expanded")}
+            title="View expanded employees"
+          >
+            <div className={styles.metricLabel}>Expanded</div>
+            <div className={styles.metricValue}>{expandedCount}</div>
+          </button>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("departments")}
+            title="View departments"
+          >
+            <div className={styles.metricLabel}>Departments</div>
+            <div className={styles.metricValue}>{departmentMetricCount}</div>
+          </button>
         </div>
 
-        <div className={styles.breakSummaryFilters}>
-          <input
-            type="text"
-            placeholder="Search by name or pseudo name..."
-            value={searchName}
-            onChange={(e) => setSearchName(e.target.value)}
-            className={styles.breakSummaryInput}
-          />
-          <select
-            value={selectedDepartment}
-            onChange={(e) => setSelectedDepartment(e.target.value)}
-            className={styles.breakSummaryInput}
-          >
-            <option value="">All Departments</option>
-            {departments.map((dept) => (
-              <option key={dept.id} value={dept.name || dept.department_name}>
-                {dept.name || dept.department_name}
-              </option>
-            ))}
-          </select>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label style={{ color: '#64748b', fontWeight: 500, whiteSpace: 'nowrap' }}>Month:</label>
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className={styles.breakSummaryDate}
-              style={{ minWidth: '160px' }}
-            />
+        <div className={styles.panel}>
+          <div className={styles.panelHead}>
+            <div className={styles.panelHeadLeft}>
+              <h2 className={styles.panelTitle}>Filters &amp; exports</h2>
+              <p className={styles.panelHint}>
+                Search by name, filter department, then Export Attendance or Export Deduction Summary
+              </p>
+            </div>
+            <button
+              type="button"
+              className={styles.secondaryBtn}
+              onClick={() => {
+                setSearchName("");
+                setSelectedDepartment("");
+              }}
+            >
+              Clear filters
+            </button>
           </div>
-          <button
-            onClick={fetchAttendance}
-            className={styles.breakSummaryXLSButton}
-          >
-            Search
-          </button>
-          <button onClick={downloadExcel} className={styles.breakSummaryXLSButton}>
-            <FaFileExcel /> Export Excel
-          </button>
-          <button
-            onClick={handleImportClick}
-            className={`${styles.breakSummaryXLSButton} ${styles.breakSummaryXLSButtonSecondary}`}
-          >
-            <FaFileExcel /> Import Excel
-          </button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={handleImportFile}
-            style={{ display: "none" }}
-          />
-          <button
-            onClick={downloadDeductionSummary}
-            className={styles.breakSummaryXLSButton}
-            style={{ background: "linear-gradient(135deg, #C53030 0%, #9B2C2C 100%)", boxShadow: "0 4px 14px rgba(197, 48, 48, 0.22)" }}
-          >
-            <FaFileExcel /> Deduction Summary
-          </button>
+          <div className={styles.panelBody}>
+            <div className={styles.filters}>
+              <label className={styles.field}>
+                <span className={styles.label}>Search</span>
+                <input
+                  type="text"
+                  placeholder="Name, pseudo or ID…"
+                  value={searchName}
+                  onChange={(e) => setSearchName(e.target.value)}
+                  className={styles.input}
+                />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.label}>Department</span>
+                <select
+                  value={selectedDepartment}
+                  onChange={(e) => setSelectedDepartment(e.target.value)}
+                  className={styles.select}
+                >
+                  <option value="">All Departments</option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.name || dept.department_name}>
+                      {dept.name || dept.department_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className={styles.actions}>
+                <button type="button" onClick={fetchAttendance} className={styles.primaryBtn}>
+                  Search
+                </button>
+                <button type="button" onClick={downloadExcel} className={styles.secondaryBtn}>
+                  <FaFileExcel /> Export Attendance
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadDeductionSummary}
+                  className={styles.secondaryBtn}
+                  title={
+                    selectedDeductionCount > 0
+                      ? `Export Deduction Summary for ${selectedDeductionCount} selected`
+                      : "Export Deduction Summary for all visible employees"
+                  }
+                >
+                  <FaFileExcel />{" "}
+                  {selectedDeductionCount > 0
+                    ? `Export Deduction Summary (${selectedDeductionCount})`
+                    : "Export Deduction Summary"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         {loading ? (
-          <div style={{ padding: 20, color: "#64748b", textAlign: "center" }}>
-            Loading attendance records...
-          </div>
+          <div className={styles.loading}>Loading attendance records…</div>
         ) : (
-          <div style={{ display: "grid", gap: 20, width: "100%" }}>
+          <div className={styles.list}>
             {attendanceByEmployee.length === 0 ? (
-              <div className={styles.breakSummaryNoRecords}>No attendance records found</div>
+              <div className={styles.empty}>No attendance records found</div>
             ) : (
-              attendanceByEmployee.map((employee) => {
+              <>
+              <div className={styles.selectBar}>
+                <label className={styles.selectAllLabel}>
+                  <input
+                    type="checkbox"
+                    checked={allDeductionSelected}
+                    onChange={(e) =>
+                      setAllDeductionSelected(attendanceIds, e.target.checked)
+                    }
+                    className={styles.cardCheck}
+                  />
+                  <span>
+                    {allDeductionSelected
+                      ? "Deselect all cards"
+                      : "Select all cards"}
+                  </span>
+                </label>
+                {selectedDeductionCount > 0 ? (
+                  <button
+                    type="button"
+                    className={styles.ghostBtn}
+                    onClick={() => setSelectedDeductionIds({})}
+                  >
+                    Clear ({selectedDeductionCount})
+                  </button>
+                ) : (
+                  <span className={styles.selectHint}>
+                    Select cards, then Export Deduction Summary
+                  </span>
+                )}
+              </div>
+              {attendanceByEmployee.map((employee) => {
                 const isExpanded = Boolean(expandedEmployeeIds[employee.employeeId]);
+                const isDeductionSelected = Boolean(
+                  selectedDeductionIds[String(employee.employeeId)],
+                );
+                const revealPunches = shouldRevealTPunches(
+                  employee.departmentName,
+                  selectedDepartment,
+                  deferredSearchName,
+                );
                 return (
                 <div
                   key={employee.employeeId}
-                  data-employee-id={employee.employeeId}
-                  data-employee-name={employee.employeeName}
-                  data-employee-pseudonym={employee.pseudonym || ""}
-                  data-department-name={employee.departmentName || ""}
-                  style={{
-                    background: "#fff",
-                    borderRadius: 16,
-                    border: "1px solid #e8edf3",
-                    boxShadow: "0 8px 32px rgba(97, 31, 105, 0.08)",
-                    padding: 16,
-                    width: "100%",
-                    boxSizing: "border-box",
-                    overflow: "hidden",
-                  }}
+                  className={`${styles.empCard}${isExpanded ? ` ${styles.empCardExpanded}` : ""}${isDeductionSelected ? ` ${styles.empCardSelected}` : ""}${exportMenuEmployeeId === String(employee.employeeId) ? ` ${styles.empCardMenuOpen}` : ""}`}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: isExpanded ? 8 : 0 }}>
-                    <div>
-                      <EmployeeTableNameCell
-                        name={employee.employeeName}
-                        employeeId={employee.employeeId}
-                        photo={getPhoto(employee.employeeId)}
-                        onOpen={() =>
-                          openFromRow({
-                            employee_id: employee.employeeId,
-                            employee_name: employee.employeeName,
-                            pseudonym: employee.pseudonym,
-                            department_name: employee.departmentName,
-                          })
-                        }
-                      />
-                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, paddingLeft: 44 }}>
-                        {employee.pseudonym} · {employee.departmentName}
+                  <div
+                    className={styles.empCardHead}
+                    style={{ marginBottom: isExpanded ? 8 : 0 }}
+                  >
+                    <div className={styles.empCardLeft}>
+                      <label className={styles.cardCheckWrap} title="Select for deduction export">
+                        <input
+                          type="checkbox"
+                          checked={isDeductionSelected}
+                          onChange={() => toggleDeductionSelected(employee.employeeId)}
+                          className={styles.cardCheck}
+                        />
+                      </label>
+                      <div>
+                        <EmployeeTableNameCell
+                          name={employee.employeeName}
+                          employeeId={employee.employeeId}
+                          photo={getPhoto(employee.employeeId)}
+                          onOpen={() =>
+                            openFromRow({
+                              employee_id: employee.employeeId,
+                              employee_name: employee.employeeName,
+                              pseudonym: employee.pseudonym,
+                              department_name: employee.departmentName,
+                            })
+                          }
+                        />
+                        <div className={styles.empMeta}>
+                          {employee.pseudonym} · {employee.departmentName}
+                        </div>
                       </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 700, color: "#611f69", fontSize: "1rem" }}>Emp. ID {employee.employeeId}</div>
+                    <div className={styles.empActions}>
+                      <div className={styles.empId}>Emp. ID {employee.employeeId}</div>
                       <button
                         type="button"
                         title={isExpanded ? "Hide month table" : "Show month table"}
-                        className={styles.breakSummaryXLSButton}
-                        style={{ padding: "6px 12px", fontSize: 12, background: isExpanded ? "#64748b" : undefined }}
-                        data-employee-id={employee.employeeId}
-                        data-employee-name={employee.employeeName}
-                        data-action={isExpanded ? "hide-details" : "view-details"}
+                        className={`${styles.ghostBtn} ${isExpanded ? styles.ghostBtnActive : ""}`}
                         onClick={() => toggleEmployeeExpanded(employee.employeeId)}
                       >
-                        {isExpanded ? "Hide details" : "View details"}
+                        {isExpanded ? "Hide attendance" : "View attendance"}
                       </button>
                       <button
-                        title="Export this employee's month record as XLS"
-                        className={styles.breakSummaryXLSButton}
-                        style={{ padding: "6px 12px", fontSize: 12 }}
-                        data-employee-id={employee.employeeId}
-                        data-employee-name={employee.employeeName}
-                        data-action="export-xls"
-                        onClick={() => downloadEmployeeExcel(employee)}
+                        type="button"
+                        title="View deduction summary (same as export)"
+                        className={styles.ghostBtn}
+                        disabled={deductionPreviewLoadingId === String(employee.employeeId)}
+                        onClick={() => void openDeductionSummaryPreview(employee)}
                       >
-                        <FaFileExcel /> Export XLS
+                        {deductionPreviewLoadingId === String(employee.employeeId)
+                          ? "…"
+                          : "View deduction"}
                       </button>
+                      <div className={styles.exportMenuWrap} data-export-menu>
+                        <button
+                          type="button"
+                          title="Export Attendance or Deduction Summary"
+                          className={styles.ghostBtn}
+                          aria-expanded={
+                            exportMenuEmployeeId === String(employee.employeeId)
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const id = String(employee.employeeId);
+                            setExportMenuEmployeeId((prev) => (prev === id ? "" : id));
+                          }}
+                        >
+                          <FaFileExcel /> Export ▾
+                        </button>
+                        {exportMenuEmployeeId === String(employee.employeeId) ? (
+                          <div className={styles.exportMenu} role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className={styles.exportMenuItem}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExportMenuEmployeeId("");
+                                void downloadEmployeeExcel(employee);
+                              }}
+                            >
+                              Attendance
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className={styles.exportMenuItem}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExportMenuEmployeeId("");
+                                void downloadEmployeeDeductionSummary(employee);
+                              }}
+                            >
+                              Deduction Summary
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                   {isExpanded ? (
-                  <div className={styles.breakSummaryTableWrapper}>
-                    <table className={styles.breakSummaryTable} style={{ minWidth: 1200 }}>
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
                       <thead>
                         <tr>
                           <th>Day</th>
@@ -2469,7 +2923,7 @@ export default function MonthlyAttendancePage() {
                           <th>OverTime</th>
                           <th>Tardy Count</th>
                           <th>Status</th>
-                          <th style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280 }}>Tardy Note</th>
+                          <th style={{ whiteSpace: "normal", minWidth: 120, maxWidth: 200 }}>Note</th>
                           <th>Deduction</th>
                         </tr>
                       </thead>
@@ -2508,14 +2962,10 @@ export default function MonthlyAttendancePage() {
                               <tr key={`${employee.employeeId}-${day.dateKey}-import`}>
                                 <td>{day.weekday || rowCtx.weekday}</td>
                                 <td>{day.dateDisplay}</td>
-                                <td>
-                                  {day.tPunchIn && day.tPunchIn !== "---" ? day.tPunchIn : "---"}
-                                </td>
+                                <td>{maskTPunch(day.tPunchIn, revealPunches)}</td>
                                 <td>{day.clockIn}</td>
                                 <td>{day.clockOut}</td>
-                                <td>
-                                  {day.tPunchOut && day.tPunchOut !== "---" ? day.tPunchOut : "---"}
-                                </td>
+                                <td>{maskTPunch(day.tPunchOut, revealPunches)}</td>
                                 <td>{day.totalWH}</td>
                                 <td style={{ display: "none" }}>{day.assignedWH}</td>
                                 <td>{day.overtime}</td>
@@ -2540,22 +2990,33 @@ export default function MonthlyAttendancePage() {
                           const day = rowCtx.day;
                           const dayRecords = employee.byDate[day.dateKey] || [];
                           const meta = rowCtx.meta;
-                          const employeeSessions = sessionsByEmployeeId.get(employee.employeeId) || [];
+                          const workingDay = isWorkingDay(day.dateKey);
+                          const employeeSessions = sessionsByEmployeeId.get(String(employee.employeeId)) || [];
+                          // All employees: keep ZK-only sessions (shift first/last T.Punch).
+                          // Status still depends on HRM clock-in/out only (Absent if none).
                           const daySessions = employeeSessions.filter(
                             (s) => s.sessionDate === day.dateKey,
                           );
 
                           if (daySessions.length === 0 && dayRecords.length === 0) {
-                            const resolvedEmpty = resolveDayAttendanceDisplay(
-                              employee,
+                            const leaveKind = approvedLeaveOnDay(
+                              approvedLeavesMap,
+                              employee.employeeId,
                               day.dateKey,
                             );
-                            const statusLabel = resolvedEmpty.statusLabel;
-                            const deduction = resolvedEmpty.deduction;
+                            const emptyAuto = emptyWorkingDayStatus(
+                              day.dateKey,
+                              workingDay,
+                              leaveKind,
+                            );
                             const emptyOverride = overrideStatusFor(
                               employee.employeeId,
                               day.dateKey,
                             );
+                            const statusLabel = emptyOverride || emptyAuto.statusLabel;
+                            const deduction = emptyOverride
+                              ? deductionForAttendanceStatus(emptyOverride, meta?.runningLate)
+                              : emptyAuto.deduction;
                             return (
                               <tr key={`${employee.employeeId}-${day.dateKey}-empty`}>
                                 <td>{day.weekday}</td>
@@ -2567,7 +3028,7 @@ export default function MonthlyAttendancePage() {
                                 <td>---</td>
                                 <td style={{ display: "none" }}>---</td>
                                 <td>---</td>
-                                <td>{tardyCountCell(statusLabel, meta?.runningLate)}</td>
+                                <td>{meta?.runningLate ? meta.runningLate : ""}</td>
                                 <td style={{ color: uiStatusTextColor(statusLabel), fontWeight: 600 }}>
                                   {renderEditableStatusCell({
                                     employeeId: employee.employeeId,
@@ -2584,28 +3045,31 @@ export default function MonthlyAttendancePage() {
                             );
                           }
 
-                          const dayLevelOverride = overrideStatusFor(
-                            employee.employeeId,
-                            day.dateKey,
-                          );
-                          const leaveKind = approvedLeaveOnDay(
+                          const leaveKindDay = approvedLeaveOnDay(
                             approvedLeavesMap,
                             employee.employeeId,
                             day.dateKey,
                           );
-                          const leaveDisplay = leaveKind
-                            ? attendanceFromApprovedLeaveDay(leaveKind)
+                          const leaveAttDay = leaveKindDay
+                            ? attendanceFromApprovedLeaveDay(leaveKindDay)
                             : null;
-                          // Auto only from HRM clock-in classification. Never invent "On Time"
-                          // from Tungsten punches alone (select value "-" used to look like On Time).
-                          const dayAutoStatus = normalizeAttendanceStatus(
-                            meta?.autoStatusLabel ||
-                              emptyWorkingDayStatus(
-                                day.dateKey,
-                                isWorkingDay(day.dateKey),
-                                null,
-                              ).statusLabel,
+                          const emptyFallback = emptyWorkingDayStatus(
+                            day.dateKey,
+                            workingDay,
+                            leaveKindDay,
                           );
+                          const dayLevelOverride = overrideStatusFor(
+                            employee.employeeId,
+                            day.dateKey,
+                          );
+                          // Status: leave → HRM meta → Absent/Off. Punches never change it.
+                          const dayAutoStatus = leaveAttDay
+                            ? leaveAttDay.statusLabel
+                            : meta?.autoStatusLabel || meta?.statusLabel
+                              ? normalizeAttendanceStatus(
+                                  meta.autoStatusLabel || meta.statusLabel || "-",
+                                )
+                              : emptyFallback.statusLabel;
                           const sessionsToShow = getDaySessionRows(
                             day.dateKey,
                             dayRecords,
@@ -2614,7 +3078,7 @@ export default function MonthlyAttendancePage() {
 
                           return sessionsToShow.map(({ session, record }, index) => {
                             const attId = normalizeOverrideAttendanceId(record?.id);
-                            // Session-specific override wins; else legacy day-level; else leave/auto.
+                            // Session-specific override wins; else legacy day-level; else auto.
                             const sessionOverride =
                               attId > 0
                                 ? overrideStatusFor(
@@ -2624,35 +3088,15 @@ export default function MonthlyAttendancePage() {
                                   )
                                 : null;
                             const effectiveOverride = sessionOverride || dayLevelOverride;
-                            const hasHrmClockIn =
-                              Boolean(record?.clock_in) ||
-                              (session.hrmClockIn != null &&
-                                String(session.hrmClockIn).trim() !== "" &&
-                                session.hrmClockIn !== "-");
-                            // Punches-only row: keep Absent/Off until real HRM clock-in exists.
-                            const punchesOnlyStatus = emptyWorkingDayStatus(
-                              day.dateKey,
-                              isWorkingDay(day.dateKey),
-                              null,
-                            ).statusLabel;
-                            const rowStatus =
-                              effectiveOverride ||
-                              leaveDisplay?.statusLabel ||
-                              (hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus);
-                            const statusForDeduction =
-                              effectiveOverride ||
-                              leaveDisplay?.statusLabel ||
-                              (hasHrmClockIn ? dayAutoStatus : punchesOnlyStatus);
+                            const rowStatus = effectiveOverride || dayAutoStatus;
                             const rowDeduction = effectiveOverride
                               ? deductionForAttendanceStatus(
                                   effectiveOverride,
                                   meta?.runningLate,
                                 )
-                              : leaveDisplay?.deduction ||
-                                deductionForAttendanceStatus(
-                                  statusForDeduction,
-                                  meta?.runningLate,
-                                );
+                              : leaveAttDay
+                                ? leaveAttDay.deduction
+                                : meta?.deduction || emptyFallback.deduction;
                             const statusIsManual = Boolean(effectiveOverride);
                             return (
                               <tr
@@ -2660,7 +3104,12 @@ export default function MonthlyAttendancePage() {
                               >
                                 <td>{day.weekday}</td>
                                 <td>{formatDateKey(day.dateKey)}</td>
-                                <td>{monthlyDash(session.tungstenPunchIn)}</td>
+                                <td>
+                                  {maskTPunch(
+                                    monthlyDash(session.tungstenPunchIn),
+                                    revealPunches,
+                                  )}
+                                </td>
                                 <td>
                                   {session.hrmClockIn === "-" ? "---" : session.hrmClockIn}
                                 </td>
@@ -2676,7 +3125,12 @@ export default function MonthlyAttendancePage() {
                                     </>
                                   )}
                                 </td>
-                                <td>{monthlyDash(session.tungstenPunchOut)}</td>
+                                <td>
+                                  {maskTPunch(
+                                    monthlyDash(session.tungstenPunchOut),
+                                    revealPunches,
+                                  )}
+                                </td>
                                 <td>
                                   {record ? formatHoursMins(record.total_hours) : "---"}
                                 </td>
@@ -2688,7 +3142,7 @@ export default function MonthlyAttendancePage() {
                                 <td>
                                   {record ? formatDurationHM(record.overtime) : "---"}
                                 </td>
-                                <td>{tardyCountCell(rowStatus, meta?.runningLate)}</td>
+                                <td>{meta?.runningLate ? meta.runningLate : ""}</td>
                                 <td
                                   style={{
                                     color: uiStatusTextColor(rowStatus),
@@ -2720,27 +3174,7 @@ export default function MonthlyAttendancePage() {
                         })}
                       </tbody>
                       <tfoot>
-                        {(() => {
-                          const absenceHalf = getEmployeeAbsenceHalfDayStats(employee);
-                          return (
-                            <>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC", borderTop: "2px solid #E2E8F0" }}>
-                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
-                            Absences:
-                          </td>
-                          <td>
-                            {absenceHalf.absences} ({absenceHalf.absenceDeduction}%)
-                          </td>
-                        </tr>
-                        <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
-                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
-                            Half Days:
-                          </td>
-                          <td>
-                            {absenceHalf.halfDays} ({absenceHalf.halfDayDeduction}%)
-                          </td>
-                        </tr>
-                        <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
                           <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
                             Total Deduction:
                           </td>
@@ -2776,21 +3210,19 @@ export default function MonthlyAttendancePage() {
                               : getTotalWorkingDays(monthInfo)}
                           </td>
                         </tr>
-                            </>
-                          );
-                        })()}
                       </tfoot>
 
                     </table>
                   </div>
                   ) : (
-                    <p style={{ margin: "8px 0 0", fontSize: 12, color: "#94a3b8", paddingLeft: 4 }}>
-                      Click <strong>View details</strong> to load this employee&apos;s month table.
+                    <p className={styles.hint}>
+                      Click <strong>View attendance</strong> to load this employee&apos;s month table.
                     </p>
                   )}
                 </div>
                 );
-              })
+              })}
+              </>
             )}
           </div>
         )}
@@ -2825,6 +3257,266 @@ export default function MonthlyAttendancePage() {
           })();
         }}
       />
+      {typeof document !== "undefined" && metricModal
+        ? createPortal(
+            <div
+              className={styles.modalOverlay}
+              data-hrm-modal-overlay
+              onClick={() => setMetricModal(null)}
+            >
+              <div
+                className={styles.modalCard}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="metric-modal-title"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className={styles.modalHead}>
+                  <h3 id="metric-modal-title" className={styles.modalTitle}>
+                    {metricModalTitle}
+                  </h3>
+                  <p className={styles.modalSub}>
+                    {metricModal === "employees"
+                      ? `${attendanceByEmployee.length} employee(s) in current filters`
+                      : metricModal === "workingDays"
+                        ? `${workingDaysCount} working day(s) in ${monthInfo.label || selectedMonth}`
+                        : metricModal === "expanded"
+                          ? `${expandedCount} attendance table(s) open`
+                          : selectedDepartment
+                            ? "Filtered to one department"
+                            : `${departmentMetricCount} department(s)`}
+                  </p>
+                </div>
+                <div className={styles.modalBody}>
+                  {metricModal === "employees" ? (
+                    attendanceByEmployee.length === 0 ? (
+                      <p className={styles.modalEmpty}>No employees in the current filter.</p>
+                    ) : (
+                      <div className={styles.modalTableWrap}>
+                        <table className={styles.table}>
+                          <thead>
+                            <tr>
+                              <th>Emp. ID</th>
+                              <th>Name</th>
+                              <th>P.Name</th>
+                              <th>Department</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {attendanceByEmployee.map((emp) => (
+                              <tr key={emp.employeeId}>
+                                <td>{emp.employeeId}</td>
+                                <td>{emp.employeeName}</td>
+                                <td>{emp.pseudonym || "—"}</td>
+                                <td>{emp.departmentName || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  ) : null}
+                  {metricModal === "workingDays" ? (
+                    workingDayRows.length === 0 ? (
+                      <p className={styles.modalEmpty}>No working days for this month.</p>
+                    ) : (
+                      <div className={styles.modalTableWrap}>
+                        <table className={styles.table}>
+                          <thead>
+                            <tr>
+                              <th>#</th>
+                              <th>Day</th>
+                              <th>Date</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {workingDayRows.map(
+                              (
+                                day: { day: number; dateKey: string; weekday: string },
+                                idx: number,
+                              ) => (
+                                <tr key={day.dateKey}>
+                                  <td>{idx + 1}</td>
+                                  <td>{day.weekday}</td>
+                                  <td>{formatDateKey(day.dateKey)}</td>
+                                </tr>
+                              ),
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  ) : null}
+                  {metricModal === "expanded" ? (
+                    expandedEmployees.length === 0 ? (
+                      <p className={styles.modalEmpty}>
+                        No attendance tables are open. Click <strong>View attendance</strong> on
+                        an employee card.
+                      </p>
+                    ) : (
+                      <div className={styles.modalTableWrap}>
+                        <table className={styles.table}>
+                          <thead>
+                            <tr>
+                              <th>Emp. ID</th>
+                              <th>Name</th>
+                              <th>Department</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {expandedEmployees.map((emp) => (
+                              <tr key={emp.employeeId}>
+                                <td>{emp.employeeId}</td>
+                                <td>{emp.employeeName}</td>
+                                <td>{emp.departmentName || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  ) : null}
+                  {metricModal === "departments" ? (
+                    departmentMetricRows.length === 0 ? (
+                      <p className={styles.modalEmpty}>No departments found.</p>
+                    ) : (
+                      <div className={styles.modalTableWrap}>
+                        <table className={styles.table}>
+                          <thead>
+                            <tr>
+                              <th>#</th>
+                              <th>Department</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {departmentMetricRows.map((dept, idx) => (
+                              <tr key={dept.id || dept.name}>
+                                <td>{idx + 1}</td>
+                                <td>{dept.name}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  ) : null}
+                </div>
+                <div className={styles.modalActions}>
+                  <button
+                    type="button"
+                    className={styles.secondaryBtn}
+                    onClick={() => setMetricModal(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {typeof document !== "undefined" && deductionPreview
+        ? createPortal(
+            <div
+              className={styles.modalOverlay}
+              data-hrm-modal-overlay
+              onClick={() => setDeductionPreview(null)}
+            >
+              <div
+                className={`${styles.modalCard} ${styles.deductionModalCard}`}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="deduction-summary-title"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className={styles.modalBody}>
+                  <div className={styles.deductionSheet}>
+                    <div className={styles.deductionBannerName}>
+                      {deductionPreview.block.employeeName}
+                    </div>
+                    <div
+                      id="deduction-summary-title"
+                      className={styles.deductionBannerTitle}
+                    >
+                      Deduction Summary
+                    </div>
+                    {deductionPreview.block.rows.length === 0 ? (
+                      <p className={styles.modalEmpty}>No deductible days for this employee.</p>
+                    ) : (
+                      <div className={styles.modalTableWrap}>
+                        <table className={styles.deductionExportTable}>
+                          <thead>
+                            <tr>
+                              {DEDUCTION_SUMMARY_HEADERS.map((h) => (
+                                <th key={h}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {deductionPreview.block.rows.map((row, idx) => {
+                              const status = normalizeAttendanceStatus(row.status);
+                              const tardy = isTardyStatus(status);
+                              const absentOrHalf = isAbsentOrHalfDayStatus(status);
+                              const rowClass = tardy
+                                ? styles.deductionRowTardy
+                                : absentOrHalf
+                                  ? styles.deductionRowAbsent
+                                  : undefined;
+                              return (
+                                <tr key={`${row.date}-${idx}`} className={rowClass}>
+                                  <td>{row.date}</td>
+                                  <td>{row.tPunchIn}</td>
+                                  <td>{row.clockIn}</td>
+                                  <td>{row.clockOut}</td>
+                                  <td>{row.tPunchOut}</td>
+                                  <td>{row.totalWorkingHours || "--"}</td>
+                                  <td>{status}</td>
+                                  <td>
+                                    {row.tardyCount === 0 || row.tardyCount === ""
+                                      ? ""
+                                      : row.tardyCount}
+                                  </td>
+                                  <td>{row.tardyNote || ""}</td>
+                                  <td className={styles.deductionCell}>{row.deduction}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr>
+                              <td colSpan={8} />
+                              <td className={styles.deductionCell}>Total</td>
+                              <td className={styles.deductionCell}>
+                                {deductionPreview.block.totalDeduction}%
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className={styles.modalActions}>
+                  <button
+                    type="button"
+                    className={styles.secondaryBtn}
+                    onClick={() => setDeductionPreview(null)}
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.secondaryBtn}
+                    onClick={() => void downloadOneDeductionSummary(deductionPreview.block)}
+                  >
+                    <FaFileExcel /> Export Deduction Summary
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </OptionalAdminShell>
   );
 }

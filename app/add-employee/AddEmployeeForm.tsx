@@ -39,7 +39,7 @@ export default function AddEmployeeForm({
   edit?: boolean;
   employeeId?: string | null;
   onSaved?: () => void;
-  /** Leave the form (back to employee list). */
+  /** Leave the form (modal close / back to employee list). */
   onClose?: () => void;
   /** Remount a blank Add Employee form (parent should bump `key`). */
   onRequestNew?: () => void;
@@ -921,6 +921,37 @@ export default function AddEmployeeForm({
     setActiveTab("Contact Details");
   }
 
+  const renderFormActions = (opts?: {
+    saveDisabled?: boolean;
+    showCancel?: boolean;
+  }) => (
+    <div className={styles.actions}>
+      {onClose ? (
+        <button type="button" className={styles.closeBtn} onClick={onClose}>
+          Close
+        </button>
+      ) : null}
+      {opts?.showCancel !== false ? (
+        <button
+          type="button"
+          className={styles.cancelBtn}
+          onClick={() => {
+            if (onClose) onClose();
+          }}
+        >
+          Cancel
+        </button>
+      ) : null}
+      <button
+        type="submit"
+        className={styles.saveBtn}
+        disabled={Boolean(opts?.saveDisabled)}
+      >
+        Save
+      </button>
+    </div>
+  );
+
   return (
     <div className={styles.pageShell}>
       <aside className={styles.stepNav}>
@@ -1237,7 +1268,7 @@ export default function AddEmployeeForm({
                 <span className={styles.toggleLabel}>Create Login Details</span>
                 <label style={{ display: "inline-block", position: "relative", width: 40, height: 22 }}>
                   <input type="checkbox" checked={createLogin} onChange={e => setCreateLogin(e.target.checked)} style={{ opacity: 0, width: 0, height: 0 }} />
-                  <span style={{ position: "absolute", cursor: "pointer", top: 0, left: 0, right: 0, bottom: 0, background: createLogin ? "#611f69" : "#E2E8F0", borderRadius: 22, transition: "background 0.2s" }}></span>
+                  <span style={{ position: "absolute", cursor: "pointer", top: 0, left: 0, right: 0, bottom: 0, background: createLogin ? "#0f766e" : "#E2E8F0", borderRadius: 22, transition: "background 0.2s" }}></span>
                   <span style={{ position: "absolute", left: createLogin ? 20 : 2, top: 2, width: 18, height: 18, background: "#fff", borderRadius: "50%", boxShadow: "0 1px 4px rgba(97,31,105,0.15)", transition: "left 0.2s" }}></span>
                 </label>
               </div>
@@ -1280,25 +1311,7 @@ export default function AddEmployeeForm({
                   </div>
                 </div>
               )}
-              <div className={styles.actions}>
-                {onClose ? (
-                  <button type="button" className={styles.closeBtn} onClick={onClose}>
-                    Close
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className={styles.cancelBtn}
-                  onClick={() => {
-                    if (onClose) onClose();
-                  }}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className={styles.saveBtn}>
-                  Save
-                </button>
-              </div>
+              {renderFormActions()}
             </form>
           )}
           {activeTab === "Contact Details" && (
@@ -1414,9 +1427,7 @@ export default function AddEmployeeForm({
                     <input className={styles.input} type="email" placeholder="Personal Email" value={contactEmail.other} onChange={e => setContactEmail(em => ({ ...em, other: e.target.value }))} />
                   </div>
                 </div>
-                <div className={styles.actionsLeft}>
-                  <button type="submit" className={styles.saveBtn}>Save</button>
-                </div>
+                {renderFormActions({ showCancel: true })}
               </form>
             </div>
           )}
@@ -1458,9 +1469,7 @@ export default function AddEmployeeForm({
                     <input className={styles.input} placeholder="Phone" value={emergencyContacts[1].phone} onChange={e => handleEmergencyContactsChange(1, 'phone', e.target.value)} />
                   </div>
                 </div>
-                <div className={styles.actionsLeft}>
-                  <button type="submit" className={styles.saveBtn}>Save</button>
-                </div>
+                {renderFormActions()}
               </form>
             </div>
           )}
@@ -1536,9 +1545,7 @@ export default function AddEmployeeForm({
                     <input className={styles.input} type="text" placeholder="Location" value={jobDetails.location} onChange={e => setJobDetails(j => ({ ...j, location: e.target.value }))} />
                   </div>
                 </div>
-                <div className={styles.actionsLeft}>
-                  <button type="submit" className={styles.saveBtn}>Save</button>
-                </div>
+                {renderFormActions()}
               </form>
             </div>
           )}
@@ -1601,11 +1608,7 @@ export default function AddEmployeeForm({
                 {masterShifts.length === 0 ? (
                   <p className={styles.note}>No shifts found. Create them first in Shift Scheduler.</p>
                 ) : null}
-                <div className={styles.actionsLeft}>
-                  <button type="submit" className={styles.saveBtn} disabled={!selectedShiftId}>
-                    Save
-                  </button>
-                </div>
+                {renderFormActions({ saveDisabled: !selectedShiftId })}
               </form>
             </div>
           )}
@@ -1697,9 +1700,7 @@ export default function AddEmployeeForm({
                     </select>
                   </div>
                 </div>
-                <div className={styles.actionsLeft}>
-                  <button type="submit" className={styles.saveBtn}>Save</button>
-                </div>
+                {renderFormActions()}
               </form>
             </div>
           )}
@@ -1761,10 +1762,7 @@ export default function AddEmployeeForm({
                     </div>
                   </div>
                 )}
-                <div className={styles.actions}>
-                  <button type="button" className={styles.cancelBtn}>Cancel</button>
-                  <button type="submit" className={styles.saveBtn}>Save</button>
-                </div>
+                {renderFormActions()}
               </form>
             </div>
           )}
@@ -1807,9 +1805,7 @@ export default function AddEmployeeForm({
                     </select>
                   </div>
                 </div>
-                <div className={styles.actionsLeft}>
-                  <button type="submit" className={styles.saveBtn}>Save</button>
-                </div>
+                {renderFormActions()}
               </form>
             </div>
           )}
@@ -1820,6 +1816,13 @@ export default function AddEmployeeForm({
               ) : (
                 <div style={{ color: '#C00', fontWeight: 500 }}>Please save Personal Details first.</div>
               )}
+              {onClose ? (
+                <div className={styles.actions}>
+                  <button type="button" className={styles.closeBtn} onClick={onClose}>
+                    Close
+                  </button>
+                </div>
+              ) : null}
             </div>
           )}
           <p className={styles.requiredNote}>* Required</p>

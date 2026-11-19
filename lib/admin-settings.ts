@@ -1,7 +1,9 @@
+import bcrypt from "bcryptjs";
 import { pool } from "@/lib/db";
 
 const TABLE = "hrm_admin_settings";
-const DEFAULT_ADMIN_PASSWORD = "interact123g";
+const PASSWORD_KEY = "admin_password_hash";
+const DEFAULT_ADMIN_PASSWORD = "interact123";
 
 export async function ensureAdminSettingsTable(): Promise<void> {
   await pool.execute(`
@@ -14,23 +16,39 @@ export async function ensureAdminSettingsTable(): Promise<void> {
 }
 
 export async function getAdminPasswordHash(): Promise<string | null> {
-  // Password is file-based only — never read from DB.
-  return null;
+  await ensureAdminSettingsTable();
+  const [rows] = await pool.execute(
+    `SELECT setting_value FROM ${TABLE} WHERE setting_key = ? LIMIT 1`,
+    [PASSWORD_KEY]
+  );
+  const list = rows as { setting_value: string }[];
+  return list[0]?.setting_value ?? null;
 }
 
 export async function verifyAdminPassword(password: string): Promise<boolean> {
-  // Admin password lives in code only — never use DB-stored hash/password.
-  return password === DEFAULT_ADMIN_PASSWORD;
+  const hash = await getAdminPasswordHash();
+  if (!hash) return password === DEFAULT_ADMIN_PASSWORD;
+  if (hash.startsWith("$2")) return bcrypt.compare(password, hash);
+  return password === hash;
 }
 
 export async function setAdminPassword(
-  _currentPassword: string,
-  _newPassword: string
+  currentPassword: string,
+  newPassword: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  return {
-    ok: false,
-    error: "Admin password is configured in application settings only, not in the database.",
-  };
+  const valid = await verifyAdminPassword(currentPassword);
+  if (!valid) return { ok: false, error: "Current password is incorrect." };
+  if (!newPassword || newPassword.length < 4) {
+    return { ok: false, error: "New password must be at least 4 characters." };
+  }
+  await ensureAdminSettingsTable();
+  const hash = await bcrypt.hash(newPassword, 10);
+  await pool.execute(
+    `INSERT INTO ${TABLE} (setting_key, setting_value) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+    [PASSWORD_KEY, hash]
+  );
+  return { ok: true };
 }
 
 export function isAdminLoginId(loginId: string): boolean {

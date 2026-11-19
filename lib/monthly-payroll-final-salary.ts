@@ -342,6 +342,19 @@ export async function computeMonthlyFinalSalaries(
     /* ignore */
   }
 
+  // Employee Claims ledger (approved/paid) overrides / fills medical_claims for the month.
+  try {
+    const { sumApprovedClaimsByPayrollMonth } = await import(
+      "@/lib/employee-claims"
+    );
+    const claimSums = await sumApprovedClaimsByPayrollMonth(month);
+    for (const [id, total] of Object.entries(claimSums)) {
+      if (total > 0) putMap(claimsAdj, id, total);
+    }
+  } catch {
+    /* claims table may not exist yet */
+  }
+
   const commissions: Record<
     string,
     {

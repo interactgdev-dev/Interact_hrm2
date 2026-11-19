@@ -26,8 +26,6 @@ yarn-error.log*
 
 # local diagnostics
 /mongo-*.txt
-/mongo-export/
-/interact_hrm-mongo-export.zip
 
 # OS
 .DS_Store
@@ -39,6 +37,7 @@ Thumbs.db
 
 # runtime user uploads (per-server data, not source)
 /public/uploads/
+/uploads/
 
 # silent admin activity daily logs (server-only)
 /logs/admin-activity/
@@ -50,5 +49,3 @@ Thumbs.db
 /desktop-presence-agent/**/bin/
 /desktop-presence-agent/**/obj/
 /desktop-presence-agent/**/*.user
-
-.zkbio-event-time-utc-migrated

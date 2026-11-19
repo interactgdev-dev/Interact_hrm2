@@ -1,37 +1,65 @@
 :root {
-  --slack-bg: #f8f8f8;
-  --slack-card: #ffffff;
-  --slack-purple: #611f69;
-  --slack-purple-light: #f3e8f5;
-  --slack-purple-hover: #4a154b;
-  --slack-blue: #1264a3;
-  --slack-blue-light: #e8f4fc;
-  --slack-green: #2eb67d;
-  --slack-green-light: #e8f8f0;
-  --slack-gold: #e8912d;
-  --slack-text: #1d1c1d;
-  --slack-muted: #616061;
-  --slack-border: #e8e8e8;
-  --slack-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
-  --radius: 12px;
-  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Align with Interact shell — charcoal + teal (no Slack purple) */
+  --dash-bg: #eef2f6;
+  --dash-card: #ffffff;
+  --dash-ink: #0b1220;
+  --dash-muted: #64748b;
+  --dash-border: rgba(15, 23, 42, 0.08);
+  --dash-teal: #14b8a6;
+  --dash-teal-deep: #0f766e;
+  --dash-teal-soft: #ecfdf8;
+  --dash-sky: #0284c7;
+  --dash-sky-soft: #e0f2fe;
+  --dash-amber: #d97706;
+  --dash-amber-soft: #fff7ed;
+  --dash-rose: #e11d48;
+  --dash-rose-soft: #fff1f2;
+  --dash-slate: #334155;
+  --dash-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.06);
+  --dash-shadow-lg: 0 18px 48px rgba(15, 23, 42, 0.1);
+  --radius: 18px;
+  --radius-sm: 12px;
+  --font: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Back-compat aliases used in inline styles */
+  --slack-purple: var(--dash-teal-deep);
+  --slack-blue: var(--dash-sky);
+  --slack-green: var(--dash-teal);
+  --slack-gold: var(--dash-amber);
+  --slack-border: var(--dash-border);
+  --slack-text: var(--dash-ink);
+  --slack-muted: var(--dash-muted);
+  --slack-bg: var(--dash-bg);
+  --slack-card: var(--dash-card);
+  --slack-shadow: var(--dash-shadow);
+  --slack-purple-light: var(--dash-teal-soft);
+  --slack-blue-light: var(--dash-sky-soft);
+  --slack-green-light: var(--dash-teal-soft);
 }
 
 .page {
   width: 100%;
   min-height: calc(100vh - 58px);
   background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(97, 31, 105, 0.07), transparent 55%),
-    radial-gradient(ellipse 60% 40% at 95% 0%, rgba(18, 100, 163, 0.06), transparent 50%),
-    var(--slack-bg);
-  padding: 20px 24px 36px;
+    radial-gradient(ellipse 70% 45% at 0% -5%, rgba(20, 184, 166, 0.14), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(2, 132, 199, 0.1), transparent 50%),
+    linear-gradient(180deg, #f7fafc 0%, var(--dash-bg) 40%, #e8eef5 100%);
+  padding: 22px 26px 40px;
   font-family: var(--font);
-  color: var(--slack-text);
+  color: var(--dash-ink);
   -webkit-font-smoothing: antialiased;
 }
 
 .page::before {
-  display: none;
+  content: "";
+  position: fixed;
+  inset: 58px 0 0 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(15, 23, 42, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.025) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
+  z-index: 0;
 }
 
 .page > * {
@@ -39,72 +67,94 @@
   z-index: 1;
 }
 
-/* ── Header banner ──────────────────────────────────────────── */
+/* ── Hero ───────────────────────────────────────────────────── */
 .headerBanner {
-  background: linear-gradient(135deg, rgba(97, 31, 105, 0.06) 0%, rgba(255, 255, 255, 0.9) 45%, rgba(18, 100, 163, 0.05) 100%);
-  border: 1px solid rgba(97, 31, 105, 0.12);
-  border-radius: 16px;
-  padding: 20px 22px;
+  background:
+    linear-gradient(135deg, #0b1220 0%, #132033 48%, #0f766e 160%);
+  border: 1px solid rgba(20, 184, 166, 0.22);
+  border-radius: 22px;
+  padding: 22px 24px;
   margin-bottom: 18px;
-  box-shadow: 0 4px 24px rgba(97, 31, 105, 0.06);
+  box-shadow: var(--dash-shadow-lg);
+  color: #e8eef5;
+  overflow: hidden;
+  position: relative;
+}
+
+.headerBanner::after {
+  content: "";
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  right: -60px;
+  top: -90px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(45, 212, 191, 0.28), transparent 68%);
+  pointer-events: none;
 }
 
 .dateChip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--slack-muted);
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid var(--slack-border);
+  font-weight: 650;
+  color: #a7f3e4;
+  background: rgba(20, 184, 166, 0.14);
+  border: 1px solid rgba(45, 212, 191, 0.28);
   border-radius: 999px;
   padding: 5px 12px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  letter-spacing: 0.02em;
 }
 
 .dateChipDot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--slack-green);
+  background: #2dd4bf;
+  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.2);
+  animation: livePulse 1.8s ease-in-out infinite;
 }
+
 .header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
 }
 
 .headerText {
   flex: 1;
-  min-width: 200px;
+  min-width: 220px;
 }
 
 .greeting {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--slack-purple);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #5eead4;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin: 0 0 4px;
+  letter-spacing: 0.08em;
+  margin: 0 0 6px;
 }
 
 .title {
-  font-size: 1.625rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  margin: 0 0 6px;
-  color: var(--slack-text);
+  font-size: clamp(1.45rem, 2.2vw, 1.85rem);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  margin: 0 0 8px;
+  color: #f8fafc;
 }
 
 .subtitle {
-  font-size: 0.9375rem;
-  color: var(--slack-muted);
+  font-size: 0.95rem;
+  color: #94a3b8;
   margin: 0;
   line-height: 1.5;
-  max-width: 480px;
+  max-width: 520px;
 }
 
 .headerActions {
@@ -118,78 +168,152 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: var(--slack-purple);
-  color: #fff;
   border: none;
-  border-radius: 8px;
+  border-radius: 11px;
   padding: 10px 16px;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
-  box-shadow: 0 2px 8px rgba(97, 31, 105, 0.25);
+  background: linear-gradient(135deg, #2dd4bf, #14b8a6);
+  color: #042f2e;
+  box-shadow: 0 8px 20px rgba(20, 184, 166, 0.35);
+  transition: transform 0.15s, filter 0.15s;
 }
 
 .btnPrimary:hover {
-  background: var(--slack-purple-hover);
+  filter: brightness(1.05);
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(97, 31, 105, 0.3);
 }
 
 .btnGhost {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: var(--slack-card);
-  color: var(--slack-text);
-  border: 1px solid var(--slack-border);
-  border-radius: 8px;
+  border-radius: 11px;
   padding: 10px 16px;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 650;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .btnGhost:hover {
-  background: #fafafa;
-  border-color: #d1d1d1;
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(94, 234, 212, 0.45);
 }
 
-/* ── KPI row ────────────────────────────────────────────────── */
+/* ── Insight rail ───────────────────────────────────────────── */
+.insightRow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.insightChip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 13px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--dash-border);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+  backdrop-filter: blur(8px);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--dash-muted);
+  animation: fadeSlideUp 0.45s ease both;
+  min-height: 72px;
+}
+
+.insightChip:nth-child(1) { animation-delay: 0.05s; }
+.insightChip:nth-child(2) { animation-delay: 0.09s; }
+.insightChip:nth-child(3) { animation-delay: 0.13s; }
+.insightChip:nth-child(4) { animation-delay: 0.17s; }
+.insightChip:nth-child(5) { animation-delay: 0.21s; }
+.insightChip:nth-child(6) { animation-delay: 0.25s; }
+
+.insightChip strong {
+  color: var(--dash-ink);
+  font-weight: 750;
+}
+
+.insightIcon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: var(--dash-teal-soft);
+  color: var(--dash-teal-deep);
+  font-size: 0.85rem;
+}
+
+.insightChip:nth-child(2) .insightIcon {
+  background: var(--dash-amber-soft);
+  color: var(--dash-amber);
+}
+.insightChip:nth-child(3) .insightIcon {
+  background: var(--dash-sky-soft);
+  color: var(--dash-sky);
+}
+.insightChip:nth-child(4) .insightIcon {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+.insightChip:nth-child(5) .insightIcon {
+  background: var(--dash-rose-soft);
+  color: var(--dash-rose);
+}
+.insightChip:nth-child(6) .insightIcon {
+  background: #fef9c3;
+  color: #a16207;
+}
+
+/* ── KPI strip ──────────────────────────────────────────────── */
 .kpiRow {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .kpiCard {
-  background: var(--slack-card);
-  border: 1px solid var(--slack-border);
-  border-radius: var(--radius);
-  padding: 16px;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  box-shadow: var(--slack-shadow);
-  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
   position: relative;
   overflow: hidden;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 16px 16px 18px;
+  border-radius: 16px;
+  background: var(--dash-card);
+  border: 1px solid var(--dash-border);
+  box-shadow: var(--dash-shadow);
+  animation: fadeSlideUp 0.5s ease both;
+  transition: transform 0.18s, box-shadow 0.18s;
 }
 
 .kpiCard::before {
   content: "";
   position: absolute;
-  top: 0;
   left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--slack-purple), var(--slack-blue));
-  opacity: 0;
-  transition: opacity 0.25s ease;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  border-radius: 0 6px 6px 0;
+  background: var(--dash-teal);
+  opacity: 0.95;
 }
+
+.kpiCard:nth-child(1)::before { background: var(--dash-teal); }
+.kpiCard:nth-child(2)::before { background: var(--dash-sky); }
+.kpiCard:nth-child(3)::before { background: var(--dash-amber); }
+.kpiCard:nth-child(4)::before { background: #0f766e; }
 
 .kpiCard:hover::before {
   opacity: 1;
@@ -202,137 +326,149 @@
 
 .kpiCard:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--dash-shadow-lg);
 }
 
 .kpiIcon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
   font-size: 1.1rem;
   flex-shrink: 0;
 }
 
-.kpiIconPurple { background: var(--slack-purple-light); color: var(--slack-purple); }
-.kpiIconBlue { background: var(--slack-blue-light); color: var(--slack-blue); }
-.kpiIconGreen { background: var(--slack-green-light); color: var(--slack-green); }
-.kpiIconGold { background: #fef3e2; color: var(--slack-gold); }
+.kpiIconPurple {
+  background: var(--dash-teal-soft);
+  color: var(--dash-teal-deep);
+}
+.kpiIconBlue {
+  background: var(--dash-sky-soft);
+  color: var(--dash-sky);
+}
+.kpiIconGreen {
+  background: #d1fae5;
+  color: #047857;
+}
+.kpiIconGold {
+  background: var(--dash-amber-soft);
+  color: var(--dash-amber);
+}
 
 .kpiBody {
-  flex: 1;
   min-width: 0;
 }
 
 .kpiValue {
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-  color: var(--slack-text);
-  font-variant-numeric: tabular-nums;
+  font-size: 1.55rem;
+  font-weight: 780;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  color: var(--dash-ink);
 }
 
 .kpiLabel {
-  font-size: 0.8125rem;
-  color: var(--slack-muted);
-  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--dash-muted);
+  font-weight: 600;
   margin-top: 2px;
 }
 
 .kpiBadge {
   display: inline-block;
   margin-top: 6px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  padding: 3px 8px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--dash-teal-deep);
+  background: var(--dash-teal-soft);
   border-radius: 999px;
-  background: #f0f0f0;
-  color: var(--slack-muted);
+  padding: 3px 8px;
 }
 
-/* ── Main grid ──────────────────────────────────────────────── */
+/* ── Bento main grid ────────────────────────────────────────── */
 .mainGrid {
   display: grid;
   grid-template-columns: 1.35fr 1fr;
-  gap: 16px;
+  gap: 14px;
   align-items: start;
 }
 
 .col {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .card {
-  background: var(--slack-card);
-  border: 1px solid var(--slack-border);
+  background: var(--dash-card);
+  border: 1px solid var(--dash-border);
   border-radius: var(--radius);
-  padding: 18px;
-  box-shadow: var(--slack-shadow);
-  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  padding: 16px 16px 14px;
+  box-shadow: var(--dash-shadow);
+  animation: fadeSlideUp 0.5s ease both;
+  transition: box-shadow 0.18s, transform 0.18s;
 }
 
 .card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 28px rgba(97, 31, 105, 0.08);
-  border-color: rgba(97, 31, 105, 0.15);
+  box-shadow: var(--dash-shadow-lg);
 }
 
-.cardDelay1 { animation-delay: 0.12s; }
-.cardDelay2 { animation-delay: 0.18s; }
-.cardDelay3 { animation-delay: 0.24s; }
-.cardDelay4 { animation-delay: 0.3s; }
+.cardDelay1 { animation-delay: 0.1s; }
+.cardDelay2 { animation-delay: 0.16s; }
+.cardDelay3 { animation-delay: 0.22s; }
+.cardDelay4 { animation-delay: 0.28s; }
 
 .cardHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .cardTitleRow {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .cardIcon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.95rem;
-  background: var(--slack-purple-light);
-  color: var(--slack-purple);
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, var(--dash-teal-soft), #fff);
+  color: var(--dash-teal-deep);
+  border: 1px solid rgba(20, 184, 166, 0.2);
+  font-size: 0.9rem;
 }
 
 .cardTitle {
   margin: 0;
-  font-size: 0.9375rem;
-  font-weight: 700;
-  color: var(--slack-text);
-  letter-spacing: -0.01em;
+  font-size: 0.98rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--dash-ink);
 }
 
 .pill {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--slack-green-light);
-  color: #1a7f4e;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--dash-slate);
+  border: 1px solid var(--dash-border);
 }
 
 .pillLive::before {
@@ -340,67 +476,24 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--slack-green);
+  background: var(--dash-teal);
+  animation: livePulse 1.6s ease-in-out infinite;
 }
 
 .pillMuted {
-  background: #f0f0f0;
-  color: var(--slack-muted);
+  background: #f8fafc;
+  color: var(--dash-muted);
 }
 
-/* ── Bar chart ──────────────────────────────────────────────── */
 .chartWrap {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-/* ── Insight strip ──────────────────────────────────────────── */
-.insightRow {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  margin-bottom: 18px;
 }
 
-.insightChip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid var(--slack-border);
-  border-radius: 10px;
-  font-size: 0.8125rem;
-  color: var(--slack-muted);
-}
-
-.insightChip:nth-child(1) { animation-delay: 0.08s; }
-.insightChip:nth-child(2) { animation-delay: 0.14s; }
-.insightChip:nth-child(3) { animation-delay: 0.2s; }
-
-.insightChip strong {
-  color: var(--slack-purple);
-  font-weight: 700;
-}
-
-.insightIcon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  flex-shrink: 0;
-  background: var(--slack-purple-light);
-  color: var(--slack-purple);
-}
-
-/* ── Chart + donut layout ───────────────────────────────────── */
 .chartRow {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   align-items: stretch;
 }
 
@@ -410,74 +503,76 @@
 }
 
 .donutPanel {
+  width: 150px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-left: 1px solid var(--slack-border);
-  min-width: 110px;
+  gap: 10px;
+  border-left: 1px solid var(--dash-border);
+  padding-left: 14px;
 }
 
 .donut {
-  width: 92px;
-  height: 92px;
+  width: 108px;
+  height: 108px;
   border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.6s ease;
+  display: grid;
+  place-items: center;
+  animation: donutPop 0.55s ease both;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
 }
 
 .donutHole {
-  width: 66px;
-  height: 66px;
+  width: 74px;
+  height: 74px;
   border-radius: 50%;
   background: #fff;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 0 0 0 1px var(--slack-border);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
 .donutValue {
-  font-size: 1.25rem;
-  font-weight: 800;
-  color: var(--slack-text);
+  font-size: 1.15rem;
+  font-weight: 780;
   letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
+  color: var(--dash-ink);
+  line-height: 1;
 }
 
 .donutLabel {
-  font-size: 0.625rem;
-  font-weight: 600;
-  color: var(--slack-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  color: var(--dash-muted);
+  margin-top: 3px;
 }
 
 .donutCaption {
-  font-size: 0.6875rem;
-  color: var(--slack-muted);
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--dash-muted);
   text-align: center;
   line-height: 1.35;
 }
 
 .chartBars {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 8px;
-  height: 140px;
-  padding: 0 4px;
   position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  height: 140px;
+  align-items: end;
 }
 
 .chartGrid {
   position: absolute;
-  inset: 0 4px 28px;
+  inset: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -486,241 +581,237 @@
 
 .chartGridLine {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.06) 8%, rgba(0, 0, 0, 0.06) 92%, transparent);
+  background: rgba(148, 163, 184, 0.25);
 }
 
 .chartCol {
-  flex: 1;
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   height: 100%;
   justify-content: flex-end;
-  position: relative;
-  z-index: 1;
+  animation: fadeSlideUp 0.4s ease both;
 }
 
 .chartBarTrack {
   width: 100%;
-  max-width: 46px;
+  max-width: 34px;
   height: 100%;
   display: flex;
   align-items: flex-end;
-  justify-content: center;
+  background: rgba(148, 163, 184, 0.12);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .chartBar {
   width: 100%;
-  border-radius: 8px 8px 3px 3px;
-  background: linear-gradient(180deg, #b565b0 0%, var(--slack-purple) 100%);
-  min-height: 4px;
-  transition: height 0.9s cubic-bezier(0.34, 1.2, 0.64, 1), filter 0.2s;
-  cursor: default;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #5eead4, var(--dash-teal-deep));
+  animation: barGrow 0.55s ease both;
+  transform-origin: bottom;
 }
 
 .chartCol:hover .chartBar {
   filter: brightness(1.08);
-  transform: scaleX(1.05);
 }
 
 .chartBarToday {
-  background: linear-gradient(180deg, #4db3f6 0%, var(--slack-blue) 100%);
-  box-shadow: 0 4px 16px rgba(18, 100, 163, 0.35);
+  background: linear-gradient(180deg, #38bdf8, var(--dash-sky));
 }
 
 .sparkline {
   width: 100%;
   height: 36px;
-  margin-top: 4px;
-  opacity: 0.7;
+  display: block;
 }
 
 .sparkline path,
 .sparkline polyline {
   fill: none;
-  stroke: var(--slack-purple);
-  stroke-width: 2;
+}
+
+.sparklineLine {
+  stroke: var(--dash-teal-deep);
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.sparklineLine {
-  stroke-dasharray: 400;
-  stroke-dashoffset: 400;
-}
-
 .sparklineArea {
-  fill: url(#sparkGrad);
-  opacity: 0.15;
+  fill: rgba(20, 184, 166, 0.16);
 }
 
-/* ── Snapshot with rings ────────────────────────────────────── */
 .snapshotGrid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .snapRing {
   text-align: center;
-  padding: 12px 8px;
-  border-radius: 10px;
-  background: #fafafa;
-  border: 1px solid var(--slack-border);
-  transition: background 0.2s, transform 0.2s;
+  padding: 14px 8px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f8fafc, #fff);
+  border: 1px solid var(--dash-border);
+  transition: transform 0.15s, border-color 0.15s;
 }
 
 .snapRing:hover {
-  background: #fff;
   transform: translateY(-2px);
+  border-color: rgba(20, 184, 166, 0.35);
 }
 
 .snapRingValue {
-  font-size: 1.375rem;
-  font-weight: 800;
-  color: var(--slack-purple);
-  font-variant-numeric: tabular-nums;
+  font-size: 1.35rem;
+  font-weight: 780;
+  letter-spacing: -0.03em;
+  color: var(--dash-ink);
 }
 
 .snapRingLabel {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: var(--slack-muted);
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-top: 2px;
+  color: var(--dash-muted);
 }
 
 .chartLabel {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: var(--slack-muted);
-  text-transform: uppercase;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--dash-muted);
 }
 
 .chartPct {
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--slack-text);
+  font-size: 0.7rem;
+  font-weight: 750;
+  color: var(--dash-slate);
 }
 
 .chartLegend {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  padding-top: 8px;
-  border-top: 1px solid var(--slack-border);
+  flex-wrap: wrap;
+  gap: 12px;
   font-size: 0.75rem;
-  color: var(--slack-muted);
+  color: var(--dash-muted);
+  font-weight: 600;
 }
 
 .legendDot {
+  display: inline-block;
   width: 8px;
   height: 8px;
-  border-radius: 2px;
-  display: inline-block;
+  border-radius: 50%;
   margin-right: 6px;
+  vertical-align: middle;
 }
 
-/* ── Snapshot bars ──────────────────────────────────────────── */
 .snapshotBars {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .snapRow {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .snapMeta {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  font-size: 0.8125rem;
+  font-size: 0.8rem;
 }
 
 .snapLabel {
+  color: var(--dash-muted);
   font-weight: 600;
-  color: var(--slack-text);
 }
 
 .snapValue {
-  font-weight: 700;
-  color: var(--slack-purple);
+  color: var(--dash-ink);
+  font-weight: 750;
 }
 
 .snapTrack {
   height: 8px;
-  background: #f0f0f0;
   border-radius: 999px;
+  background: #e2e8f0;
   overflow: hidden;
 }
 
 .snapFill {
   height: 100%;
   border-radius: 999px;
-  transition: width 0.9s cubic-bezier(0.34, 1.2, 0.64, 1);
+  animation: barWidth 0.7s ease both;
 }
 
-.snapFillPurple { background: linear-gradient(90deg, #9b4d96, var(--slack-purple)); }
-.snapFillBlue { background: linear-gradient(90deg, #3d9ee5, var(--slack-blue)); }
-.snapFillGold { background: linear-gradient(90deg, #f0b429, var(--slack-gold)); }
+.snapFillPurple {
+  background: linear-gradient(90deg, #2dd4bf, var(--dash-teal-deep));
+}
+.snapFillBlue {
+  background: linear-gradient(90deg, #7dd3fc, var(--dash-sky));
+}
+.snapFillGold {
+  background: linear-gradient(90deg, #fcd34d, var(--dash-amber));
+}
 
-/* ── Quick actions ──────────────────────────────────────────── */
 .quickGrid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
 .quickLink {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--slack-border);
-  border-radius: 10px;
-  background: #fafafa;
-  color: var(--slack-text);
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
   text-align: left;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--dash-border);
+  background: #f8fafc;
+  color: var(--dash-ink);
+  font-size: 0.84rem;
+  font-weight: 650;
+  cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
 
 .quickLink:hover {
-  background: var(--slack-purple-light);
-  border-color: #d8b4de;
+  background: var(--dash-teal-soft);
+  border-color: rgba(20, 184, 166, 0.35);
   transform: translateX(3px);
-  box-shadow: var(--slack-shadow);
+  box-shadow: var(--dash-shadow);
 }
 
 .quickLinkIcon {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: var(--slack-card);
-  border: 1px solid var(--slack-border);
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--dash-border);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--slack-purple);
-  font-size: 1rem;
+  color: var(--dash-teal-deep);
+  font-size: 0.95rem;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .quickLink:hover .quickLinkIcon {
-  background: var(--slack-purple);
-  color: #fff;
-  border-color: var(--slack-purple);
+  background: var(--dash-teal);
+  color: #042f2e;
+  border-color: var(--dash-teal);
 }
 
 /* ── Lists ──────────────────────────────────────────────────── */
@@ -738,7 +829,7 @@
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-width: thin;
-  scrollbar-color: #d1d1d1 transparent;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 .listScrollable::-webkit-scrollbar {
@@ -746,28 +837,29 @@
 }
 
 .listScrollable::-webkit-scrollbar-thumb {
-  background: #d1d1d1;
+  background: #cbd5e1;
   border-radius: 999px;
 }
 
 .listItem {
   padding: 12px 14px;
-  border: 1px solid var(--slack-border);
-  border-radius: 10px;
-  background: #fafafa;
+  border: 1px solid var(--dash-border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fcfdff, #f8fafc);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.15s;
 }
 
 .listItem:hover {
   background: #fff;
-  border-color: #d1d1d1;
+  border-color: rgba(20, 184, 166, 0.35);
   transform: translateX(2px);
 }
 
 .listItemNew {
-  border-color: var(--slack-purple);
-  background: var(--slack-purple-light);
+  border-color: rgba(20, 184, 166, 0.55);
+  background: var(--dash-teal-soft);
+  animation: pulseNew 1.4s ease-in-out 2;
 }
 
 .listItemTop {
@@ -779,45 +871,45 @@
 }
 
 .listItemTitle {
-  font-weight: 600;
+  font-weight: 650;
   font-size: 0.875rem;
-  color: var(--slack-text);
+  color: var(--dash-ink);
 }
 
 .listItemMeta {
-  font-size: 0.8125rem;
-  color: var(--slack-muted);
+  font-size: 0.8rem;
+  color: var(--dash-muted);
 }
 
 .badge {
-  font-size: 0.6875rem;
-  font-weight: 700;
+  font-size: 0.68rem;
+  font-weight: 750;
   padding: 3px 8px;
   border-radius: 999px;
-  background: #fef3e2;
+  background: var(--dash-amber-soft);
   color: #b45309;
   text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .badgeReminder {
-  background: #fde8e8;
-  color: #c2252d;
+  background: var(--dash-rose-soft);
+  color: var(--dash-rose);
 }
 
 .emptyState {
   padding: 20px;
   text-align: center;
-  color: var(--slack-muted);
+  color: var(--dash-muted);
   font-size: 0.875rem;
 }
 
-/* ── Recruitment mini bars ──────────────────────────────────── */
 .roleRow {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 10px 0;
-  border-bottom: 1px solid var(--slack-border);
+  border-bottom: 1px solid var(--dash-border);
 }
 
 .roleRow:last-child {
@@ -829,12 +921,12 @@
   display: flex;
   justify-content: space-between;
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .roleBar {
   height: 6px;
-  background: #f0f0f0;
+  background: #e2e8f0;
   border-radius: 999px;
   overflow: hidden;
 }
@@ -842,15 +934,14 @@
 .roleFill {
   height: 100%;
   border-radius: 999px;
-  background: var(--slack-blue);
+  background: var(--dash-sky);
   transition: width 0.8s ease;
 }
 
-/* ── Animations ───────────────────────────────────────────────── */
 @keyframes fadeSlideUp {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
@@ -862,51 +953,80 @@
   from {
     opacity: 0;
     transform: scaleY(0);
-    transform-origin: bottom;
   }
   to {
     opacity: 1;
     transform: scaleY(1);
-    transform-origin: bottom;
   }
 }
 
 @keyframes barWidth {
-  from { width: 0 !important; }
+  from {
+    width: 0 !important;
+  }
 }
 
 @keyframes pulseNew {
-  0%, 100% { box-shadow: 0 0 0 rgba(97, 31, 105, 0); }
-  50% { box-shadow: 0 0 0 4px rgba(97, 31, 105, 0.2); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(20, 184, 166, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.18);
+  }
 }
 
 @keyframes livePulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.85); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.88);
+  }
 }
 
 @keyframes donutPop {
-  from { opacity: 0; transform: scale(0.85); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes drawLine {
-  to { stroke-dashoffset: 0; }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 0.15; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.15;
+  }
 }
 
-/* ── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 1200px) {
+  .insightRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1100px) {
   .page::before {
     inset: 58px 0 0 0;
   }
 
   .insightRow {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .chartRow {
@@ -914,9 +1034,11 @@
   }
 
   .donutPanel {
+    width: auto;
     border-left: none;
-    border-top: 1px solid var(--slack-border);
-    padding-top: 16px;
+    border-top: 1px solid var(--dash-border);
+    padding-left: 0;
+    padding-top: 14px;
     flex-direction: row;
     justify-content: center;
     gap: 16px;
@@ -937,13 +1059,14 @@
 
 @media (max-width: 640px) {
   .page {
-    padding: 14px 14px 24px;
+    padding: 14px 12px 24px;
   }
 
   .title {
     font-size: 1.35rem;
   }
 
+  .insightRow,
   .kpiRow {
     grid-template-columns: 1fr;
   }
@@ -960,5 +1083,9 @@
 
   .chartBars {
     height: 110px;
+  }
+
+  .quickGrid {
+    grid-template-columns: 1fr;
   }
 }

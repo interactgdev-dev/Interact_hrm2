@@ -24,6 +24,7 @@ import {
 } from "react-icons/fa";
 
 import { categoryLabel, ticketTypeLabel, type TicketCategory } from "../../lib/ticket-catalog";
+import { getDateStringInTimeZone, SERVER_TIMEZONE } from "../../lib/timezone";
 
 type Ticket = {
   id: number;
@@ -87,15 +88,29 @@ function dayLabel(d: Date) {
   return d.toLocaleDateString("en-US", { weekday: "short" });
 }
 
-function timeGreeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
+function hourInServerTz(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: SERVER_TIMEZONE,
+    hour: "numeric",
+    hour12: false,
+  }).formatToParts(d);
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  // en-GB hour12:false can still yield "24" for midnight in some engines
+  return h === 24 ? 0 : h;
+}
+
+/** Wish by Asia/Karachi clock — not browser-local midnight quirks. */
+function timeGreeting(d = new Date()) {
+  const h = hourInServerTz(d);
+  if (h >= 5 && h < 12) return "Good morning";
+  if (h >= 12 && h < 17) return "Good afternoon";
+  if (h >= 17 && h < 22) return "Good evening";
+  return "Hello"; // late night / early hours
 }
 
 function formatToday() {
   return new Date().toLocaleDateString("en-US", {
+    timeZone: SERVER_TIMEZONE,
     weekday: "long",
     month: "short",
     day: "numeric",
@@ -146,8 +161,8 @@ function Sparkline({ data }: { data: number[] }) {
     <svg className={styles.sparkline} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <defs>
         <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#611f69" />
-          <stop offset="100%" stopColor="#611f69" stopOpacity="0" />
+          <stop offset="0%" stopColor="#14b8a6" />
+          <stop offset="100%" stopColor="#14b8a6" stopOpacity="0" />
         </linearGradient>
       </defs>
       <polygon className={styles.sparklineArea} points={area} />
@@ -155,7 +170,7 @@ function Sparkline({ data }: { data: number[] }) {
         points={line}
         className={styles.sparklineLine}
         fill="none"
-        stroke="#611f69"
+        stroke="#0f766e"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -166,6 +181,7 @@ function Sparkline({ data }: { data: number[] }) {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const [greeting, setGreeting] = React.useState(() => timeGreeting());
   const [leaves, setLeaves] = React.useState<Leave[]>([]);
   const [financialRequests, setFinancialRequests] = React.useState<FinancialRequest[]>([]);
   const [tickets, setTickets] = React.useState<Ticket[]>([]);
@@ -215,16 +231,10 @@ export default function DashboardPage() {
 
   const pendingLeaveTickets = React.useMemo(
     () =>
-      [...tickets]
-        .filter(
-          (t) =>
-            t.ticket_type === "leave" && (t.status || "").toLowerCase() === "pending"
-        )
-        .sort(
-          (a, b) =>
-            new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime() ||
-            b.id - a.id
-        ),
+      tickets.filter(
+        (t) =>
+          t.ticket_type === "leave" && (t.status || "").toLowerCase() === "pending"
+      ),
     [tickets],
   );
 
@@ -237,16 +247,10 @@ export default function DashboardPage() {
 
   const pendingTickets = React.useMemo(
     () =>
-      [...tickets]
-        .filter(
-          (t) =>
-            t.ticket_type !== "leave" && (t.status || "").toLowerCase() === "pending"
-        )
-        .sort(
-          (a, b) =>
-            new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime() ||
-            b.id - a.id
-        ),
+      tickets.filter(
+        (t) =>
+          t.ticket_type !== "leave" && (t.status || "").toLowerCase() === "pending"
+      ),
     [tickets],
   );
   const snapshotTotal = Math.max(
@@ -519,9 +523,17 @@ export default function DashboardPage() {
       }
 
       const employees = empData.employees;
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayStr = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
+      const leaveDayKey = (v: unknown) => {
+        const s = String(v || "").trim();
+        const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+        if (m) return m[1];
+        const d = new Date(s);
+        if (Number.isNaN(d.getTime())) return "";
+        return getDateStringInTimeZone(d, SERVER_TIMEZONE);
+      };
 
-      const leaveRes = await fetch("/api/leaves", { cache: "no-store" });
+      const leaveRes = await fetch("/api/leaves?status=approved", { cache: "no-store" });
       const leaveData = await leaveRes.json();
       const leavesList =
         leaveData.success && leaveData.leaves ? leaveData.leaves : [];
@@ -529,18 +541,17 @@ export default function DashboardPage() {
       const employeesOnLeaveToday = new Set(
         leavesList
           .filter((l: any) => {
-            const startDate = l.start_date
-              ? new Date(l.start_date).toISOString().split("T")[0]
-              : "";
-            const endDate = l.end_date
-              ? new Date(l.end_date).toISOString().split("T")[0]
-              : "";
+            const startDate = leaveDayKey(l.start_date);
+            const endDate = leaveDayKey(l.end_date) || startDate;
             const status = (l.status || "").toLowerCase();
             return (
-              status === "approved" && startDate <= todayStr && todayStr <= endDate
+              status === "approved" &&
+              Boolean(startDate) &&
+              startDate <= todayStr &&
+              todayStr <= endDate
             );
           })
-          .map((l: any) => l.employee_id),
+          .map((l: any) => String(l.employee_id)),
       );
 
       let activeCount = 0;
@@ -649,6 +660,13 @@ export default function DashboardPage() {
   }, []);
 
   React.useEffect(() => {
+    const syncGreeting = () => setGreeting(timeGreeting());
+    syncGreeting();
+    const greetingTimer = window.setInterval(syncGreeting, 60_000);
+    return () => window.clearInterval(greetingTimer);
+  }, []);
+
+  React.useEffect(() => {
     fetchLeaves();
     fetchFinancialRequests();
     fetchTickets();
@@ -720,10 +738,10 @@ export default function DashboardPage() {
           </div>
           <header className={styles.header}>
             <div className={styles.headerText}>
-              <p className={styles.greeting}>{timeGreeting()}</p>
-              <h1 className={styles.title}>Welcome back, Admin</h1>
+              <p className={styles.greeting}>{greeting}</p>
+              <h1 className={styles.title}>Welcome back</h1>
               <p className={styles.subtitle}>
-                Hiring, attendance, and engagement — all in one clean workspace.
+                Today’s attendance, pending requests, and team updates — ready when you are.
               </p>
             </div>
             <div className={styles.headerActions}>
@@ -900,14 +918,14 @@ export default function DashboardPage() {
                       <span>
                         <span
                           className={styles.legendDot}
-                          style={{ background: "var(--slack-purple)" }}
+                          style={{ background: "var(--dash-teal-deep)" }}
                         />
                         Weekdays
                       </span>
                       <span>
                         <span
                           className={styles.legendDot}
-                          style={{ background: "var(--slack-blue)" }}
+                          style={{ background: "var(--dash-sky)" }}
                         />
                         Today
                       </span>
@@ -919,7 +937,7 @@ export default function DashboardPage() {
                   <div
                     className={styles.donut}
                     style={{
-                      background: `conic-gradient(var(--slack-blue) 0% ${todayPct}%, #eef0f2 ${todayPct}% 100%)`,
+                      background: `conic-gradient(var(--dash-sky) 0% ${todayPct}%, #e2e8f0 ${todayPct}% 100%)`,
                     }}
                   >
                     <div className={styles.donutHole}>

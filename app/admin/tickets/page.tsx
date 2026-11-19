@@ -1,6 +1,6 @@
 "use client";
 
-import OptionalAdminShell from "@/app/components/OptionalAdminShell";
+import LayoutDashboard from "../../layout-dashboard";
 import React from "react";
 import adminStyles from "../admin-page.module.css";
 import TicketThread from "../../components/TicketThread";
@@ -43,7 +43,7 @@ type Ticket = {
 };
 
 type TicketsPageProps = {
-  /** admin = main dashboard (excludes HR dept tickets). hr = HR department inbox (view all HR; approve Manager only). */
+  /** admin = leave hierarchy inbox. hr = HR inbox (all leave + all non-leave). */
   inboxMode?: "admin" | "hr";
 };
 
@@ -61,6 +61,10 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
     annualBalance: number;
     annualAllowance: number;
     bereavementBalance: number;
+    maternityBalance: number;
+    maternityAllowance: number;
+    paternityBalance: number;
+    paternityAllowance: number;
     employment_status?: string;
   } | null>(null);
   const [searchText, setSearchText] = React.useState("");
@@ -212,6 +216,10 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
           annualBalance: Number(data.annualBalance) || 0,
           annualAllowance: Number(data.annualAllowance) || 0,
           bereavementBalance: Number(data.bereavementBalance) || 0,
+          maternityBalance: Number(data.maternityBalance) || 0,
+          maternityAllowance: Number(data.maternityAllowance) || 0,
+          paternityBalance: Number(data.paternityBalance) || 0,
+          paternityAllowance: Number(data.paternityAllowance) || 0,
           employment_status: data.employment_status,
         });
       })
@@ -525,12 +533,17 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
   };
 
   return (
-    <OptionalAdminShell>
+    <LayoutDashboard>
       <div className={adminStyles.page}>
         <div className={adminStyles.inner}>
           <h1 className={adminStyles.title}>
             Ticket Inbox
           </h1>
+          <p className={adminStyles.subtitle}>
+            {inboxMode === "hr"
+              ? "All leave tickets (company-wide) plus HR department tickets. View all — approve only within your department hierarchy."
+              : "Employee tickets. Department leave for CEOs (Joe / Max / Mubeen) appears here for their owned depts."}
+          </p>
 
           <div className={adminStyles.ticketToolbar}>
             <div className={adminStyles.tabRow}>
@@ -671,18 +684,21 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
                       {categoryLabel(t.category)} ·{" "}
                       {ticketTypeLabel(t.category, t.ticket_type)}
                     </div>
+                    {t.ticket_type !== "leave" && t.acknowledged_by_name ? (
+                      <div
+                        className={adminStyles.muted}
+                        style={{ marginTop: 6, fontSize: 13, color: "#1d4ed8", fontWeight: 600 }}
+                      >
+                        Acknowledged by {t.acknowledged_by_name}
+                      </div>
+                    ) : null}
                     {t.approved_by_name &&
                     (t.status === "resolved" ||
                       t.status === "rejected" ||
                       t.status === "closed") ? (
                       <div
                         className={adminStyles.muted}
-                        style={{
-                          marginTop: 6,
-                          fontSize: 13,
-                          color: t.status === "rejected" ? "#b91c1c" : "#0f766e",
-                          fontWeight: 600,
-                        }}
+                        style={{ marginTop: 6, fontSize: 13, color: "#0f766e", fontWeight: 600 }}
                       >
                         {t.status === "rejected" ? "Rejected by" : "Approved by"}{" "}
                         {t.approved_by_name}
@@ -757,6 +773,14 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
               <span className={`${adminStyles.badge} ${statusBadge(selected.status)}`}>
                 {formatTicketStatusLabel(selected.status, selected.ticket_type)}
               </span>
+              {selected.ticket_type !== "leave" && selected.acknowledged_by_name ? (
+                <span
+                  className={`${adminStyles.badge} ${adminStyles.badgeType}`}
+                  style={{ background: "#eff6ff", color: "#1d4ed8" }}
+                >
+                  Acknowledged by {selected.acknowledged_by_name}
+                </span>
+              ) : null}
               {selected.approved_by_name &&
               (selected.status === "resolved" ||
                 selected.status === "rejected" ||
@@ -805,6 +829,24 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
                     <div>
                       Bereavement: <b>{leaveBalanceInfo.bereavementBalance} / 3</b>
                     </div>
+                    {leaveBalanceInfo.maternityAllowance > 0 ? (
+                      <div>
+                        Maternity:{" "}
+                        <b>
+                          {leaveBalanceInfo.maternityBalance} /{" "}
+                          {leaveBalanceInfo.maternityAllowance}
+                        </b>
+                      </div>
+                    ) : null}
+                    {leaveBalanceInfo.paternityAllowance > 0 ? (
+                      <div>
+                        Paternity:{" "}
+                        <b>
+                          {leaveBalanceInfo.paternityBalance} /{" "}
+                          {leaveBalanceInfo.paternityAllowance}
+                        </b>
+                      </div>
+                    ) : null}
                     <div style={{ marginTop: 8, color: "#64748b", fontSize: 13 }}>
                       Approve → balance minus requested days. Reject → balance unchanged.
                     </div>
@@ -935,6 +977,6 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
           </div>
         </div>
       ) : null}
-    </OptionalAdminShell>
+    </LayoutDashboard>
   );
 }

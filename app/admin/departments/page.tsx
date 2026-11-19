@@ -9,8 +9,14 @@ export default function DepartmentsPage() {
     <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
-          <h1 className={styles.title}>Departments</h1>
-          <p className={styles.subtitle}>Manage company departments and view assigned employees.</p>
+          <div className={styles.pageHeader}>
+            <div>
+              <h1 className={styles.pageHeaderTitle}>Departments</h1>
+              <p className={styles.subtitle} style={{ marginBottom: 0 }}>
+                Manage company departments and view assigned employees.
+              </p>
+            </div>
+          </div>
           <DepartmentsTable />
         </div>
       </div>

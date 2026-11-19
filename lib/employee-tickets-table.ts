@@ -28,6 +28,7 @@ export type EmployeeTicketRow = {
   updated_at: string;
   /** Employee id who approved/rejected (leave etc.). */
   approved_by?: string | null;
+  /** Display name for Approved by … */
   approved_by_name?: string | null;
   /** HR staff who acknowledged a non-leave ticket (before resolve/reject). */
   acknowledged_by?: string | null;
@@ -118,44 +119,7 @@ export function buildTicketNumber(id: number) {
   return `TKT-${year}-${String(id).padStart(5, "0")}`;
 }
 
-/** Newest first by requested_at (fallback updated_at / id). */
-export function sortTicketsNewestFirst<T extends {
-  id?: number | string;
-  requested_at?: unknown;
-  updated_at?: unknown;
-}>(tickets: T[]): T[] {
-  const ms = (t: T) => {
-    for (const raw of [t.requested_at, t.updated_at]) {
-      if (raw == null || raw === "") continue;
-      // Prefer ISO/Date; naive SQL UTC wall → append Z (same as formatTicketDateTime)
-      if (raw instanceof Date) {
-        const n = raw.getTime();
-        if (Number.isFinite(n)) return n;
-        continue;
-      }
-      const s = String(raw).trim();
-      if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(s)) {
-        const n = new Date(s).getTime();
-        if (Number.isFinite(n)) return n;
-        continue;
-      }
-      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s)) {
-        const iso = s.includes("T") ? s : s.replace(" ", "T");
-        const n = new Date(`${iso.replace(/\.\d+$/, "")}Z`).getTime();
-        if (Number.isFinite(n)) return n;
-        continue;
-      }
-      const n = new Date(s).getTime();
-      if (Number.isFinite(n)) return n;
-    }
-    return Number(t.id) || 0;
-  };
-  return [...tickets].sort((a, b) => {
-    const diff = ms(b) - ms(a);
-    if (diff !== 0) return diff;
-    return (Number(b.id) || 0) - (Number(a.id) || 0);
-  });
-}
+export { sortTicketsNewestFirst, ticketRecencyMs } from "@/lib/ticket-sort";
 
 export function rowToTicket(row: Record<string, unknown>): EmployeeTicketRow {
   const base = {
