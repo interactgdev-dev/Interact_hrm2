@@ -74,7 +74,16 @@ export default function MyTeamPage() {
       .finally(() => setLoading(false));
   }, [employeeId]);
 
-  const team = hierarchy?.teamMembers ?? [];
+  const team = React.useMemo(() => {
+    const raw = hierarchy?.teamMembers ?? [];
+    const byId = new Map<string, HierarchyPerson>();
+    for (const member of raw) {
+      const id = String(member.id || "").trim();
+      if (!id || byId.has(id)) continue;
+      byId.set(id, member);
+    }
+    return [...byId.values()];
+  }, [hierarchy?.teamMembers]);
 
   return (
     <div className={styles.page}>

@@ -85,6 +85,29 @@ async function ensureHierarchyTables(conn: Awaited<ReturnType<typeof pool.getCon
   `);
 }
 
+/** Prefer the richest job row when an employee has duplicate employee_jobs. */
+function preferEmpRow(a: EmpRow, b: EmpRow): EmpRow {
+  const aTitle = String(a.job_title || "").trim();
+  const bTitle = String(b.job_title || "").trim();
+  if (aTitle && !bTitle) return a;
+  if (bTitle && !aTitle) return b;
+  if (a.department_id != null && b.department_id == null) return a;
+  if (b.department_id != null && a.department_id == null) return b;
+  return a;
+}
+
+/** One row per employee — duplicate employee_jobs must never create duplicate My Team cards. */
+function dedupeEmployeesById(rows: EmpRow[]): EmpRow[] {
+  const byId = new Map<number, EmpRow>();
+  for (const row of rows) {
+    const id = Number(row.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const prev = byId.get(id);
+    byId.set(id, prev ? preferEmpRow(prev, row) : row);
+  }
+  return [...byId.values()].sort((a, b) => a.id - b.id);
+}
+
 async function fetchEmployees(conn: Awaited<ReturnType<typeof pool.getConnection>>): Promise<EmpRow[]> {
   const [rows] = await conn.execute(`
     SELECT
@@ -103,7 +126,7 @@ async function fetchEmployees(conn: Awaited<ReturnType<typeof pool.getConnection
     WHERE e.status IS NULL OR e.status IN ('enabled', 'active', 'Enabled', 'Active')
     ORDER BY e.id ASC
   `);
-  return rows as EmpRow[];
+  return dedupeEmployeesById(rows as EmpRow[]);
 }
 
 async function fetchExplicitReportsTo(
@@ -370,6 +393,8 @@ export async function getEmployeeHierarchy(
       // My Team = all employees in same org department family (excl. self)
       teamRows = deptEmployees.filter((e) => e.id !== emp.id);
     }
+    // Hard guarantee: never emit the same person twice in My Team.
+    teamRows = dedupeEmployeesById(teamRows).filter((e) => e.id !== emp.id);
 
     const isTeamLead = teamRows.length > 0 || roleRank(emp.role) <= 4;
 
