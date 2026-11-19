@@ -44,6 +44,21 @@ function PreviewField({ field }: { field: FormFieldDef }) {
       ? false
       : SAMPLE[key] || (field.type === "date" ? "2026-07-07" : "");
 
+  if (field.type === "heading") {
+    return (
+      <div className={styles.previewFormField} style={{ marginTop: 12 }}>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
+          {field.label || key}
+        </h3>
+        {Array.isArray(field.options) && field.options[0] ? (
+          <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+            {field.options[0]}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className={styles.previewFormField}>
       <div className={styles.previewFormLabelRow}>
@@ -69,6 +84,22 @@ function PreviewField({ field }: { field: FormFieldDef }) {
             </option>
           ))}
         </select>
+      ) : field.type === "file" || field.type === "pdf" || field.type === "upload" ? (
+        <div
+          style={{
+            padding: "12px 14px",
+            border: "1px dashed #cbd5e1",
+            borderRadius: 10,
+            background: "#fafbfc",
+            fontSize: 13,
+            color: "#64748b",
+          }}
+        >
+          PDF upload (employee attaches file · HR can open after submit)
+          {Array.isArray(field.options) && field.options[0] ? (
+            <div style={{ marginTop: 6, fontSize: 12 }}>{field.options[0]}</div>
+          ) : null}
+        </div>
       ) : field.type === "checkbox" ? (
         isCheckboxGroup(field) ? (
           <div className={styles.checkboxGroup}>
@@ -321,6 +352,7 @@ export function FormTemplatePreviewModal({
                           <option value="select">Dropdown</option>
                           <option value="date">Date</option>
                           <option value="checkbox">Checkbox</option>
+                          <option value="file">PDF upload</option>
                         </select>
                       </div>
                       <div className={styles.field} style={{ margin: 0 }}>

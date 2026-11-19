@@ -1,7 +1,8 @@
 "use client";
 import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
+import leaveStyles from "../../leave/leave.module.css";
 import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
@@ -28,11 +29,12 @@ function formatDateOnly(dateValue: string | null | undefined) {
   return getDateStringInTimeZone(parsed, SERVER_TIMEZONE);
 }
 
-// Helper to format duration
+// Helper to format duration (whole seconds — matches summary pages: 00h 18m 57s)
 function formatDuration(seconds: number) {
-  const h = Math.floor(seconds / 3600).toString().padStart(2, "0");
-  const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, "0");
-  const s = (seconds % 60).toString().padStart(2, "0");
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(total / 3600).toString().padStart(2, "0");
+  const m = Math.floor((total % 3600) / 60).toString().padStart(2, "0");
+  const s = (total % 60).toString().padStart(2, "0");
   return `${h}h ${m}m ${s}s`;
 }
 
@@ -393,403 +395,386 @@ export default function ManageBreaksPage() {
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={styles.breakSummaryContainer}>
-        <div className={adminStyles.pageHeader}>
-          <h1 className={adminStyles.pageHeaderTitle}>Manage Breaks</h1>
-          <button
-            type="button"
-            onClick={() => setShowAddForm(!showAddForm)}
-            className={adminStyles.btnGreen}
-          >
-            <FaPlus /> Add New Break
-          </button>
-        </div>
+          <div className={adminStyles.pageHeader}>
+            <h1 className={adminStyles.pageHeaderTitle}>Manage Breaks</h1>
+            <button
+              type="button"
+              onClick={() => setShowAddForm(!showAddForm)}
+              className={adminStyles.btnGreen}
+            >
+              <FaPlus /> Add New Break
+            </button>
+          </div>
 
-        {/* Add New Record Form */}
-        {showAddForm && (
-          <div style={{
-            background: "#f8f9fa",
-            padding: "20px",
-            borderRadius: "8px",
-            marginBottom: "20px",
-            border: "1px solid #e2e8f0"
-          }}>
-            <h3 style={{ marginTop: 0, marginBottom: "16px", color: "#0052CC" }}>Add New Break Record</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Employee</label>
-                <select
-                  value={newRecord.employee_id}
-                  onChange={(e) => setNewRecord({ ...newRecord, employee_id: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
+          {showAddForm ? (
+            <div className={styles.mgmtAttAddPanel}>
+              <h3 className={styles.mgmtAttAddTitle}>Add New Break Record</h3>
+              <div className={styles.mgmtAttAddGrid}>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Employee</label>
+                  <select
+                    value={newRecord.employee_id}
+                    onChange={(e) => setNewRecord({ ...newRecord, employee_id: e.target.value })}
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="">Select Employee</option>
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.first_name} {emp.last_name} ({emp.employee_code || emp.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Break Type</label>
+                  <select
+                    value={newRecord.break_type}
+                    onChange={(e) =>
+                      setNewRecord({
+                        ...newRecord,
+                        break_type: e.target.value as "break" | "prayer",
+                      })
+                    }
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="break">Regular Break</option>
+                    <option value="prayer">Prayer Break</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Date</label>
+                  <input
+                    type="date"
+                    value={newRecord.date}
+                    onChange={(e) => setNewRecord({ ...newRecord, date: e.target.value })}
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>Start Time</label>
+                  <input
+                    type="datetime-local"
+                    value={
+                      newRecord.break_start ? formatDateTimeLocal(newRecord.break_start) : ""
+                    }
+                    onChange={(e) =>
+                      setNewRecord({
+                        ...newRecord,
+                        break_start: e.target.value
+                          ? new Date(e.target.value).toISOString()
+                          : null,
+                      })
+                    }
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <label className={styles.mgmtAttAddLabel}>End Time</label>
+                  <input
+                    type="datetime-local"
+                    value={newRecord.break_end ? formatDateTimeLocal(newRecord.break_end) : ""}
+                    onChange={(e) =>
+                      setNewRecord({
+                        ...newRecord,
+                        break_end: e.target.value
+                          ? new Date(e.target.value).toISOString()
+                          : null,
+                      })
+                    }
+                    className={leaveStyles.toolbarSelect}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+              <div className={styles.mgmtAttAddActions}>
+                <button
+                  type="button"
+                  onClick={addNewRecord}
+                  className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnSave}`}
+                  style={{ padding: "8px 14px", fontSize: 13 }}
                 >
-                  <option value="">Select Employee</option>
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.first_name} {emp.last_name} ({emp.employee_code || emp.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Break Type</label>
-                <select
-                  value={newRecord.break_type}
-                  onChange={(e) => setNewRecord({ ...newRecord, break_type: e.target.value as 'break' | 'prayer' })}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm(false)}
+                  className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnDelete}`}
+                  style={{ padding: "8px 14px", fontSize: 13 }}
                 >
-                  <option value="break">Regular Break</option>
-                  <option value="prayer">Prayer Break</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Date</label>
-                <input
-                  type="date"
-                  value={newRecord.date}
-                  onChange={(e) => setNewRecord({ ...newRecord, date: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>Start Time</label>
-                <input
-                  type="datetime-local"
-                  value={newRecord.break_start ? formatDateTimeLocal(newRecord.break_start) : ""}
-                  onChange={(e) => setNewRecord({ ...newRecord, break_start: e.target.value ? new Date(e.target.value).toISOString() : null })}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", fontSize: "14px" }}>End Time</label>
-                <input
-                  type="datetime-local"
-                  value={newRecord.break_end ? formatDateTimeLocal(newRecord.break_end) : ""}
-                  onChange={(e) => setNewRecord({ ...newRecord, break_end: e.target.value ? new Date(e.target.value).toISOString() : null })}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e0",
-                    fontSize: "14px"
-                  }}
-                />
+                  Cancel
+                </button>
               </div>
             </div>
-            <div style={{ marginTop: "16px", display: "flex", gap: "12px" }}>
+          ) : null}
+
+          <div className={leaveStyles.toolbar}>
+            <div className={leaveStyles.searchWrap}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="search"
+                className={leaveStyles.toolbarSearch}
+                placeholder="Search by name or pseudo name"
+                value={searchName}
+                onChange={(e) => setSearchName(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            <select
+              value={selectedDepartment}
+              onChange={(e) => setSelectedDepartment(e.target.value)}
+              className={leaveStyles.toolbarSelect}
+              aria-label="Filter by department"
+            >
+              <option value="">All Departments</option>
+              {departments.map((dept) => (
+                <option key={dept.id} value={dept.name}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={selectedBreakType}
+              onChange={(e) => setSelectedBreakType(e.target.value)}
+              className={leaveStyles.toolbarSelect}
+              aria-label="Filter by break type"
+            >
+              <option value="">All Break Types</option>
+              <option value="break">Regular Break</option>
+              <option value="prayer">Prayer Break</option>
+            </select>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className={leaveStyles.toolbarSelect}
+              aria-label="From date"
+            />
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className={leaveStyles.toolbarSelect}
+              aria-label="To date"
+            />
+            <div className={leaveStyles.toolbarActions}>
               <button
-                onClick={addNewRecord}
-                style={{
-                  background: "linear-gradient(135deg, #27ae60 0%, #2ecc71 100%)",
-                  color: "#fff",
-                  border: "none",
-                  padding: "10px 20px",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontWeight: "600"
-                }}
+                type="button"
+                onClick={downloadExcel}
+                className={styles.breakSummaryXLSButton}
+                title="Download Excel"
               >
-                Save
-              </button>
-              <button
-                onClick={() => setShowAddForm(false)}
-                style={{
-                  background: "#e74c3c",
-                  color: "#fff",
-                  border: "none",
-                  padding: "10px 20px",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontWeight: "600"
-                }}
-              >
-                Cancel
+                <FaFileExcel size={14} />
+                <span>Export Excel</span>
               </button>
             </div>
           </div>
-        )}
 
-        {/* Filters */}
-        <div className={styles.breakSummaryFilters}>
-          <input
-            type="text"
-            placeholder="Search by name or pseudo name..."
-            value={searchName}
-            onChange={e => setSearchName(e.target.value)}
-            className={styles.breakSummaryInput}
-            style={{ width: 220 }}
-          />
-          <select
-            value={selectedDepartment}
-            onChange={e => setSelectedDepartment(e.target.value)}
-            className={styles.breakSummaryDate}
-            style={{ width: 180 }}
-          >
-            <option value="">All Departments</option>
-            {departments.map(dept => (
-              <option key={dept.id} value={dept.name}>{dept.name}</option>
-            ))}
-          </select>
-          <select
-            value={selectedBreakType}
-            onChange={e => setSelectedBreakType(e.target.value)}
-            className={styles.breakSummaryDate}
-            style={{ width: 150 }}
-          >
-            <option value="">All Break Types</option>
-            <option value="break">Regular Break</option>
-            <option value="prayer">Prayer Break</option>
-          </select>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={e => setFromDate(e.target.value)}
-            placeholder="From Date"
-            className={styles.breakSummaryDate}
-          />
-          <input
-            type="date"
-            value={toDate}
-            onChange={e => setToDate(e.target.value)}
-            placeholder="To Date"
-            className={styles.breakSummaryDate}
-          />
-          <button onClick={downloadExcel} className={styles.breakSummaryXLSButton} title="Download Excel">
-            <FaFileExcel size={20} />
-            <span>Export Excel</span>
-          </button>
-        </div>
-
-        {/* Table */}
-        <div className={styles.breakSummaryTableWrapper}>
-          {loading ? (
-            <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", color: "#718096" }}>
-              Loading...
-            </div>
-          ) : (
-            <table className={styles.breakSummaryTable}>
-              <thead>
-                <tr>
-                  <th>Id</th>
-                  <th>Full Name</th>
-                  <th>P.Name</th>
-                  <th>Department</th>
-                  <th>Type</th>
-                  <th>Date</th>
-                  <th>Start Time</th>
-                  <th>End Time</th>
-                  <th>Duration</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {breaks.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className={styles.breakSummaryNoRecords}>
-                      No records found.
-                    </td>
-                  </tr>
-                ) : (
-                  breaks.map((b) => (
-                    <tr key={`${b.break_type}-${b.id}`}>
-                      <td>{b.employee_id}</td>
-                      <td>
-                        {b.isEditing ? (
-                          <input
-                            type="text"
-                            value={b.employee_name}
-                            onChange={(e) => updateField(b.id!, "employee_name", e.target.value)}
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          <EmployeeTableNameCell
-                            name={b.employee_name}
-                            employeeId={b.employee_id}
-                            photo={getPhoto(b.employee_id)}
-                            onOpen={() => openFromRow(b)}
-                          />
-                        )}
-                      </td>
-                      <td>{b.pseudonym || '-'}</td>
-                      <td>{b.department_name || '-'}</td>
-                      <td>
-                        <span style={{
-                          padding: "4px 8px",
-                          borderRadius: "4px",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                          background: b.break_type === 'break' ? '#e3f2fd' : '#f3e5f5',
-                          color: b.break_type === 'break' ? '#1976d2' : '#7b1fa2'
-                        }}>
-                          {b.break_type === 'break' ? 'Break' : 'Prayer'}
-                        </span>
-                      </td>
-                      <td>
-                        {b.isEditing ? (
-                          <input
-                            type="date"
-                            value={b.date ? new Date(b.date).toISOString().split('T')[0] : ""}
-                            onChange={(e) => updateField(b.id!, "date", e.target.value)}
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          b.date ? getDateStringInTimeZone(b.date, SERVER_TIMEZONE) : ""
-                        )}
-                      </td>
-                      <td>
-                        {b.isEditing ? (
-                          <input
-                            type="datetime-local"
-                            value={formatDateTimeLocal(b.break_start)}
-                            onChange={(e) => updateField(b.id!, "break_start", e.target.value ? new Date(e.target.value).toISOString() : null)}
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          b.break_start ? getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE) : ""
-                        )}
-                      </td>
-                      <td>
-                        {b.isEditing ? (
-                          <input
-                            type="datetime-local"
-                            value={formatDateTimeLocal(b.break_end)}
-                            onChange={(e) => updateField(b.id!, "break_end", e.target.value ? new Date(e.target.value).toISOString() : null)}
-                            style={{ width: "100%", padding: "4px", fontSize: "13px" }}
-                          />
-                        ) : (
-                          b.break_end ? getTimeStringInTimeZone(b.break_end, SERVER_TIMEZONE) : ""
-                        )}
-                      </td>
-                      <td>
-                        {b.break_duration ? formatDuration(b.break_duration) :
-                          (b.break_start && b.break_end ? 
-                            (() => {
-                              const start = new Date(b.break_start).getTime();
-                              const end = new Date(b.break_end).getTime();
-                              const totalSeconds = Math.floor((end - start) / 1000);
-                              return formatDuration(totalSeconds);
-                            })() : ""
-                          )
-                        }
-                      </td>
-                      <td>
-                        <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                          {b.isEditing ? (
-                            <>
-                              <button
-                                onClick={() => saveRecord(b)}
-                                style={{
-                                  background: "#27ae60",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "4px"
-                                }}
-                                title="Save"
-                              >
-                                <FaSave /> Save
-                              </button>
-                              <button
-                                onClick={() => toggleEdit(b.id!)}
-                                style={{
-                                  background: "#95a5a6",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px"
-                                }}
-                                title="Cancel"
-                              >
-                                <FaTimes />
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => toggleEdit(b.id!)}
-                                style={{
-                                  background: "#3498db",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "4px"
-                                }}
-                                title="Edit"
-                              >
-                                <FaEdit /> Edit
-                              </button>
-                              <button
-                                onClick={() => deleteRecord(b)}
-                                style={{
-                                  background: "#e74c3c",
-                                  color: "#fff",
-                                  border: "none",
-                                  padding: "6px 12px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontSize: "12px"
-                                }}
-                                title="Delete"
-                              >
-                                <FaTimes />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
+          <div className={leaveStyles.reqTableShell}>
+            <div className={styles.mgmtAttScroll}>
+              {loading ? (
+                <div className={leaveStyles.loading}>Loading breaks…</div>
+              ) : (
+                <table className={`${leaveStyles.reqTable} ${styles.mgmtBreaksTableFit}`}>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Full Name</th>
+                      <th>P.Name</th>
+                      <th>Department</th>
+                      <th>Type</th>
+                      <th>Date</th>
+                      <th>Start Time</th>
+                      <th>End Time</th>
+                      <th>Duration</th>
+                      <th>Actions</th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
+                  </thead>
+                  <tbody>
+                    {breaks.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className={leaveStyles.reqEmpty}>
+                          No records found.
+                        </td>
+                      </tr>
+                    ) : (
+                      breaks.map((b) => (
+                        <tr key={`${b.break_type}-${b.id}`}>
+                          <td className={leaveStyles.reqId}>{b.employee_id}</td>
+                          <td>
+                            {b.isEditing ? (
+                              <input
+                                type="text"
+                                value={b.employee_name}
+                                onChange={(e) =>
+                                  updateField(b.id!, "employee_name", e.target.value)
+                                }
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : (
+                              <EmployeeTableNameCell
+                                name={b.employee_name}
+                                employeeId={b.employee_id}
+                                photo={getPhoto(b.employee_id)}
+                                onOpen={() => openFromRow(b)}
+                              />
+                            )}
+                          </td>
+                          <td title={b.pseudonym || ""}>{b.pseudonym || "—"}</td>
+                          <td title={b.department_name || ""}>{b.department_name || "—"}</td>
+                          <td>
+                            <span
+                              className={`${styles.mgmtBreakTypeBadge} ${
+                                b.break_type === "break"
+                                  ? styles.mgmtBreakTypeRegular
+                                  : styles.mgmtBreakTypePrayer
+                              }`}
+                            >
+                              {b.break_type === "break" ? "Break" : "Prayer"}
+                            </span>
+                          </td>
+                          <td>
+                            {b.isEditing ? (
+                              <input
+                                type="date"
+                                value={
+                                  b.date ? new Date(b.date).toISOString().split("T")[0] : ""
+                                }
+                                onChange={(e) => updateField(b.id!, "date", e.target.value)}
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : b.date ? (
+                              getDateStringInTimeZone(b.date, SERVER_TIMEZONE)
+                            ) : (
+                              ""
+                            )}
+                          </td>
+                          <td>
+                            {b.isEditing ? (
+                              <input
+                                type="datetime-local"
+                                value={formatDateTimeLocal(b.break_start)}
+                                onChange={(e) =>
+                                  updateField(
+                                    b.id!,
+                                    "break_start",
+                                    e.target.value
+                                      ? new Date(e.target.value).toISOString()
+                                      : null,
+                                  )
+                                }
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : b.break_start ? (
+                              getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE)
+                            ) : (
+                              ""
+                            )}
+                          </td>
+                          <td>
+                            {b.isEditing ? (
+                              <input
+                                type="datetime-local"
+                                value={formatDateTimeLocal(b.break_end)}
+                                onChange={(e) =>
+                                  updateField(
+                                    b.id!,
+                                    "break_end",
+                                    e.target.value
+                                      ? new Date(e.target.value).toISOString()
+                                      : null,
+                                  )
+                                }
+                                className={styles.mgmtAttCellInput}
+                              />
+                            ) : b.break_end ? (
+                              getTimeStringInTimeZone(b.break_end, SERVER_TIMEZONE)
+                            ) : (
+                              ""
+                            )}
+                          </td>
+                          <td>
+                            {b.break_duration
+                              ? formatDuration(b.break_duration)
+                              : b.break_start && b.break_end
+                                ? (() => {
+                                    const start = new Date(b.break_start).getTime();
+                                    const end = new Date(b.break_end).getTime();
+                                    const totalSeconds = Math.floor((end - start) / 1000);
+                                    return formatDuration(totalSeconds);
+                                  })()
+                                : ""}
+                          </td>
+                          <td>
+                            <div className={styles.mgmtAttActions}>
+                              {b.isEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveRecord(b)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnSave}`}
+                                    title="Save"
+                                    aria-label="Save"
+                                  >
+                                    <FaSave />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleEdit(b.id!)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnCancel}`}
+                                    title="Cancel"
+                                    aria-label="Cancel"
+                                  >
+                                    <FaTimes />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleEdit(b.id!)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnEdit}`}
+                                    title="Edit"
+                                    aria-label="Edit"
+                                  >
+                                    <FaEdit />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteRecord(b)}
+                                    className={`${styles.mgmtAttBtn} ${styles.mgmtAttBtnDelete}`}
+                                    title="Delete"
+                                    aria-label="Delete"
+                                  >
+                                    <FaTimes />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
 
-        <div style={{ marginTop: "20px", fontSize: "14px", color: "#718096" }}>
-          Total Records: {breaks.length}
-        </div>
+          <div className={styles.mgmtAttMeta}>Total Records: {breaks.length}</div>
         </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }
 

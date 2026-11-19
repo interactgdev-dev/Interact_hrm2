@@ -8,9 +8,10 @@ type Props = {
   features: GlobalFeature[];
   onToggle: (key: string) => void;
   onSave: () => void;
+  readOnly?: boolean;
 };
 
-export default function FeaturesTab({ features, onToggle, onSave }: Props) {
+export default function FeaturesTab({ features, onToggle, onSave, readOnly }: Props) {
   return (
     <div className={styles.panelBody}>
       <div className={styles.sectionHead}>
@@ -21,7 +22,12 @@ export default function FeaturesTab({ features, onToggle, onSave }: Props) {
             in the matrix.
           </p>
         </div>
-        <button type="button" className={styles.btnSolidPurple} onClick={onSave}>
+        <button
+          type="button"
+          className={styles.btnSolidPurple}
+          onClick={onSave}
+          disabled={readOnly}
+        >
           Save changes
         </button>
       </div>
@@ -45,6 +51,7 @@ export default function FeaturesTab({ features, onToggle, onSave }: Props) {
                     <input
                       type="checkbox"
                       checked={feat.on}
+                      disabled={readOnly}
                       onChange={() => onToggle(feat.key)}
                     />
                     <span className={styles.toggleSlider} />

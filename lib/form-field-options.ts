@@ -15,10 +15,31 @@ export function isCheckboxGroup(field: { type?: string; options?: string[] }): b
   return field.type === "checkbox" && normalizeOptionList(field.options).length > 0;
 }
 
+export function isFileField(field: { type?: string }): boolean {
+  const t = String(field.type || "").toLowerCase();
+  return t === "file" || t === "pdf" || t === "upload";
+}
+
 export function formatFieldValueForDisplay(
   field: { type?: string; options?: string[] },
   value: unknown
 ): string {
+  if (isFileField(field)) {
+    if (!value) return "—";
+    if (typeof value === "object") {
+      const o = value as Record<string, unknown>;
+      return String(o.file_name || o.name || o.file_path || "PDF attached");
+    }
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value) as { file_name?: string; name?: string };
+        return String(parsed.file_name || parsed.name || "PDF attached");
+      } catch {
+        return value.trim() || "—";
+      }
+    }
+    return "—";
+  }
   if (isCheckboxGroup(field)) {
     const selected = Array.isArray(value)
       ? value.map(String).filter(Boolean)

@@ -1,15 +1,16 @@
 "use client";
 
 import React from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "./face-enrollment.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
+import leaveStyles from "../../leave/leave.module.css";
+import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import {
   descriptorToJson,
   ensureFaceModelsLoaded,
-  preloadFaceRuntime,
   scanBlob,
   scanVideoFrame,
 } from "@/lib/face-client-engine";
@@ -121,6 +122,25 @@ export default function FaceEnrollmentAdminPage() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [employeePickerOpen]);
 
+  const applyEmployeeRows = React.useCallback((rows: EmployeeVerificationRow[]) => {
+    setEmployeeRows(rows);
+    // Reuse verification list for the picker — avoids a second full /api/employee-list fetch.
+    setEmployees(
+      rows.map((r) => {
+        const parts = String(r.name || "")
+          .trim()
+          .split(/\s+/);
+        return {
+          id: r.id,
+          first_name: parts[0] || r.name,
+          last_name: parts.slice(1).join(" ") || undefined,
+          pseudonym: r.pseudonym || undefined,
+          employee_code: r.employee_code || undefined,
+        };
+      }),
+    );
+  }, []);
+
   const loadEmployeeList = React.useCallback(async () => {
     setListLoading(true);
     setListError(null);
@@ -128,7 +148,7 @@ export default function FaceEnrollmentAdminPage() {
       const res = await fetch("/api/admin/face-enrollment/employees", { cache: "no-store" });
       const data = await res.json();
       if (data.success) {
-        setEmployeeRows(data.employees || []);
+        applyEmployeeRows(data.employees || []);
         setGlobalFaceEnabled(Boolean(data.globalEnabled ?? true));
       } else {
         setListError(data.error || "Could not load employee list.");
@@ -138,7 +158,7 @@ export default function FaceEnrollmentAdminPage() {
     } finally {
       setListLoading(false);
     }
-  }, []);
+  }, [applyEmployeeRows]);
 
   const refreshServiceStatus = React.useCallback(async () => {
     try {
@@ -152,55 +172,48 @@ export default function FaceEnrollmentAdminPage() {
     }
   }, []);
 
-  // Picker uses the same lightweight face-enrollment employees payload (not /api/employee-list).
-  React.useEffect(() => {
-    setEmployees(
-      employeeRows.map((row) => {
-        const parts = String(row.name || "")
-          .trim()
-          .split(/\s+/)
-          .filter(Boolean);
-        return {
-          id: row.id,
-          first_name: parts[0] || row.name || `Employee ${row.id}`,
-          last_name: parts.slice(1).join(" ") || undefined,
-          pseudonym: row.pseudonym || undefined,
-          employee_code: row.employee_code || undefined,
-        };
-      }),
-    );
-  }, [employeeRows]);
+  const ensureModels = React.useCallback(async () => {
+    try {
+      await ensureFaceModelsLoaded();
+      setModelsReady(true);
+      return true;
+    } catch {
+      setError(
+        "Face engine failed to load. Run npm run face:setup, then refresh this page.",
+      );
+      return false;
+    }
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
-
-    // Paint the page as soon as list + status return — do not wait for TF/face-api models.
-    Promise.all([loadEmployeeList(), refreshServiceStatus()])
-      .catch(() => {
+    (async () => {
+      try {
+        // Paint UI as soon as list + status return — do NOT wait for face models.
+        await Promise.all([refreshServiceStatus(), loadEmployeeList()]);
+      } catch {
         if (!cancelled) setError("Failed to load page data");
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
 
-    // Start JS parse early; weight download continues in background.
-    preloadFaceRuntime();
-    ensureFaceModelsLoaded()
-      .then(() => {
-        if (!cancelled) setModelsReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError(
-            "Face engine failed to load. Run npm run face:setup, then refresh this page.",
-          );
-        }
-      });
+    const startModels = () => {
+      if (cancelled) return;
+      void ensureModels();
+    };
+    const canIdle =
+      typeof window !== "undefined" && "requestIdleCallback" in window;
+    const idleId = canIdle
+      ? window.requestIdleCallback(startModels, { timeout: 2500 })
+      : window.setTimeout(startModels, 600);
 
     return () => {
       cancelled = true;
+      if (canIdle) window.cancelIdleCallback(idleId as number);
+      else window.clearTimeout(idleId as number);
     };
-  }, [loadEmployeeList, refreshServiceStatus]);
+  }, [loadEmployeeList, refreshServiceStatus, ensureModels]);
 
   const handleVerificationToggle = async (row: EmployeeVerificationRow) => {
     const next = !row.face_verification_enabled;
@@ -431,8 +444,11 @@ export default function FaceEnrollmentAdminPage() {
     }
 
     if (!modelsReady) {
-      setError("Face engine is still loading. Wait a moment and try again.");
-      return false;
+      setBusy(true);
+      setMessage("Loading face engine…");
+      const ok = await ensureModels();
+      setBusy(false);
+      if (!ok) return false;
     }
 
     setBusy(true);
@@ -534,9 +550,16 @@ export default function FaceEnrollmentAdminPage() {
       return;
     }
     const video = videoRef.current;
-    if (!video || !modelsReady) {
-      setError("Face engine is still loading. Wait a moment and try again.");
+    if (!video) {
+      setError("Camera preview not ready. Click Restart camera.");
       return;
+    }
+    if (!modelsReady) {
+      setBusy(true);
+      setMessage("Loading face engine…");
+      const ok = await ensureModels();
+      setBusy(false);
+      if (!ok) return;
     }
 
     setBusy(true);
@@ -669,10 +692,16 @@ export default function FaceEnrollmentAdminPage() {
     !!employeeId && !busy && modelsReady && photos.length < (service?.recommendedMax ?? 5);
 
   return (
-    <LayoutDashboard>
-      <div className={styles.page}>
-        <div className={styles.pageHeader}>
-          <h1 className={styles.title}>Face Enrollment</h1>
+    <OptionalAdminShell>
+      <div className={adminStyles.page}>
+        <div className={styles.pageInner}>
+        <div className={adminStyles.pageHeader}>
+          <div>
+            <h1 className={adminStyles.pageHeaderTitle}>Face Enrollment</h1>
+            <p className={styles.pageSub}>
+              Enroll face photos and control verification for employees
+            </p>
+          </div>
           <div className={styles.statusBar}>
             <span
               className={`${styles.pill} ${serviceOk ? styles.pillOk : service?.configured ? styles.pillWarn : styles.pillErr}`}
@@ -934,7 +963,7 @@ export default function FaceEnrollmentAdminPage() {
             <p className={styles.emptyState}>No employees</p>
           ) : (
             <>
-              <div className={tableStyles.breakSummaryFilters}>
+              <div className={leaveStyles.toolbar}>
                 <div className={styles.searchModeGroup} role="group" aria-label="Search by">
                   <button
                     type="button"
@@ -966,12 +995,31 @@ export default function FaceEnrollmentAdminPage() {
                     Both
                   </button>
                 </div>
+                <div className={leaveStyles.searchWrap}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <circle cx="11" cy="11" r="7" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="search"
+                    className={leaveStyles.toolbarSearch}
+                    placeholder={
+                      listSearchMode === "name"
+                        ? "Search by name or ID…"
+                        : listSearchMode === "pseudonym"
+                          ? "Search by pseudonym…"
+                          : "Search by name or pseudonym…"
+                    }
+                    value={listSearch}
+                    onChange={(e) => setListSearch(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
                 <select
-                  className={tableStyles.breakSummaryInput}
+                  className={leaveStyles.toolbarSelect}
                   value={deptFilter}
                   onChange={(e) => setDeptFilter(e.target.value)}
                   aria-label="Department"
-                  style={{ flex: "0 1 200px", minWidth: 160 }}
                 >
                   <option value="">All departments</option>
                   {departmentOptions.map((d) => (
@@ -980,23 +1028,9 @@ export default function FaceEnrollmentAdminPage() {
                     </option>
                   ))}
                 </select>
-                <input
-                  type="search"
-                  className={tableStyles.breakSummaryInput}
-                  placeholder={
-                    listSearchMode === "name"
-                      ? "Search by name or ID…"
-                      : listSearchMode === "pseudonym"
-                        ? "Search by pseudonym…"
-                        : "Search by name or pseudonym…"
-                  }
-                  value={listSearch}
-                  onChange={(e) => setListSearch(e.target.value)}
-                  style={{ flex: "1 1 220px", minWidth: 180 }}
-                />
                 <button
                   type="button"
-                  className={styles.searchModeBtn}
+                  className={tableStyles.mgmtAttGhostBtn}
                   disabled={!globalFaceEnabled || bulkBusy || filteredTableRows.length === 0}
                   onClick={() => void setVerificationBulk(true)}
                   title="Set Active for filtered rows"
@@ -1005,7 +1039,7 @@ export default function FaceEnrollmentAdminPage() {
                 </button>
                 <button
                   type="button"
-                  className={styles.searchModeBtn}
+                  className={tableStyles.mgmtAttGhostBtn}
                   disabled={!globalFaceEnabled || bulkBusy || filteredTableRows.length === 0}
                   onClick={() => void setVerificationBulk(false)}
                   title="Set Inactive for filtered rows"
@@ -1013,94 +1047,105 @@ export default function FaceEnrollmentAdminPage() {
                   Inactive all
                 </button>
               </div>
-              <div className={`${tableStyles.breakSummaryTableWrapper} ${styles.enrollCompactWrapper}`}>
-              <table className={`${tableStyles.breakSummaryTable} ${styles.enrollCompactTable}`}>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Department</th>
-                    <th>Photos</th>
-                    <th>Verification</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredTableRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className={tableStyles.breakSummaryNoRecords}>
-                        No employees match your search
-                      </td>
-                    </tr>
-                  ) : (
-                  filteredTableRows.map((row) => (
-                    <tr
-                      key={row.id}
-                      className={String(row.id) === employeeId ? styles.selectedRow : undefined}
-                      onClick={() => setEmployeeId(String(row.id))}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <td>{row.id}</td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <EmployeeTableNameCell
-                          name={row.name}
-                          employeeId={row.id}
-                          photo={getPhoto(row.id)}
-                          onOpen={() =>
-                            openFromRow({
-                              employee_id: row.id,
-                              employee_name: row.name,
-                              pseudonym: row.pseudonym,
-                              department_name: row.department,
-                            })
-                          }
-                        />
-                        {row.pseudonym ? (
-                          <div className={styles.empCode}>{row.pseudonym}</div>
-                        ) : row.employee_code ? (
-                          <div className={styles.empCode}>{row.employee_code}</div>
-                        ) : null}
-                      </td>
-                      <td>{row.department || "—"}</td>
-                      <td>
-                        <span
-                          className={`${styles.enrollBadge} ${
-                            row.descriptor_count >= 3 ? styles.enrollReady : styles.enrollPending
-                          }`}
-                        >
-                          {row.descriptor_count}/3
-                        </span>
-                      </td>
-                      <td>
-                        <div
-                          className={styles.toggleCell}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            type="button"
-                            className={`${styles.toggleBtn} ${
-                              row.face_verification_enabled ? styles.toggleOn : styles.toggleOff
-                            }`}
-                            disabled={!globalFaceEnabled}
-                            onClick={() => void handleVerificationToggle(row)}
+              <div className={leaveStyles.reqTableShell}>
+                <div className={`${tableStyles.mgmtAttScroll} ${styles.enrollCompactWrapper}`}>
+                  <table className={`${leaveStyles.reqTable} ${styles.faceEnrollTableFit}`}>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Full Name</th>
+                        <th>Department</th>
+                        <th>Photos</th>
+                        <th>Verification</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTableRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className={leaveStyles.reqEmpty}>
+                            No employees match your search
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredTableRows.map((row) => (
+                          <tr
+                            key={row.id}
+                            className={String(row.id) === employeeId ? styles.selectedRow : undefined}
+                            onClick={() => setEmployeeId(String(row.id))}
+                            style={{ cursor: "pointer" }}
                           >
-                            {row.face_verification_enabled ? <FaToggleOn /> : <FaToggleOff />}
-                          </button>
-                          <span className={styles.toggleLabel}>
-                            {row.face_verification_enabled ? "Active" : "Inactive"}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                            <td className={leaveStyles.reqId}>{row.id}</td>
+                            <td onClick={(e) => e.stopPropagation()}>
+                              <EmployeeTableNameCell
+                                name={row.name}
+                                employeeId={row.id}
+                                photo={getPhoto(row.id)}
+                                onOpen={() =>
+                                  openFromRow({
+                                    employee_id: row.id,
+                                    employee_name: row.name,
+                                    pseudonym: row.pseudonym,
+                                    department_name: row.department,
+                                  })
+                                }
+                              />
+                              {row.pseudonym ? (
+                                <div className={styles.empCode}>{row.pseudonym}</div>
+                              ) : row.employee_code ? (
+                                <div className={styles.empCode}>{row.employee_code}</div>
+                              ) : null}
+                            </td>
+                            <td>{row.department || "—"}</td>
+                            <td>
+                              <span
+                                className={`${styles.enrollBadge} ${
+                                  row.descriptor_count >= 3
+                                    ? styles.enrollReady
+                                    : styles.enrollPending
+                                }`}
+                              >
+                                {row.descriptor_count}/3
+                              </span>
+                            </td>
+                            <td>
+                              <div
+                                className={styles.toggleCell}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  className={`${styles.toggleBtn} ${
+                                    row.face_verification_enabled
+                                      ? styles.toggleOn
+                                      : styles.toggleOff
+                                  }`}
+                                  disabled={!globalFaceEnabled}
+                                  onClick={() => void handleVerificationToggle(row)}
+                                >
+                                  {row.face_verification_enabled ? (
+                                    <FaToggleOn />
+                                  ) : (
+                                    <FaToggleOff />
+                                  )}
+                                </button>
+                                <span className={styles.toggleLabel}>
+                                  {row.face_verification_enabled ? "Active" : "Inactive"}
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </>
           )}
         </div>
+        </div>
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

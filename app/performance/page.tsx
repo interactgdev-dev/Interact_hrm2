@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import LayoutDashboard from "../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../components/admin-module-page.module.css";
 import { FaChartBar, FaStar } from "react-icons/fa";
 
@@ -13,7 +13,7 @@ const TEAM_SNAPSHOT = [
 
 export default function PerformancePage() {
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <header className={styles.header}>
@@ -51,6 +51,6 @@ export default function PerformancePage() {
           </div>
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

@@ -1,25 +1,17 @@
-using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Reflection;
 using System.Text.Json;
 
 namespace InteractPresence;
 
-/// <summary>
-/// Polls HRM for a newer InteractPresence.exe and self-updates via a short cmd script.
-/// </summary>
+/// <summary>Manual update only — never downloads or restarts automatically.</summary>
 internal static class AgentUpdater
 {
     private static readonly HttpClient Http = CreateHttp();
-    private static DateTime _lastCheckUtc = DateTime.MinValue;
     private static bool _updateInFlight;
 
     private static string UpdateStatePath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "InteractPresence",
-            "update-state.json");
+        Path.Combine(AgentInstallPaths.AppDir, "update-state.json");
 
     private static HttpClient CreateHttp()
     {
@@ -31,28 +23,30 @@ internal static class AgentUpdater
         return new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) };
     }
 
-    public static string CurrentVersion
-    {
-        get
-        {
-            var v = Assembly.GetExecutingAssembly().GetName().Version;
-            if (v == null) return "0.0.0";
-            return $"{v.Major}.{v.Minor}.{v.Build}";
-        }
-    }
+    /// <summary>Version of the code actually running in this process.</summary>
+    public static string CurrentVersion => AgentInstallPaths.RunningAssemblyVersion();
 
+    /// <param name="force">Must be true (tray admin action). Automatic calls are ignored.</param>
     public static async Task CheckAndUpdateAsync(
         AppSettings settings,
         CancellationToken ct = default,
         bool force = false)
     {
+        if (!force) return;
         if (_updateInFlight) return;
-        if (!force && (DateTime.UtcNow - _lastCheckUtc).TotalMinutes < 10) return;
 
         var baseUrl = (settings.HrmBaseUrl ?? "").TrimEnd('/');
         if (string.IsNullOrWhiteSpace(baseUrl)) return;
 
-        _lastCheckUtc = DateTime.UtcNow;
+        var state = LoadUpdateState();
+        var now = DateTime.UtcNow;
+        if (state.LastManualCheckUtc.HasValue &&
+            (now - state.LastManualCheckUtc.Value).TotalMinutes < 2)
+        {
+            return;
+        }
+        state.LastManualCheckUtc = now;
+        SaveUpdateState(state);
 
         try
         {
@@ -64,13 +58,17 @@ internal static class AgentUpdater
             var root = doc.RootElement;
             if (!root.TryGetProperty("success", out var ok) || !ok.GetBoolean()) return;
             if (!root.TryGetProperty("hasBinary", out var has) || !has.GetBoolean()) return;
-            var remoteVer = root.TryGetProperty("version", out var verEl)
-                ? (verEl.GetString() ?? "")
-                : "";
-            if (!IsNewer(remoteVer, CurrentVersion)) return;
 
-            var state = LoadUpdateState();
-            if (ShouldSkipDueToCooldown(state, remoteVer)) return;
+            var remoteVer = AgentInstallPaths.NormalizeVersion(root.TryGetProperty("version", out var verEl)
+                ? (verEl.GetString() ?? "")
+                : "");
+            var localVer = CurrentVersion;
+
+            if (!AgentInstallPaths.IsVersionNewer(remoteVer, localVer))
+            {
+                DesktopNotify.Success($"Already on latest agent ({localVer}).");
+                return;
+            }
 
             var downloadPath = root.TryGetProperty("downloadPath", out var dp)
                 ? (dp.GetString() ?? "/api/presence-agent/download")
@@ -78,10 +76,7 @@ internal static class AgentUpdater
             if (!downloadPath.StartsWith('/')) downloadPath = "/" + downloadPath;
 
             _updateInFlight = true;
-            RecordAttempt(state, remoteVer);
-            DesktopNotify.Success($"Updating agent to {remoteVer}…");
-            await DownloadAndApplyAsync($"{baseUrl}{downloadPath}", remoteVer, ct)
-                .ConfigureAwait(false);
+            await DownloadOnlyAsync($"{baseUrl}{downloadPath}", remoteVer, ct).ConfigureAwait(false);
         }
         catch
         {
@@ -89,72 +84,12 @@ internal static class AgentUpdater
         }
     }
 
-    private static bool ShouldSkipDueToCooldown(UpdateState state, string remoteVer)
+    /// <summary>Download to pending file — user restarts manually (no auto-restart script).</summary>
+    private static async Task DownloadOnlyAsync(string url, string version, CancellationToken ct)
     {
-        if (!string.Equals(state.LastRemoteVersion, remoteVer, StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (state.AttemptCount < 3) return false;
-        if (!state.LastAttemptUtc.HasValue) return false;
-        return (DateTime.UtcNow - state.LastAttemptUtc.Value).TotalHours < 6;
-    }
-
-    private static void RecordAttempt(UpdateState state, string remoteVer)
-    {
-        if (string.Equals(state.LastRemoteVersion, remoteVer, StringComparison.OrdinalIgnoreCase))
-            state.AttemptCount++;
-        else
-        {
-            state.LastRemoteVersion = remoteVer;
-            state.AttemptCount = 1;
-        }
-        state.LastAttemptUtc = DateTime.UtcNow;
-        SaveUpdateState(state);
-    }
-
-    private static bool IsNewer(string remote, string local)
-    {
-        if (!Version.TryParse(Normalize(remote), out var r)) return false;
-        if (!Version.TryParse(Normalize(local), out var l)) return true;
-        return r > l;
-    }
-
-    private static string Normalize(string v)
-    {
-        var parts = (v ?? "0").Trim().Split('.');
-        while (parts.Length < 3) Array.Resize(ref parts, parts.Length + 1);
-        for (var i = 0; i < parts.Length; i++)
-            if (string.IsNullOrWhiteSpace(parts[i])) parts[i] = "0";
-        return string.Join(".", parts.Take(4));
-    }
-
-    private static string? ReadExeFileVersion(string path)
-    {
-        try
-        {
-            var vi = FileVersionInfo.GetVersionInfo(path);
-            var raw = (vi.FileVersion ?? vi.ProductVersion ?? "").Trim();
-            if (raw.Length == 0) return null;
-            return Normalize(raw);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static async Task DownloadAndApplyAsync(string url, string version, CancellationToken ct)
-    {
-        var exe = Environment.ProcessPath
-                   ?? Process.GetCurrentProcess().MainModule?.FileName;
-        if (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe))
-        {
-            _updateInFlight = false;
-            return;
-        }
-
-        var dir = Path.GetDirectoryName(exe)!;
-        var newPath = Path.Combine(dir, "InteractPresence_new.exe");
-        var batPath = Path.Combine(dir, "apply-update.cmd");
+        var stagingDir = Path.Combine(AgentInstallPaths.AppDir, "update-staging");
+        Directory.CreateDirectory(stagingDir);
+        var newPath = Path.Combine(stagingDir, "InteractPresence.exe");
 
         using (var res = await Http.GetAsync(url, ct).ConfigureAwait(false))
         {
@@ -171,51 +106,39 @@ internal static class AgentUpdater
         var fi = new FileInfo(newPath);
         if (fi.Length < 1024)
         {
-            try { File.Delete(newPath); } catch { /* ignore */ }
+            TryDelete(newPath);
             _updateInFlight = false;
             DesktopNotify.Failed("Agent update file invalid.");
             return;
         }
 
-        var downloadedVer = ReadExeFileVersion(newPath);
-        if (downloadedVer == null || !IsNewer(downloadedVer, CurrentVersion))
+        var downloadedVer = AgentInstallPaths.ReadFileVersion(newPath);
+        if (downloadedVer == null ||
+            !AgentInstallPaths.IsVersionNewer(downloadedVer, CurrentVersion))
         {
-            try { File.Delete(newPath); } catch { /* ignore */ }
+            TryDelete(newPath);
             _updateInFlight = false;
-            DesktopNotify.Failed(
-                "Update skipped — downloaded file is not newer than this install. Ask admin to republish the correct exe.");
+            DesktopNotify.Failed("Downloaded file is not newer than this install.");
             return;
         }
 
-        var state = LoadUpdateState();
-        state.LastAppliedVersion = version;
-        state.LastAttemptUtc = DateTime.UtcNow;
-        SaveUpdateState(state);
-
-        var bat = $"""
-@echo off
-timeout /t 2 /nobreak >nul
-copy /y "{newPath}" "{exe}" >nul
-if exist "{newPath}" del /f /q "{newPath}"
-start "" "{exe}"
-del /f /q "%~f0"
-""";
-        await File.WriteAllTextAsync(batPath, bat, ct).ConfigureAwait(false);
-
-        Process.Start(new ProcessStartInfo
+        if (!AgentInstallPaths.IsSameVersion(version, downloadedVer))
         {
-            FileName = batPath,
-            WorkingDirectory = dir,
-            UseShellExecute = true,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-        });
+            TryDelete(newPath);
+            _updateInFlight = false;
+            DesktopNotify.Failed(
+                $"Published version {version} does not match uploaded exe ({downloadedVer}).");
+            return;
+        }
 
-        DesktopNotify.Success($"Restarting for update {version}…");
-        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
-        {
-            System.Windows.Application.Current.Shutdown();
-        });
+        _updateInFlight = false;
+        DesktopNotify.Success(
+            $"Update {version} downloaded to staging. Exit the agent fully, then run it again to install.");
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* ignore */ }
     }
 
     private static UpdateState LoadUpdateState()
@@ -236,22 +159,15 @@ del /f /q "%~f0"
     {
         try
         {
-            var dir = Path.GetDirectoryName(UpdateStatePath)!;
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(AgentInstallPaths.AppDir);
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(UpdateStatePath, json);
         }
-        catch
-        {
-            /* ignore */
-        }
+        catch { /* ignore */ }
     }
 
     private sealed class UpdateState
     {
-        public string? LastRemoteVersion { get; set; }
-        public string? LastAppliedVersion { get; set; }
-        public DateTime? LastAttemptUtc { get; set; }
-        public int AttemptCount { get; set; }
+        public DateTime? LastManualCheckUtc { get; set; }
     }
 }

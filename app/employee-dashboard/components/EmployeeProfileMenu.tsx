@@ -8,6 +8,7 @@ import { saveEmployeeAvatar } from "../../shell-branding-api";
 import { UpdatePasswordModal } from "./UpdatePasswordModal";
 import styles from "./employee-profile-menu.module.css";
 import { toastError } from "@/lib/app-toast";
+import { clearPortalSessionKeys } from "@/lib/access-control/employee-shell";
 
 type Props = {
   employeeId: string;
@@ -57,6 +58,7 @@ export function EmployeeProfileMenu({
     setMenuOpen(false);
     if (typeof window !== "undefined") {
       localStorage.removeItem("loginId");
+      clearPortalSessionKeys();
     }
     router.push("/auth");
   }

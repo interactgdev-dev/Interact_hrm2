@@ -122,3 +122,32 @@ export function dateTimeLocalToIsoInTimeZone(
   const fallback = new Date(`${datePart}T${timePart}:${seconds}`);
   return Number.isNaN(fallback.getTime()) ? "" : fallback.toISOString();
 }
+
+/**
+ * Format ticket / DB timestamps for UI in Asia/Karachi.
+ * Naive "YYYY-MM-DD HH:mm:ss" from Mongo sqlNow() is UTC wall clock.
+ */
+export function formatDateTimeInServerTz(value: unknown): string {
+  if (value == null || value === "") return "—";
+  let date: Date;
+  if (value instanceof Date) {
+    date = value;
+  } else {
+    const s = String(value).trim();
+    const normalized = s.includes("T") ? s : s.replace(" ", "T");
+    const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized);
+    date = new Date(hasTz ? normalized : `${normalized}Z`);
+  }
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return new Intl.DateTimeFormat("en-PK", {
+    timeZone: SERVER_TIMEZONE,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(date);
+}

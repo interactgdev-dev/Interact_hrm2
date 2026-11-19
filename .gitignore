@@ -37,6 +37,7 @@ Thumbs.db
 
 # runtime user uploads (per-server data, not source)
 /public/uploads/
+/uploads/
 
 # silent admin activity daily logs (server-only)
 /logs/admin-activity/

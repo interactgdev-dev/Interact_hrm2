@@ -1,9 +1,7 @@
 "use client";
 
 import React, { Suspense, useMemo, useState, useEffect, useCallback } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { FaArrowLeft } from "react-icons/fa";
 import {
   getDateStringInTimeZone,
   getTimeStringInTimeZone,
@@ -18,6 +16,7 @@ import {
   normalizeAttendanceStatus,
   uiStatusTextColor,
 } from "../../../lib/attendance-status";
+import { BackToDashboard } from "../components/BackToDashboard";
 import styles from "./attendance.module.css";
 
 type AttendanceRow = {
@@ -290,9 +289,7 @@ function AttendancePageInner() {
       <div className={styles.inner}>
         <div className={styles.header}>
           <div className={styles.headerLeft}>
-            <Link href="/employee-dashboard" className={styles.backLink}>
-              <FaArrowLeft aria-hidden /> Dashboard
-            </Link>
+            <BackToDashboard />
             <h1 className={styles.title}>My Monthly Attendance</h1>
           </div>
           <div className={styles.monthNav}>

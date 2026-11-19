@@ -1,10 +1,8 @@
 .page {
   min-height: 100%;
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(97, 31, 105, 0.07) 0%, transparent 55%),
-    linear-gradient(180deg, #eef1f6 0%, #f6f8fb 40%, #f3f5f8 100%);
-  padding: 24px 28px 40px;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: transparent;
+  padding: 8px 20px 28px;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 14px;
   color: #0f172a;
 }
@@ -15,12 +13,12 @@
 }
 
 .header {
-  margin-bottom: 20px;
-  padding: 20px 24px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
   background: #fff;
-  border-radius: 18px;
-  border: 1px solid rgba(15, 23, 42, 0.07);
-  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  border: 1px solid #e4e7ec;
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.04);
   position: relative;
   overflow: hidden;
 }
@@ -31,33 +29,33 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 4px;
-  background: linear-gradient(180deg, #611f69, #007a5a);
-  border-radius: 18px 0 0 18px;
+  width: 3px;
+  background: #0f766e;
+  border-radius: 12px 0 0 12px;
 }
 
 .title {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   padding-left: 6px;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 1.2rem;
+  font-weight: 750;
   letter-spacing: -0.03em;
 }
 
 .sub {
   margin: 0;
   padding-left: 6px;
-  font-size: 13px;
+  font-size: 12.5px;
   color: #64748b;
 }
 
 .card {
   background: #fff;
-  border-radius: 16px;
-  border: 1px solid rgba(15, 23, 42, 0.07);
-  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.05);
-  padding: 22px 24px;
-  margin-bottom: 16px;
+  border-radius: 12px;
+  border: 1px solid #e4e7ec;
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.04);
+  padding: 14px 16px;
+  margin-bottom: 10px;
 }
 
 .cardTitle {
@@ -109,8 +107,8 @@
 .input:focus,
 .textarea:focus {
   outline: none;
-  border-color: #611f69;
-  box-shadow: 0 0 0 3px rgba(97, 31, 105, 0.1);
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
 }
 
 .select:disabled {
@@ -124,20 +122,20 @@
 .submitBtn {
   width: 100%;
   margin-top: 8px;
-  padding: 12px 18px;
+  padding: 9px 14px;
   border: none;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #611f69 0%, #4a1850 100%);
+  border-radius: 8px;
+  background: #0f766e;
   color: #fff;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
-  transition: opacity 0.15s ease;
+  transition: background 0.12s ease;
 }
 
 .submitBtn:hover:not(:disabled) {
-  opacity: 0.92;
+  background: #0d9488;
 }
 
 .submitBtn:disabled {
@@ -177,7 +175,54 @@
   margin: -6px 0 10px;
   font-size: 12px;
   font-weight: 600;
-  color: #611f69;
+  color: #0f766e;
+}
+
+.requiredMark {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.leaveDurationGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.leaveDurationOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+
+.leaveDurationOption input {
+  accent-color: #0f766e;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.leaveDurationSelected {
+  border-color: #0f766e;
+  background: #f5eef6;
+  color: #111827;
+  box-shadow: 0 0 0 1px rgba(97, 31, 105, 0.2);
+}
+
+.leaveDurationHint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dc2626;
 }
 
 .leaveBalanceRow {
@@ -196,7 +241,7 @@
 }
 
 .leaveBalancePurple {
-  border-top: 4px solid #611f69;
+  border-top: 4px solid #0f766e;
 }
 
 .leaveBalanceGreen {
@@ -242,14 +287,18 @@
 
 .fileBtn {
   border: none;
-  border-radius: 10px;
-  padding: 9px 16px;
-  font-size: 13px;
-  font-weight: 600;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
   cursor: pointer;
-  background: linear-gradient(135deg, #611f69 0%, #4a1850 100%);
+  background: #0f766e;
   color: #fff;
   font-family: inherit;
+}
+
+.fileBtn:hover {
+  background: #0d9488;
 }
 
 .fileHint {
@@ -372,7 +421,7 @@
   margin-top: 10px;
   font-size: 12px;
   font-weight: 600;
-  color: #611f69;
+  color: #0f766e;
 }
 
 .historyTop {
@@ -386,7 +435,7 @@
 .historyId {
   font-size: 12px;
   font-weight: 700;
-  color: #611f69;
+  color: #0f766e;
 }
 
 .historySubject {
@@ -442,7 +491,7 @@
 }
 
 .adminReplyLabel {
-  color: #611f69;
+  color: #0f766e;
 }
 
 .adminReplyText {
@@ -524,7 +573,7 @@
   margin: 0 0 10px;
   font-size: 18px;
   font-weight: 700;
-  color: #611f69;
+  color: #0f766e;
 }
 
 .modalMeta {
@@ -566,7 +615,7 @@
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  background: #611f69;
+  background: #0f766e;
   color: #fff;
   font-family: inherit;
 }
@@ -584,7 +633,7 @@
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  background: linear-gradient(135deg, #611f69 0%, #4a1850 100%);
+  background: #111827;
   color: #fff;
   font-family: inherit;
 }

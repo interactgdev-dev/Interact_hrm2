@@ -47,7 +47,7 @@ export function shouldShowTicketUpdate(pathname: string, ticketEmployeeId?: stri
 
 export function ticketToastTarget(pathname: string, ticketId: number): string {
   if (isEmployeePortal(pathname)) {
-    return `/employee-dashboard/generate-ticket?open=${ticketId}`;
+    return `/employee-dashboard/my-tickets?open=${ticketId}`;
   }
   return "/admin/tickets";
 }

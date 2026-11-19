@@ -4,7 +4,11 @@ export type BiometricAction =
   | "break_start"
   | "break_end"
   | "prayer_start"
-  | "prayer_end";
+  | "prayer_end"
+  | "refreshment_start"
+  | "refreshment_end"
+  | "meeting_start"
+  | "meeting_end";
 
 export type VerifyFailCode =
   | "no_face"

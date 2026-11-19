@@ -1,6 +1,6 @@
 :root {
-  --brand-purple: #611f69;
-  --brand-purple-dark: #4a1850;
+  --brand-purple: #0f766e;
+  --brand-purple-dark: #0d9488;
   --brand-green: #007a5a;
   --brand-gold: #e8912d;
   --color-bg: #f4f6f9;
@@ -9,41 +9,124 @@
   --color-text-secondary: #64748b;
   --color-border: #e8edf3;
   --radius-card: 18px;
-  --shadow-card: 0 8px 32px rgba(97, 31, 105, 0.08);
+  --shadow-card: 0 8px 32px rgba(15, 23, 42, 0.06);
   --font-main: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .breakSummaryContainer {
   background: var(--color-card);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
-  padding: 28px;
-  margin-bottom: 24px;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.04);
+  padding: 10px 12px 12px;
+  margin-bottom: 12px;
   border: 1px solid var(--color-border);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .pageTitle {
-  margin: 0 0 20px;
-  font-size: 1.5rem;
-  font-weight: 700;
+  margin: 0 0 10px;
+  font-size: 1.25rem;
+  font-weight: 750;
   color: var(--color-text);
   letter-spacing: -0.02em;
 }
 
+/* Employee Time & Attendance page shell */
+.empTimePage {
+  min-height: 100%;
+  background: transparent;
+  padding: 8px 16px 28px;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: #0f172a;
+}
+
+.empTimeInner {
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.empTimeHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e4e7ec;
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.04);
+}
+
+.empTimeHeaderLeft {
+  min-width: 0;
+}
+
+.empTimeTitle {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  color: #0f172a;
+}
+
+.empTimeTabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.empTimeTab {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12.5px;
+  font-weight: 650;
+  font-family: inherit;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.empTimeTab:hover {
+  background: #fff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.empTimeTabActive {
+  background: #111827;
+  border-color: #111827;
+  color: #fff;
+}
+
+.empTimeTabActive:hover {
+  background: #0b1220;
+  border-color: #0b1220;
+  color: #fff;
+}
+
 .breakSummaryFilters {
   display: flex;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 8px;
+  margin-bottom: 10px;
   align-items: center;
   flex-wrap: wrap;
 }
 
 .breakSummaryInput,
 .breakSummaryDate {
-  padding: 10px 14px;
+  padding: 7px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  font-size: 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
   font-family: var(--font-main);
   transition: border-color 0.15s, box-shadow 0.15s;
   background: #fff;
@@ -54,53 +137,76 @@
 .breakSummaryDate:focus {
   outline: none;
   border-color: var(--brand-purple);
-  box-shadow: 0 0 0 3px rgba(97, 31, 105, 0.12);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.16);
 }
 
 .breakSummaryXLSButton {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  background: linear-gradient(135deg, var(--brand-green) 0%, #2eb67d 100%);
+  gap: 6px;
+  padding: 7px 12px;
+  background: #0f766e;
   color: #fff;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 700;
   font-family: var(--font-main);
-  transition: transform 0.15s, box-shadow 0.15s;
-  box-shadow: 0 4px 14px rgba(0, 122, 90, 0.22);
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: background 0.12s ease;
+  box-shadow: none;
 }
 
 .breakSummaryXLSButton:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(0, 122, 90, 0.3);
+  background: #0d9488;
+  transform: none;
+  box-shadow: none;
 }
 
 .breakSummaryXLSButtonSecondary {
-  background: linear-gradient(135deg, var(--brand-purple) 0%, var(--brand-purple-dark) 100%);
-  box-shadow: 0 4px 14px rgba(97, 31, 105, 0.22);
+  background: #111827;
+  box-shadow: none;
 }
 
 .breakSummaryXLSButtonSecondary:hover {
-  box-shadow: 0 6px 18px rgba(97, 31, 105, 0.3);
+  background: #1f2937;
+  box-shadow: none;
+}
+
+.breakSumTableFit {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.breakSumTableFit thead th {
+  background: #111827 !important;
+  color: #fff !important;
+  padding: 7px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+
+.breakSumTableFit tbody td {
+  padding: 6px;
+  font-size: 12.5px;
+  vertical-align: middle;
 }
 
 .breakSummaryTableWrapper {
   width: 100%;
   max-height: 74vh;
   overflow: auto;
-  border-radius: 14px;
-  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  border: 1px solid #e4e7ec;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 #f1f5f9;
 }
 
 .breakSummaryTableWrapper::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 .breakSummaryTableWrapper::-webkit-scrollbar-thumb {
@@ -109,7 +215,7 @@
 }
 
 .breakSummaryTable {
-  min-width: 1280px;
+  min-width: 1100px;
   width: 100%;
   border-collapse: collapse;
 }
@@ -118,36 +224,38 @@
   position: sticky;
   top: 0;
   z-index: 2;
-  background: linear-gradient(120deg, var(--brand-purple) 0%, #5b2d8e 45%, var(--brand-green) 100%);
+  background: #111827;
 }
 
 .breakSummaryTable th {
-  padding: 12px 10px;
+  padding: 8px 8px;
   text-align: left;
-  font-weight: 600;
+  font-weight: 700;
   color: #fff;
   border: none;
-  font-size: 11px;
-  letter-spacing: 0.05em;
+  border-bottom: 1px solid #111827;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
+  background: #111827;
 }
 
 .breakSummaryTable td {
-  padding: 11px 10px;
+  padding: 7px 8px;
   border-bottom: 1px solid #f1f5f9;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--color-text);
   background: #fff;
   vertical-align: middle;
 }
 
 .breakSummaryTable tbody tr {
-  transition: background 0.15s;
+  transition: background 0.12s;
 }
 
 .breakSummaryTable tbody tr:hover {
-  background: #faf5ff;
+  background: #f8fafc;
 }
 
 .breakSummaryTable tbody tr:last-child td {
@@ -158,12 +266,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: #fff7ed;
-  color: var(--brand-gold);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 .badgeRunning::before {
@@ -171,7 +279,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--brand-gold);
+  background: #dc2626;
 }
 
 .cellMuted {
@@ -226,7 +334,7 @@
   width: 5px;
 }
 
-.listStatPurple::before { background: #611f69; }
+.listStatPurple::before { background: #14b8a6; }
 .listStatGreen::before { background: #16a34a; }
 .listStatRed::before { background: #dc2626; }
 
@@ -243,8 +351,8 @@
 }
 
 .listStatSelected {
-  border-color: #c4b5d0;
-  box-shadow: 0 8px 24px rgba(97, 31, 105, 0.12);
+  border-color: #99f6e4;
+  box-shadow: 0 8px 24px rgba(20, 184, 166, 0.16);
 }
 
 .listStatLabel {
@@ -271,4 +379,1312 @@
   .listStatsRow {
     grid-template-columns: 1fr;
   }
+}
+
+.breakSummaryHeader {
+  margin: 0 0 14px;
+  font-size: 1.15rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: #0b1220;
+}
+
+/* Attendance Summary — Leaves-style black header + fit columns */
+.attTableScroll {
+  max-height: 74vh;
+  overflow: auto;
+}
+
+.attTableFit {
+  min-width: 0;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.attTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.attTableFit thead th {
+  background: #111827;
+  padding: 8px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+
+.attTableFit tbody td {
+  padding: 7px 8px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attTableFit td:nth-child(2),
+.attTableFit td:nth-child(7) {
+  white-space: normal;
+}
+
+.attTableFit th:nth-child(1),
+.attTableFit td:nth-child(1) {
+  width: 4.5%;
+}
+
+.attTableFit th:nth-child(2),
+.attTableFit td:nth-child(2) {
+  width: 17%;
+}
+
+.attTableFit th:nth-child(3),
+.attTableFit td:nth-child(3) {
+  width: 11%;
+}
+
+.attTableFit th:nth-child(4),
+.attTableFit td:nth-child(4) {
+  width: 12%;
+}
+
+.attTableFit th:nth-child(5),
+.attTableFit td:nth-child(5) {
+  width: 10%;
+}
+
+.attTableFit th:nth-child(6),
+.attTableFit td:nth-child(6) {
+  width: 11%;
+}
+
+.attTableFit th:nth-child(7),
+.attTableFit td:nth-child(7) {
+  width: 12%;
+}
+
+.attTableFit th:nth-child(8),
+.attTableFit td:nth-child(8) {
+  width: 12%;
+}
+
+.attTableFit th:nth-child(9),
+.attTableFit td:nth-child(9) {
+  width: 10.5%;
+}
+
+.attRunning {
+  color: #ad7a2e;
+  font-weight: 700;
+}
+
+.attLate {
+  color: #bc3a3a;
+  font-weight: 700;
+}
+
+.attOnTime {
+  color: #2c8058;
+  font-weight: 600;
+}
+
+/* Manage Attendance — fit all 10 cols in viewport (no horizontal scrollbar) */
+.mgmtAttScroll {
+  max-height: 74vh;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.mgmtAttTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.mgmtAttTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.mgmtAttTableFit thead th {
+  background: #111827;
+  padding: 6px 4px;
+  font-size: 10px;
+  letter-spacing: 0.2px;
+}
+
+.mgmtAttTableFit tbody td {
+  padding: 5px 4px;
+  font-size: 11.5px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  max-width: 0; /* force fixed-layout cells to respect % widths */
+}
+
+.mgmtAttTableFit td:nth-child(2),
+.mgmtAttTableFit td:nth-child(9),
+.mgmtAttTableFit td:nth-child(10) {
+  white-space: normal;
+  max-width: none;
+  text-overflow: clip;
+}
+
+/* Late: never ellipsis-clip status text */
+.mgmtAttTableFit td:nth-child(9) {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.mgmtAttTableFit th:nth-child(1),
+.mgmtAttTableFit td:nth-child(1) {
+  width: 4.5%;
+  max-width: none;
+}
+
+.mgmtAttTableFit th:nth-child(2),
+.mgmtAttTableFit td:nth-child(2) {
+  width: 12%;
+}
+
+.mgmtAttTableFit th:nth-child(3),
+.mgmtAttTableFit td:nth-child(3) {
+  width: 7.5%;
+  max-width: none;
+}
+
+.mgmtAttTableFit th:nth-child(4),
+.mgmtAttTableFit td:nth-child(4) {
+  width: 7%;
+}
+
+.mgmtAttTableFit th:nth-child(5),
+.mgmtAttTableFit td:nth-child(5) {
+  width: 9%;
+  max-width: none;
+}
+
+.mgmtAttTableFit th:nth-child(6),
+.mgmtAttTableFit td:nth-child(6) {
+  width: 9.5%;
+  max-width: none;
+}
+
+.mgmtAttTableFit th:nth-child(7),
+.mgmtAttTableFit td:nth-child(7) {
+  width: 8.5%;
+}
+
+.mgmtAttTableFit th:nth-child(8),
+.mgmtAttTableFit td:nth-child(8) {
+  width: 8.5%;
+}
+
+.mgmtAttTableFit th:nth-child(9),
+.mgmtAttTableFit td:nth-child(9) {
+  width: 12%;
+}
+
+/* Fixed Actions col — survives sidebar slide-in without clipping */
+.mgmtAttTableFit th:nth-child(10),
+.mgmtAttTableFit td:nth-child(10) {
+  width: 72px;
+  min-width: 72px;
+  max-width: 72px;
+  overflow: hidden;
+  padding-left: 4px;
+  padding-right: 6px;
+}
+
+.mgmtAttTableFit td > *:not(.mgmtAttActions) {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.mgmtAttActions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mgmtAttBtn {
+  appearance: none;
+  border: none;
+  border-radius: 6px;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  color: #fff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mgmtAttBtnEdit {
+  background: #0f766e;
+}
+
+.mgmtAttBtnSave {
+  background: #16a34a;
+}
+
+.mgmtAttBtnCancel {
+  background: #64748b;
+}
+
+.mgmtAttBtnDelete {
+  background: #dc2626;
+}
+
+.mgmtAttCellInput {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  font-size: 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.mgmtAttAddPanel {
+  background: #f8fafc;
+  padding: 16px;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  border: 1px solid #e4e7ec;
+}
+
+.mgmtAttAddTitle {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mgmtAttAddGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.mgmtAttAddLabel {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  font-size: 12px;
+  color: #475569;
+}
+
+.mgmtAttAddActions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mgmtAttMeta {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+/* Manage Breaks — 10 cols, no horizontal scrollbar */
+.mgmtBreaksTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.mgmtBreaksTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.mgmtBreaksTableFit thead th {
+  background: #111827;
+  padding: 6px 4px;
+  font-size: 10px;
+  letter-spacing: 0.2px;
+}
+
+.mgmtBreaksTableFit tbody td {
+  padding: 5px 4px;
+  font-size: 11.5px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  max-width: 0;
+}
+
+.mgmtBreaksTableFit td:nth-child(2),
+.mgmtBreaksTableFit td:nth-child(5),
+.mgmtBreaksTableFit td:nth-child(9),
+.mgmtBreaksTableFit td:nth-child(10) {
+  white-space: normal;
+  max-width: none;
+  text-overflow: clip;
+}
+
+.mgmtBreaksTableFit td:nth-child(5),
+.mgmtBreaksTableFit td:nth-child(9) {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.mgmtBreaksTableFit th:nth-child(1),
+.mgmtBreaksTableFit td:nth-child(1) {
+  width: 4.5%;
+  max-width: none;
+}
+
+.mgmtBreaksTableFit th:nth-child(2),
+.mgmtBreaksTableFit td:nth-child(2) {
+  width: 12%;
+}
+
+.mgmtBreaksTableFit th:nth-child(3),
+.mgmtBreaksTableFit td:nth-child(3) {
+  width: 7%;
+  max-width: none;
+}
+
+.mgmtBreaksTableFit th:nth-child(4),
+.mgmtBreaksTableFit td:nth-child(4) {
+  width: 8%;
+}
+
+.mgmtBreaksTableFit th:nth-child(5),
+.mgmtBreaksTableFit td:nth-child(5) {
+  width: 7.5%;
+}
+
+.mgmtBreaksTableFit th:nth-child(6),
+.mgmtBreaksTableFit td:nth-child(6) {
+  width: 9%;
+  max-width: none;
+}
+
+.mgmtBreaksTableFit th:nth-child(7),
+.mgmtBreaksTableFit td:nth-child(7) {
+  width: 9%;
+  max-width: none;
+}
+
+.mgmtBreaksTableFit th:nth-child(8),
+.mgmtBreaksTableFit td:nth-child(8) {
+  width: 9%;
+  max-width: none;
+}
+
+.mgmtBreaksTableFit th:nth-child(9),
+.mgmtBreaksTableFit td:nth-child(9) {
+  width: 12%;
+}
+
+.mgmtBreaksTableFit th:nth-child(10),
+.mgmtBreaksTableFit td:nth-child(10) {
+  width: 72px;
+  min-width: 72px;
+  max-width: 72px;
+  overflow: hidden;
+  padding-left: 4px;
+  padding-right: 6px;
+}
+
+.mgmtBreaksTableFit td > *:not(.mgmtAttActions) {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.mgmtBreakTypeBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mgmtBreakTypeRegular {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.mgmtBreakTypePrayer {
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+
+/* Tungsten IN/OUT — Leaves / Manage Breaks style */
+.mgmtAttGhostBtn {
+  appearance: none;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mgmtAttGhostBtn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.mgmtAttGhostBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tungstenError {
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  font-size: 13.5px;
+}
+
+.tungstenPager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.tungstenPagerLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.tungstenTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.tungstenTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.tungstenTableFit thead th {
+  background: #111827;
+  padding: 8px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+
+.tungstenTableFit tbody td {
+  padding: 7px 8px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  max-width: 0;
+}
+
+.tungstenTableFit td:nth-child(2) {
+  white-space: normal;
+  max-width: none;
+  text-overflow: clip;
+  overflow: visible;
+}
+
+.tungstenTableFit th:nth-child(1),
+.tungstenTableFit td:nth-child(1) {
+  width: 8%;
+}
+
+.tungstenTableFit th:nth-child(2),
+.tungstenTableFit td:nth-child(2) {
+  width: 22%;
+}
+
+.tungstenTableFit th:nth-child(3),
+.tungstenTableFit td:nth-child(3) {
+  width: 16%;
+}
+
+.tungstenTableFit th:nth-child(4),
+.tungstenTableFit td:nth-child(4) {
+  width: 22%;
+}
+
+.tungstenTableFit th:nth-child(5),
+.tungstenTableFit td:nth-child(5) {
+  width: 14%;
+}
+
+.tungstenTableFit th:nth-child(6),
+.tungstenTableFit td:nth-child(6) {
+  width: 18%;
+}
+
+/* Employee List — Leaves-style black header table */
+.empListShowing {
+  margin-left: auto;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0f766e;
+  background: #ecfdf8;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.empListActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.empListColumnsActive {
+  background: #0f766e !important;
+  border-color: #0f766e !important;
+  color: #fff !important;
+}
+
+.empListColumnsCount {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.12);
+  color: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empListColumnsMenu {
+  position: fixed;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  border: 1px solid #e2e8f0;
+  padding: 10px 8px 8px;
+  z-index: 5000;
+  width: 260px;
+  max-height: 360px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.empListColumnsMenuTitle {
+  padding: 2px 10px 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.04em;
+}
+
+.empListColumnsItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #1e293b;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.empListColumnsItem:hover {
+  background: #f1f5f9;
+}
+
+.empListColumnsItem input {
+  accent-color: #0f766e;
+  width: 15px;
+  height: 15px;
+}
+
+.empListCheck {
+  width: 16px;
+  height: 16px;
+  accent-color: #0f766e;
+  cursor: pointer;
+}
+
+.empListTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: auto;
+  width: 100%;
+}
+
+.empListTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+}
+
+.empListTableFit thead th {
+  background: #111827;
+  padding: 8px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  color: #fff;
+}
+
+.empListTableFit tbody td {
+  padding: 7px 8px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+
+.empListStatusActive,
+.empListStatusInactive {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.empListStatusActive {
+  background: #ecfdf5;
+  color: #15803d;
+}
+
+.empListStatusInactive {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.empListRowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.empListIconBtn {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Employee Credentials — compact columns + View modal */
+.credTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.credTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.credTableFit thead th {
+  background: #111827;
+  padding: 8px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.25px;
+  color: #fff;
+}
+
+.credTableFit tbody td {
+  padding: 7px 6px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credTableFit td:nth-child(2),
+.credTableFit td:nth-child(5),
+.credTableFit td:nth-child(6) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.credTableFit th:nth-child(1),
+.credTableFit td:nth-child(1) {
+  width: 8%;
+}
+
+.credTableFit th:nth-child(2),
+.credTableFit td:nth-child(2) {
+  width: 28%;
+}
+
+.credTableFit th:nth-child(3),
+.credTableFit td:nth-child(3) {
+  width: 16%;
+}
+
+.credTableFit th:nth-child(4),
+.credTableFit td:nth-child(4) {
+  width: 16%;
+}
+
+.credTableFit th:nth-child(5),
+.credTableFit td:nth-child(5) {
+  width: 14%;
+}
+
+.credTableFit th:nth-child(6),
+.credTableFit td:nth-child(6) {
+  width: 18%;
+}
+
+/* Shift Scheduler — black header fit table */
+.shiftSchedTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.shiftSchedTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.shiftSchedTableFit thead th {
+  background: #111827;
+  padding: 8px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.25px;
+  color: #fff;
+}
+
+.shiftSchedTableFit tbody td {
+  padding: 7px 6px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.shiftSchedTableFit th:nth-child(1),
+.shiftSchedTableFit td:nth-child(1) {
+  width: 18%;
+}
+
+.shiftSchedTableFit th:nth-child(2),
+.shiftSchedTableFit td:nth-child(2),
+.shiftSchedTableFit th:nth-child(3),
+.shiftSchedTableFit td:nth-child(3) {
+  width: 12%;
+}
+
+.shiftSchedTableFit th:nth-child(4),
+.shiftSchedTableFit td:nth-child(4),
+.shiftSchedTableFit th:nth-child(5),
+.shiftSchedTableFit td:nth-child(5) {
+  width: 12%;
+}
+
+.shiftSchedTableFit th:nth-child(6),
+.shiftSchedTableFit td:nth-child(6) {
+  width: 16%;
+}
+
+.shiftSchedTableFit th:nth-child(7),
+.shiftSchedTableFit td:nth-child(7) {
+  width: 14%;
+  white-space: normal;
+}
+
+/* Shift Management — fit viewport (no bottom horizontal scrollbar) */
+.shiftMgmtScroll {
+  max-height: 74vh;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Shift Management — black header fit table */
+.shiftMgmtTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* Departments — black header fit (sidebar-safe) */
+.deptTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.deptTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.deptTableFit thead th {
+  background: #111827;
+  padding: 8px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.25px;
+  color: #fff;
+}
+
+.deptTableFit tbody td {
+  padding: 8px 6px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+
+.deptTableFit th:nth-child(1),
+.deptTableFit td:nth-child(1) {
+  width: 34%;
+}
+
+.deptTableFit th:nth-child(2),
+.deptTableFit td:nth-child(2) {
+  width: 28%;
+  text-align: center;
+}
+
+.deptTableFit th:nth-child(3),
+.deptTableFit td:nth-child(3),
+.deptTableFit th:nth-child(4),
+.deptTableFit td:nth-child(4) {
+  width: 19%;
+  text-align: center;
+}
+
+.deptBtn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.deptBtnShow {
+  border: 1px solid #99f6e4;
+  background: #f0fdfa;
+  color: #0f766e;
+}
+
+.deptBtnShow:hover {
+  background: #ccfbf1;
+  border-color: #5eead4;
+}
+
+.deptBtnShowActive {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #fff;
+}
+
+.deptBtnShowActive:hover {
+  background: #0d9488;
+  border-color: #0d9488;
+}
+
+.deptBtnEdit {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+}
+
+.deptBtnEdit:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.deptBtnSave {
+  border: 1px solid #86efac;
+  background: #ecfdf5;
+  color: #166534;
+}
+
+.deptBtnSave:hover {
+  background: #d1fae5;
+  border-color: #4ade80;
+}
+
+.deptBtnDelete {
+  border: 1px solid #fecaca;
+  background: #fff;
+  color: #dc2626;
+}
+
+.deptBtnDelete:hover {
+  background: #fef2f2;
+  border-color: #f87171;
+}
+
+.deptEmpPanel {
+  margin-top: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.deptEmpItem {
+  padding: 5px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 12.5px;
+  color: #334155;
+}
+
+.deptEmpItem:last-child {
+  border-bottom: none;
+}
+
+/* Events — black header fit (sidebar-safe, no bottom scrollbar) */
+.eventsTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.eventsTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.eventsTableFit thead th {
+  background: #111827;
+  padding: 8px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.25px;
+  color: #fff;
+}
+
+.eventsTableFit tbody td {
+  padding: 8px 6px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  vertical-align: top;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eventsTableFit th:nth-child(1),
+.eventsTableFit td:nth-child(1) {
+  width: 26%;
+}
+
+.eventsTableFit th:nth-child(2),
+.eventsTableFit td:nth-child(2) {
+  width: 8%;
+  text-align: center;
+}
+
+.eventsTableFit th:nth-child(3),
+.eventsTableFit td:nth-child(3) {
+  width: 28%;
+}
+
+.eventsTableFit th:nth-child(4),
+.eventsTableFit td:nth-child(4) {
+  width: 14%;
+}
+
+.eventsTableFit th:nth-child(5),
+.eventsTableFit td:nth-child(5) {
+  width: 12%;
+}
+
+.eventsTableFit th:nth-child(6),
+.eventsTableFit td:nth-child(6) {
+  width: 12%;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.eventsScroll {
+  max-height: 62vh;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.eventsLayout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .eventsLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.shiftMgmtTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.shiftMgmtTableFit thead th {
+  background: #111827;
+  padding: 6px 4px;
+  font-size: 10px;
+  letter-spacing: 0.2px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.shiftMgmtTableFit tbody td {
+  padding: 5px 4px;
+  font-size: 11.5px;
+  line-height: 1.25;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Name + Actions: allow wrap for controls, keep cell clipped */
+.shiftMgmtTableFit td:nth-child(2),
+.shiftMgmtTableFit td:nth-child(9) {
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.shiftMgmtTableFit th:nth-child(1),
+.shiftMgmtTableFit td:nth-child(1) {
+  width: 4%;
+}
+
+.shiftMgmtTableFit th:nth-child(2),
+.shiftMgmtTableFit td:nth-child(2) {
+  width: 15%;
+}
+
+.shiftMgmtTableFit th:nth-child(3),
+.shiftMgmtTableFit td:nth-child(3) {
+  width: 11%;
+}
+
+.shiftMgmtTableFit th:nth-child(4),
+.shiftMgmtTableFit td:nth-child(4) {
+  width: 8%;
+}
+
+.shiftMgmtTableFit th:nth-child(5),
+.shiftMgmtTableFit td:nth-child(5) {
+  width: 7%;
+}
+
+.shiftMgmtTableFit th:nth-child(6),
+.shiftMgmtTableFit td:nth-child(6) {
+  width: 14%;
+}
+
+.shiftMgmtTableFit th:nth-child(7),
+.shiftMgmtTableFit td:nth-child(7) {
+  width: 14%;
+}
+
+.shiftMgmtTableFit th:nth-child(8),
+.shiftMgmtTableFit td:nth-child(8) {
+  width: 7%;
+  text-align: center;
+}
+
+.shiftMgmtTableFit th:nth-child(9),
+.shiftMgmtTableFit td:nth-child(9) {
+  width: 20%;
+}
+
+.credModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  box-sizing: border-box;
+}
+
+.credModalCard {
+  width: min(480px, 100%);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+}
+
+.credModalHead {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.credModalTitle {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.credModalSub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.credModalBody {
+  padding: 16px 18px;
+}
+
+.credDetailList {
+  margin: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.credDetailList > div {
+  display: grid;
+  gap: 4px;
+}
+
+.credDetailList dt {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.credDetailList dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.credPasswordMask {
+  color: #94a3b8 !important;
+  letter-spacing: 0.08em;
+}
+
+.credModalFields {
+  display: grid;
+  gap: 12px;
+}
+
+.credField {
+  display: grid;
+  gap: 6px;
+}
+
+.credField > span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.credField input {
+  width: 100%;
+}
+
+.credModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
 }

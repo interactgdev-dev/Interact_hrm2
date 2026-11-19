@@ -99,74 +99,46 @@ export type EmployeeFaceVerificationRow = {
   descriptor_count: number;
 };
 
-async function loadEnrollmentCounts(): Promise<
-  Map<number, { photo_count: number; descriptor_count: number }>
-> {
-  const map = new Map<number, { photo_count: number; descriptor_count: number }>();
-  try {
-    await ensureFaceEnrollmentTable();
-    const [rows] = await pool.query(`
+export async function listEmployeesFaceVerification(): Promise<EmployeeFaceVerificationRow[]> {
+  await Promise.all([ensureFaceVerificationColumn(), ensureFaceEnrollmentTable()]);
+
+  // One joined query (was 3 full-table scans) — keeps Face Enrollment page snappy.
+  const [rows] = await pool.query(`
+    SELECT
+      e.id,
+      e.first_name,
+      e.last_name,
+      e.pseudonym,
+      e.employee_code,
+      d.name AS department_name,
+      COALESCE(e.face_verification_enabled, 0) AS face_verification_enabled,
+      COALESCE(fe.photo_count, 0) AS photo_count,
+      COALESCE(fe.descriptor_count, 0) AS descriptor_count
+    FROM hrm_employees e
+    LEFT JOIN employee_jobs j ON e.id = j.employee_id
+    LEFT JOIN departments d ON j.department_id = d.id
+    LEFT JOIN (
       SELECT
         employee_id,
         COUNT(*) AS photo_count,
         SUM(CASE WHEN face_descriptor IS NOT NULL THEN 1 ELSE 0 END) AS descriptor_count
       FROM employee_face_enrollment
       GROUP BY employee_id
-    `);
-    for (const raw of rows as Array<Record<string, unknown>>) {
-      const id = Number(raw.employee_id);
-      if (!id) continue;
-      map.set(id, {
-        photo_count: Number(raw.photo_count ?? 0),
-        descriptor_count: Number(raw.descriptor_count ?? 0),
-      });
-    }
-  } catch {
-    // no enrollment data
-  }
-  return map;
-}
+    ) fe ON fe.employee_id = e.id
+    WHERE e.status IS NULL OR e.status IN ('enabled', 'active', 'Enabled', 'Active')
+    ORDER BY e.id ASC
+  `);
 
-/**
- * One employee query (name + flag + dept) + one enrollment aggregate.
- * Avoids the previous 3-query fan-out (base + flags + counts).
- */
-export async function listEmployeesFaceVerification(): Promise<EmployeeFaceVerificationRow[]> {
-  await ensureFaceVerificationColumn();
-
-  const [empResult, enrollmentCounts] = await Promise.all([
-    pool.query(`
-      SELECT
-        e.id,
-        e.first_name,
-        e.last_name,
-        e.pseudonym,
-        e.employee_code,
-        COALESCE(e.face_verification_enabled, 0) AS face_verification_enabled,
-        d.name AS department_name
-      FROM hrm_employees e
-      LEFT JOIN employee_jobs j ON e.id = j.employee_id
-      LEFT JOIN departments d ON j.department_id = d.id
-      ORDER BY e.id ASC
-    `),
-    loadEnrollmentCounts(),
-  ]);
-
-  const [rows] = empResult;
   const seen = new Set<number>();
   const out: EmployeeFaceVerificationRow[] = [];
-
   for (const raw of rows as Array<Record<string, unknown>>) {
     const id = Number(raw.id);
     if (!id || seen.has(id)) continue;
     seen.add(id);
-
     const name = [raw.first_name, raw.last_name]
       .map((v) => String(v || "").trim())
       .filter(Boolean)
       .join(" ");
-    const counts = enrollmentCounts.get(id) ?? { photo_count: 0, descriptor_count: 0 };
-
     out.push({
       id,
       name: name || `Employee ${id}`,
@@ -174,10 +146,9 @@ export async function listEmployeesFaceVerification(): Promise<EmployeeFaceVerif
       employee_code: raw.employee_code != null ? String(raw.employee_code) : null,
       department: raw.department_name != null ? String(raw.department_name) : null,
       face_verification_enabled: Number(raw.face_verification_enabled ?? 0) === 1,
-      photo_count: counts.photo_count,
-      descriptor_count: counts.descriptor_count,
+      photo_count: Number(raw.photo_count ?? 0),
+      descriptor_count: Number(raw.descriptor_count ?? 0),
     });
   }
-
   return out;
 }

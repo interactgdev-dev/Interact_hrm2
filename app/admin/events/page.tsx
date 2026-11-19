@@ -1,10 +1,12 @@
 "use client";
 import React from "react";
+import { FaCalendarAlt } from "react-icons/fa";
 import { showAppConfirm } from "@/lib/app-confirm";
-import LayoutDashboard from "@/app/layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import { CompanyPolicySection } from "../company-policy/CompanyPolicySection";
 import styles from "../admin-page.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
+import leaveStyles from "../../leave/leave.module.css";
 
 interface EventItem {
   id: number;
@@ -230,38 +232,48 @@ export default function AdminEventsPage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
-        <div className={styles.inner}>
-          <h1 className={styles.title}>Events & Announcements</h1>
-          <p className={styles.subtitle}>
-            Create events here — they appear on the employee dashboard Upcoming Events calendar.
-            US federal holidays are linked automatically and highlight on the same calendar.
-          </p>
-
-          <div className={styles.card}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2 className={styles.cardTitle} style={{ margin: 0 }}>Widget Settings</h2>
-              {headingSaving && <span className={styles.muted}>Saving...</span>}
-            </div>
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label>Widget Heading</label>
-                <select
-                  value={widgetHeading}
-                  onChange={handleHeadingChange}
-                  disabled={headingSaving}
-                  className={styles.select}
-                >
-                  <option value="Upcoming Events">Upcoming Events</option>
-                  <option value="Announcements">Announcements</option>
-                </select>
-              </div>
+        <div className={tableStyles.breakSummaryContainer}>
+          <div className={styles.pageHeader}>
+            <div>
+              <h1 className={styles.pageHeaderTitle}>
+                <FaCalendarAlt
+                  style={{ marginRight: 10, color: "#0f766e", verticalAlign: "middle" }}
+                />
+                Events & Announcements
+              </h1>
+              <p className={tableStyles.mgmtAttMeta} style={{ marginTop: 4 }}>
+                Create events for the employee dashboard calendar. US federal holidays are linked
+                automatically.
+              </p>
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 380px) 1fr", gap: 20 }}>
-            <div className={styles.card}>
+          <div className={leaveStyles.toolbar}>
+            <label className={styles.field} style={{ margin: 0, minWidth: 200 }}>
+              <span style={{ marginBottom: 4, display: "block" }}>Widget Heading</span>
+              <select
+                value={widgetHeading}
+                onChange={handleHeadingChange}
+                disabled={headingSaving}
+                className={leaveStyles.toolbarSelect}
+              >
+                <option value="Upcoming Events">Upcoming Events</option>
+                <option value="Announcements">Announcements</option>
+              </select>
+            </label>
+            <span className={tableStyles.empListShowing}>
+              {headingSaving
+                ? "Saving…"
+                : loading
+                  ? "Loading…"
+                  : `Showing: ${events.length} event${events.length === 1 ? "" : "s"}`}
+            </span>
+          </div>
+
+          <div className={tableStyles.eventsLayout}>
+            <div className={styles.card} style={{ marginBottom: 0 }}>
               <h2 className={styles.cardTitle}>Add Event</h2>
               <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div className={styles.field}>
@@ -303,7 +315,15 @@ export default function AdminEventsPage() {
                     className={styles.input}
                   />
                 </div>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 14,
+                    color: "#334155",
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={!!form.is_all_day}
@@ -346,95 +366,110 @@ export default function AdminEventsPage() {
                     Same color shows on the employee event button and calendar date.
                   </p>
                 </div>
-                <button type="submit" disabled={saving} className={styles.btnPrimary}>
-                  {saving ? "Saving..." : "Save Event"}
+                <button type="submit" disabled={saving} className={styles.btnGreen}>
+                  {saving ? "Saving…" : "Save Event"}
                 </button>
               </form>
             </div>
 
-            <div className={tableStyles.breakSummaryContainer} style={{ marginBottom: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h2 className={tableStyles.pageTitle} style={{ margin: 0 }}>{widgetHeading}</h2>
-                {loading && <span className={styles.muted}>Loading...</span>}
-              </div>
-              <div className={tableStyles.breakSummaryTableWrapper}>
-                <table className={tableStyles.breakSummaryTable} style={{ minWidth: 640 }}>
-                  <thead>
-                    <tr>
-                      <th>Title</th>
-                      <th>Color</th>
-                      <th>Schedule</th>
-                      <th>Location</th>
-                      <th>Status</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {events.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className={tableStyles.breakSummaryNoRecords}>
-                          No events yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      events.map((ev) => (
-                        <tr key={ev.id}>
-                          <td>
-                            <div style={{ fontWeight: 700 }}>{ev.title}</div>
-                            {ev.description && (
-                              <div className={tableStyles.cellMuted} style={{ marginTop: 4 }}>
-                                {ev.description}
-                              </div>
-                            )}
-                          </td>
-                          <td>
-                            <span
-                              title={ev.color || ""}
-                              style={{
-                                display: "inline-block",
-                                width: 18,
-                                height: 18,
-                                borderRadius: 999,
-                                background: ev.color || EVENT_COLORS[0],
-                                border: "1px solid #e2e8f0",
-                                verticalAlign: "middle",
-                              }}
-                            />
-                          </td>
-                          <td className={tableStyles.cellMuted}>
-                            {new Date(ev.start_at).toLocaleString()}
-                            {ev.end_at ? ` – ${new Date(ev.end_at).toLocaleString()}` : ""}
-                            <div style={{ marginTop: 4, fontSize: 12 }}>
-                              {ev.is_all_day ? "All day" : "Timed"}
-                            </div>
-                          </td>
-                          <td className={tableStyles.cellMuted}>{ev.location || "—"}</td>
-                          <td>
-                            <span className={`${styles.badge} ${styles.badgeApproved}`}>{ev.status}</span>
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(ev.id)}
-                              disabled={deletingId === ev.id}
-                              className={styles.btnReject}
-                              style={{ padding: "6px 12px", fontSize: 12 }}
-                            >
-                              {deletingId === ev.id ? "…" : "Delete"}
-                            </button>
-                          </td>
+            <div style={{ minWidth: 0, width: "100%" }}>
+              <h2 className={tableStyles.pageTitle} style={{ marginTop: 0, marginBottom: 10 }}>
+                {widgetHeading}
+              </h2>
+              <div className={leaveStyles.reqTableShell}>
+                <div className={tableStyles.eventsScroll}>
+                  {loading ? (
+                    <div className={leaveStyles.loading}>Loading events…</div>
+                  ) : (
+                    <table className={`${leaveStyles.reqTable} ${tableStyles.eventsTableFit}`}>
+                      <thead>
+                        <tr>
+                          <th>Title</th>
+                          <th>Color</th>
+                          <th>Schedule</th>
+                          <th>Location</th>
+                          <th>Status</th>
+                          <th>Actions</th>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody>
+                        {events.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className={leaveStyles.reqEmpty}>
+                              No events yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          events.map((ev) => (
+                            <tr key={ev.id}>
+                              <td>
+                                <div style={{ fontWeight: 700, color: "#0f766e" }}>{ev.title}</div>
+                                {ev.description ? (
+                                  <div
+                                    className={tableStyles.cellMuted}
+                                    style={{ marginTop: 4, whiteSpace: "normal" }}
+                                    title={ev.description}
+                                  >
+                                    {ev.description}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td>
+                                <span
+                                  title={ev.color || ""}
+                                  style={{
+                                    display: "inline-block",
+                                    width: 16,
+                                    height: 16,
+                                    borderRadius: 999,
+                                    background: ev.color || EVENT_COLORS[0],
+                                    border: "1px solid #e2e8f0",
+                                    verticalAlign: "middle",
+                                  }}
+                                />
+                              </td>
+                              <td className={tableStyles.cellMuted} style={{ whiteSpace: "normal" }}>
+                                {new Date(ev.start_at).toLocaleString()}
+                                {ev.end_at ? ` – ${new Date(ev.end_at).toLocaleString()}` : ""}
+                                <div style={{ marginTop: 4, fontSize: 11 }}>
+                                  {ev.is_all_day ? "All day" : "Timed"}
+                                </div>
+                              </td>
+                              <td className={tableStyles.cellMuted} title={ev.location || undefined}>
+                                {ev.location || "—"}
+                              </td>
+                              <td>
+                                <span className={`${styles.badge} ${styles.badgeApproved}`}>
+                                  {ev.status}
+                                </span>
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(ev.id)}
+                                  disabled={deletingId === ev.id}
+                                  className={`${tableStyles.deptBtn} ${tableStyles.deptBtnDelete}`}
+                                >
+                                  {deletingId === ev.id ? "…" : "Delete"}
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
-          <div className={styles.card}>
+          <div className={styles.card} style={{ marginTop: 16 }}>
             <h2 className={styles.cardTitle}>Reminders</h2>
-            <form onSubmit={handleAddReminder} style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+            <form
+              onSubmit={handleAddReminder}
+              style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}
+            >
               <input
                 required
                 placeholder="Enter reminder message..."
@@ -444,30 +479,41 @@ export default function AdminEventsPage() {
                 style={{ flex: 1, minWidth: 200 }}
               />
               <button type="submit" disabled={reminderSaving} className={styles.btnGreen}>
-                {reminderSaving ? "Adding..." : "Add Reminder"}
+                {reminderSaving ? "Adding…" : "Add Reminder"}
               </button>
             </form>
-            <div className={styles.requestList}>
-              {reminders.length === 0 && (
-                <div className={styles.empty} style={{ padding: 24 }}>No reminders yet.</div>
-              )}
-              {reminders.map((reminder) => (
-                <div key={reminder.id} className={styles.requestCard}>
-                  <div className={styles.requestBody}>
-                    <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5 }}>{reminder.message}</p>
-                  </div>
-                  <div className={styles.actions}>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteReminder(reminder.id)}
-                      disabled={deletingReminderId === reminder.id}
-                      className={styles.btnReject}
-                    >
-                      {deletingReminderId === reminder.id ? "…" : "Delete"}
-                    </button>
-                  </div>
-                </div>
-              ))}
+            <div className={leaveStyles.reqTableShell}>
+              <div className={tableStyles.eventsScroll} style={{ maxHeight: 280 }}>
+                {reminders.length === 0 ? (
+                  <div className={leaveStyles.reqEmpty}>No reminders yet.</div>
+                ) : (
+                  <table className={`${leaveStyles.reqTable} ${tableStyles.eventsTableFit}`}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: "80%" }}>Message</th>
+                        <th style={{ width: "20%" }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reminders.map((reminder) => (
+                        <tr key={reminder.id}>
+                          <td style={{ whiteSpace: "normal" }}>{reminder.message}</td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteReminder(reminder.id)}
+                              disabled={deletingReminderId === reminder.id}
+                              className={`${tableStyles.deptBtn} ${tableStyles.deptBtnDelete}`}
+                            >
+                              {deletingReminderId === reminder.id ? "…" : "Delete"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
 
@@ -476,6 +522,6 @@ export default function AdminEventsPage() {
           </div>
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

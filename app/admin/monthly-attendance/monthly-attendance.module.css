@@ -1,0 +1,791 @@
+/* Interact Global Monthly Attendance — same teal / white / black layout as Claims / Loan / Advance */
+
+.page {
+  --ig-teal: #14b8a6;
+  --ig-teal-deep: #0d9488;
+  --ig-teal-ink: #0f766e;
+  --ig-black: #0b1220;
+  --ig-ink: #111827;
+  --ig-muted: #64748b;
+  --ig-line: #e7ecef;
+  --ig-soft: #f5f8fa;
+  --ig-teal-soft: #f0fdfa;
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 8px 16px 32px;
+  box-sizing: border-box;
+}
+
+.topBar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ig-line);
+}
+
+.topLeft {
+  min-width: 0;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ig-teal-ink);
+}
+
+.eyebrowDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ig-teal);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.2);
+}
+
+.heroTitle {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  color: var(--ig-black);
+  line-height: 1.15;
+}
+
+.heroSub {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  color: var(--ig-muted);
+  max-width: 58ch;
+  line-height: 1.5;
+}
+
+.importBanner {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ig-teal-ink);
+}
+
+.topRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.monthChip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid var(--ig-line);
+  border-radius: 999px;
+  padding: 6px 8px 6px 14px;
+  box-shadow: 0 2px 8px rgba(11, 18, 32, 0.04);
+}
+
+.monthChip span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ig-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.monthChip input {
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ig-ink);
+  outline: none;
+  padding: 4px 6px;
+  min-width: 130px;
+}
+
+.metricStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  background: #fff;
+  border: 1px solid var(--ig-line);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 18px;
+  box-shadow: 0 6px 20px rgba(11, 18, 32, 0.035);
+}
+
+.metric {
+  padding: 16px 18px;
+  position: relative;
+}
+
+.metricClickable {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: background 0.15s ease;
+}
+
+.metricClickable:hover {
+  background: #f8fafc;
+}
+
+.metricClickable:focus-visible {
+  outline: 2px solid #14b8a6;
+  outline-offset: -2px;
+  z-index: 1;
+}
+
+.metric + .metric {
+  border-left: 1px solid var(--ig-line);
+}
+
+.metricLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ig-muted);
+}
+
+.metricValue {
+  margin-top: 6px;
+  font-size: 1.45rem;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  color: var(--ig-ink);
+}
+
+.metricAccent .metricValue {
+  color: var(--ig-teal-ink);
+}
+
+@media (max-width: 800px) {
+  .metricStrip {
+    grid-template-columns: 1fr 1fr;
+  }
+  .metric:nth-child(3) {
+    border-left: none;
+    border-top: 1px solid var(--ig-line);
+  }
+  .metric:nth-child(4) {
+    border-top: 1px solid var(--ig-line);
+  }
+}
+
+@media (max-width: 480px) {
+  .metricStrip {
+    grid-template-columns: 1fr;
+  }
+  .metric + .metric {
+    border-left: none;
+    border-top: 1px solid var(--ig-line);
+  }
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid var(--ig-line);
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(11, 18, 32, 0.04);
+  padding: 0;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ig-line);
+  background: linear-gradient(180deg, #fafcfd 0%, #fff 100%);
+}
+
+.panelHeadLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 750;
+  color: var(--ig-ink);
+  letter-spacing: -0.015em;
+}
+
+.panelHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ig-muted);
+}
+
+.panelBody {
+  padding: 18px 20px 20px;
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(160px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+@media (max-width: 900px) {
+  .filters {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ig-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.input,
+.select {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 11px;
+  font-size: 14px;
+  line-height: 1.35;
+  background: #fff;
+  color: var(--ig-ink);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 36px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 14px 14px;
+}
+
+.input:hover,
+.select:hover {
+  border-color: #cbd5e1;
+}
+
+.input:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--ig-teal);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.15);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.primaryBtn {
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 11px;
+  border: none;
+  background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.28);
+  white-space: nowrap;
+}
+
+.primaryBtn:hover {
+  box-shadow: 0 8px 18px rgba(13, 148, 136, 0.34);
+}
+
+.secondaryBtn {
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 11px;
+  border: 1px solid #e2e8f0;
+  background: var(--ig-soft);
+  color: #334155;
+  font-weight: 600;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.secondaryBtn:hover {
+  background: #eef2f6;
+  border-color: #cbd5e1;
+}
+
+.dangerBtn {
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 11px;
+  border: none;
+  background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(197, 48, 48, 0.22);
+  white-space: nowrap;
+}
+
+.ghostBtn {
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  font-weight: 600;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ghostBtn:hover {
+  background: var(--ig-soft);
+}
+
+.ghostBtnActive {
+  background: #64748b;
+  border-color: #64748b;
+  color: #fff;
+}
+
+.ghostBtnActive:hover {
+  background: #475569;
+}
+
+.list {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+}
+
+.empCard {
+  background: #fff;
+  border: 1px solid var(--ig-line);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(11, 18, 32, 0.04);
+  padding: 16px;
+  width: 100%;
+  box-sizing: border-box;
+  /* visible so Export ▾ menu is not clipped by the card edge */
+  overflow: visible;
+  position: relative;
+}
+
+.empCardMenuOpen {
+  z-index: 40;
+}
+
+/* Keep class for expand state styling; cards stay full-width list rows */
+.empCardExpanded {
+  padding: 16px;
+}
+
+.empCardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.empCardLeft {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.empCardSelected {
+  border-color: #99f6e4;
+  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.18), 0 8px 24px rgba(11, 18, 32, 0.04);
+}
+
+.cardCheckWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.cardCheck {
+  width: 17px;
+  height: 17px;
+  accent-color: #0f766e;
+  cursor: pointer;
+}
+
+.selectBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid var(--ig-line);
+  border-radius: 12px;
+}
+
+.selectAllLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+
+.selectHint {
+  font-size: 12.5px;
+  color: #94a3b8;
+}
+
+.empMeta {
+  font-size: 11px;
+  color: var(--ig-muted);
+  margin-top: 4px;
+  padding-left: 44px;
+}
+
+.empId {
+  font-weight: 700;
+  color: var(--ig-teal-ink);
+  font-size: 1rem;
+}
+
+.empActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.exportMenuWrap {
+  position: relative;
+  display: inline-flex;
+  z-index: 5;
+}
+
+.exportMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 196px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.exportMenuItem {
+  appearance: none;
+  border: none;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.exportMenuItem:hover {
+  background: #ecfdf8;
+  color: #0f766e;
+}
+
+.tableWrap {
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--ig-line);
+  border-radius: 12px;
+  /* Expand table: compact viewport, scroll inside — not full-page tall */
+  max-height: min(42vh, 420px);
+  max-width: 100%;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+  font-size: 12px;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #0b1220;
+  color: #ffffff;
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 7px 9px;
+  border-bottom: 1px solid #0b1220;
+  font-weight: 700;
+}
+
+.table td {
+  padding: 6px 9px;
+  border-bottom: 1px solid #f1f5f9;
+  color: var(--ig-ink);
+  vertical-align: middle;
+}
+
+.table select,
+.table input[type="text"],
+.table input:not([type]),
+.table textarea {
+  font-size: 12px;
+  min-height: 28px;
+  padding: 4px 8px;
+  max-width: 100%;
+}
+
+.table tr:hover td {
+  background: #f7fffd;
+}
+
+.table tfoot td {
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+  padding-left: 4px;
+}
+
+.loading,
+.empty {
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--ig-muted);
+  font-size: 14px;
+  background: #fff;
+  border: 1px solid var(--ig-line);
+  border-radius: 16px;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  box-sizing: border-box;
+}
+
+.modalCard {
+  width: min(1100px, 100%);
+  max-height: min(86vh, 820px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--ig-line);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+}
+
+.modalHead {
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--ig-line);
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--ig-teal-ink, #0f3d3e);
+}
+
+.modalSub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--ig-muted);
+}
+
+.modalBody {
+  padding: 12px 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.modalEmpty {
+  margin: 24px 0;
+  text-align: center;
+  color: var(--ig-muted);
+  font-size: 14px;
+}
+
+.modalTableWrap {
+  overflow: auto;
+  border: 1px solid var(--ig-line);
+  border-radius: 12px;
+  max-height: min(56vh, 520px);
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--ig-line);
+  background: #f8fafc;
+}
+
+/* Deduction preview — match Excel export layout */
+.deductionModalCard {
+  width: min(1180px, 100%);
+}
+
+.deductionSheet {
+  border: 1px solid #000;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.deductionBannerName {
+  background: #ffff00;
+  color: #000;
+  font-weight: 700;
+  font-size: 14px;
+  text-align: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #000;
+}
+
+.deductionBannerTitle {
+  background: #1f4e79;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid #000;
+}
+
+.deductionExportTable {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.deductionExportTable th,
+.deductionExportTable td {
+  border: 1px solid #000;
+  padding: 6px 4px;
+  text-align: center;
+  vertical-align: middle;
+  word-break: break-word;
+}
+
+.deductionExportTable thead th {
+  background: #d9d9d9;
+  color: #000;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.deductionRowTardy td {
+  background: #ffff00;
+}
+
+.deductionRowAbsent td {
+  background: #ffc7ce;
+}
+
+.deductionCell {
+  color: #c00000 !important;
+  font-weight: 700 !important;
+}
+
+.deductionExportTable tfoot td {
+  background: #fff;
+}

@@ -16,7 +16,7 @@
 .pageTitle {
   font-size: 2rem;
   font-weight: 700;
-  color: #667eea;
+  color: #0f766e;
   margin: 0 0 10px 0;
   display: flex;
   align-items: center;
@@ -45,7 +45,7 @@
 .divider {
   grid-column: 1 / -1;
   text-align: center;
-  color: #667eea;
+  color: #0f766e;
   font-weight: 600;
   font-size: 0.9rem;
   padding: 8px 0;
@@ -86,13 +86,13 @@
 .controlInput:focus,
 .controlSelect:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: #0f766e;
   box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
 }
 
 .assignButton {
   padding: 12px 30px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
   color: white;
   border: none;
   border-radius: 8px;
@@ -148,14 +148,14 @@
 }
 
 .dropdownToggle:hover {
-  border-color: #667eea;
+  border-color: #0f766e;
   background: #f8f9ff;
 }
 
 .dropdownToggle::after {
   content: "▼";
   font-size: 0.7rem;
-  color: #667eea;
+  color: #0f766e;
   margin-left: 10px;
 }
 
@@ -165,7 +165,7 @@
   left: 0;
   right: 0;
   background: white;
-  border: 2px solid #667eea;
+  border: 2px solid #0f766e;
   border-radius: 8px;
   margin-top: 5px;
   box-shadow: 0 8px 24px rgba(102, 126, 234, 0.2);
@@ -206,13 +206,13 @@
 
 .dropdownOptionSelected {
   background: #f1f3ff;
-  border-left: 3px solid #667eea;
+  border-left: 3px solid #0f766e;
 }
 
 .dropdownOption:hover {
   background: #f8f9ff;
   padding-left: 20px;
-  color: #667eea;
+  color: #0f766e;
   font-weight: 500;
 }
 
@@ -252,8 +252,8 @@
 }
 
 .optionCheckboxChecked {
-  background: #667eea;
-  border-color: #667eea;
+  background: #0f766e;
+  border-color: #0f766e;
   color: white;
 }
 
@@ -325,7 +325,7 @@
 }
 
 .employeeTable thead {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
   color: white;
 }
 
@@ -376,7 +376,7 @@
   right: 0;
   z-index: 2;
   width: 7%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
   box-shadow: -8px 0 12px rgba(15, 29, 64, 0.12);
 }
 
@@ -493,14 +493,18 @@
 
 .shiftName {
   font-weight: 600;
-  color: #667eea;
-  padding: 6px 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 4px 8px;
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
   color: white;
   border-radius: 6px;
-  font-size: 0.85rem;
-  display: inline-width;
-  width: fit-content;
+  font-size: 0.75rem;
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .shiftTime {
@@ -524,7 +528,7 @@
 }
 
 .loading {
-  color: #667eea;
+  color: #0f766e;
   font-weight: 600;
 }
 
@@ -565,7 +569,7 @@
 
 .searchInput:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: #0f766e;
   box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
 }
 
@@ -583,14 +587,14 @@
 
 .statusFilter:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: #0f766e;
   box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
 }
 
 .searchCount {
   white-space: nowrap;
   font-weight: 600;
-  color: #667eea;
+  color: #0f766e;
   font-size: 0.9rem;
 }
 
@@ -606,47 +610,53 @@
 /* Edit Mode Styles */
 .actionsCell {
   text-align: center;
+  min-width: 0;
 }
 
 .editButton {
-  background: #667eea;
+  background: #0f766e;
   color: white;
   border: none;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.9rem;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.3s ease;
   font-weight: bold;
+  flex-shrink: 0;
 }
 
 .editButton:hover {
-  background: #764ba2;
-  transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  background: #0d9488;
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(15, 118, 110, 0.35);
 }
 
 .actionButtons {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   justify-content: center;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .rowAssignSelect {
-  min-width: 150px;
-  max-width: 220px;
-  padding: 7px 10px;
-  border: 1.5px solid #c4b5e0;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 6px;
+  border: 1.5px solid #99f6e4;
   border-radius: 8px;
   background: #fff;
-  color: #611f69;
-  font-size: 0.82rem;
+  color: #0f766e;
+  font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .rowAssignSelect:disabled {
@@ -656,7 +666,7 @@
 
 .rowAssignSelect:focus {
   outline: none;
-  border-color: #611f69;
+  border-color: #0f766e;
   box-shadow: 0 0 0 3px rgba(97, 31, 105, 0.12);
 }
 
@@ -664,16 +674,17 @@
   background: #4caf50;
   color: white;
   border: none;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 1.2rem;
+  font-size: 1rem;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.3s ease;
   font-weight: bold;
+  flex-shrink: 0;
 }
 
 .saveButton:hover {
@@ -685,8 +696,31 @@
   background: #f44336;
   color: white;
   border: none;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.deleteButton:hover {
+  background: #d32f2f;
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.4);
+}
+
+.cancelButton {
+  background: #f44336;
+  color: white;
+  border: none;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 1rem;
@@ -695,28 +729,7 @@
   justify-content: center;
   transition: all 0.3s ease;
   font-weight: bold;
-}
-
-.deleteButton:hover {
-  background: #d32f2f;
-  transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.4);
-}
-
-.cancelButton {
-  background: #f44336;
-  color: white;
-  border: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 1.2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.3s ease;
-  font-weight: bold;
+  flex-shrink: 0;
 }
 
 .cancelButton:hover {
@@ -727,30 +740,33 @@
 .editTimeInputs {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   justify-content: center;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .timeInput {
-  width: 80px;
-  min-width: 80px;
-  padding: 6px 8px;
-  border: 2px solid #667eea;
+  width: 100%;
+  min-width: 0;
+  max-width: 72px;
+  padding: 4px 4px;
+  border: 2px solid #0f766e;
   border-radius: 6px;
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   font-weight: 500;
   box-sizing: border-box;
 }
 
 .timeInput:focus {
   outline: none;
-  border-color: #764ba2;
+  border-color: #0d9488;
   box-shadow: 0 0 8px rgba(102, 126, 234, 0.3);
 }
 
 .timeSeparator {
   font-weight: bold;
-  color: #667eea;
+  color: #0f766e;
 }
 
 .statsRow {
@@ -784,7 +800,7 @@
   width: 5px;
 }
 
-.statPurple::before { background: #611f69; }
+.statPurple::before { background: #0f766e; }
 .statGreen::before { background: #16a34a; }
 .statRed::before { background: #dc2626; }
 .statOrange::before { background: #f59e0b; }

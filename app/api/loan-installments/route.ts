@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import {
+  syncLoanInstallmentFromLegacy,
+  syncNewLoanFromLegacy,
+} from "@/lib/employee-financial-history";
 
 function prevMonth(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
@@ -10,6 +14,11 @@ function nextMonth(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
   const d = new Date(y, m, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function safeMoney(n: unknown, fallback = 0): number {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : fallback;
 }
 
 // GET: Fetch all loan installments (includes payable_this_month)
@@ -25,7 +34,23 @@ export async function GET(req: NextRequest) {
       ${month ? "WHERE month = ?" : ""}
       ORDER BY employee_id, month
     `, month ? [month] : []);
-    return NextResponse.json({ success: true, records: rows });
+    const records = (Array.isArray(rows) ? rows : []).map((r: any) => {
+      const payable = safeMoney(
+        r.payable_this_month ?? r.original_amount,
+      );
+      const st = String(r.status || "pending").toLowerCase();
+      let paid = safeMoney(r.paid_amount);
+      // Paid rows must show the installment amount, never NaN/blank.
+      if (st === "paid" && !(paid > 0)) paid = payable;
+      return {
+        ...r,
+        original_amount: safeMoney(r.original_amount),
+        payable_this_month: payable,
+        paid_amount: paid,
+        status: st,
+      };
+    });
+    return NextResponse.json({ success: true, records });
   } catch (err) {
     return NextResponse.json(
       { success: false, error: (err as Error).message },
@@ -66,6 +91,13 @@ export async function POST(req: NextRequest) {
       );
       if (result?.insertId) inserted.push(result.insertId);
     }
+    await syncNewLoanFromLegacy({
+      employeeId: employee_id,
+      principal: amount,
+      installmentCount: numInstallments,
+      startMonth: start_month,
+      perMonth,
+    });
     return NextResponse.json({ success: true, ids: inserted });
   } catch (err) {
     return NextResponse.json(
@@ -86,6 +118,8 @@ export async function PATCH(req: NextRequest) {
         { status: 400 }
       );
     }
+    let current: any = null;
+    let newPayable: number | null = null;
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
@@ -100,7 +134,7 @@ export async function PATCH(req: NextRequest) {
          LIMIT 1`,
         [employee_id, month]
       );
-      const current = Array.isArray(currentRows) && currentRows.length > 0 ? currentRows[0] : null;
+      current = Array.isArray(currentRows) && currentRows.length > 0 ? currentRows[0] : null;
       if (!current) {
         await conn.rollback();
         return NextResponse.json(
@@ -112,7 +146,6 @@ export async function PATCH(req: NextRequest) {
       const updates: string[] = [];
       const params: any[] = [];
 
-      let newPayable: number | null = null;
       if (payable_this_month != null) {
         const val = parseFloat(payable_this_month);
         if (!isNaN(val) && val >= 0) {
@@ -125,10 +158,15 @@ export async function PATCH(req: NextRequest) {
       if (status && ["paid", "pending", "stop"].includes(status)) {
         updates.push("status = ?");
         params.push(status);
-        // Auto-fill paid_amount from status
+        // Auto-fill paid_amount from status (always a finite number)
         if (status === "paid") {
+          const paidVal = safeMoney(
+            newPayable ??
+              current.payable_this_month ??
+              current.original_amount,
+          );
           updates.push("paid_amount = ?");
-          params.push(newPayable ?? Number(current.payable_this_month ?? current.original_amount ?? 0));
+          params.push(paidVal);
         } else if (status === "pending" || status === "stop") {
           updates.push("paid_amount = 0");
         }
@@ -211,6 +249,25 @@ export async function PATCH(req: NextRequest) {
     } finally {
       conn.release();
     }
+
+    const paidAmt =
+      status === "paid"
+        ? safeMoney(
+            newPayable ??
+              current?.payable_this_month ??
+              current?.original_amount,
+          )
+        : status
+          ? 0
+          : null;
+    await syncLoanInstallmentFromLegacy({
+      employeeId: employee_id,
+      month,
+      payable: newPayable != null ? safeMoney(newPayable) : null,
+      status: status || null,
+      paidAmount: paidAmt,
+    });
+
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json(

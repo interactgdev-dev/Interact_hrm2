@@ -1,8 +1,9 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "./shift-management.module.css";
 import tableStyles from "../../break-summary/break-summary.module.css";
+import leaveStyles from "../../leave/leave.module.css";
 import adminStyles from "../admin-page.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
@@ -164,7 +165,10 @@ export default function ShiftManagementPage() {
   const fetchEmployees = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/hrm-shifts-assignments");
+      const res = await fetch("/api/hrm-shifts-assignments", {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
       const data = await res.json();
       if (!data.success || !Array.isArray(data.employees)) {
         toastError(data.error || "Failed to fetch employees");
@@ -428,8 +432,30 @@ export default function ShiftManagementPage() {
       const data = await res.json();
       if (data.success) {
         toastSuccess("Shift timing updated successfully!");
+        // Instant UI update — don't wait for full refetch / browser cache.
+        setEmployees((prev) =>
+          prev.map((emp) =>
+            emp.id === editingId
+              ? {
+                  ...emp,
+                  assignment_id: data.assignment_id ?? emp.assignment_id,
+                  shift_name: data.shift_name ?? editShiftName,
+                  start_time: data.start_time ?? editStartTime,
+                  end_time: data.end_time ?? editEndTime,
+                  allow_overtime:
+                    data.allow_overtime !== undefined
+                      ? data.allow_overtime
+                      : editAllowOvertime
+                        ? 1
+                        : 0,
+                  assigned_date: data.assigned_date ?? data.effective_from ?? emp.assigned_date,
+                }
+              : emp,
+          ),
+        );
         setEditingId(null);
-        fetchEmployees();
+        setEditAssignmentId(null);
+        void fetchEmployees();
       } else {
         toastError(data.error || "Failed to update shift");
       }
@@ -629,16 +655,16 @@ export default function ShiftManagementPage() {
   }, [employees]);
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
-      <div className={styles.pageContainer}>
+      <div className={tableStyles.breakSummaryContainer}>
         <div className={adminStyles.pageHeader}>
           <div>
             <h1 className={adminStyles.pageHeaderTitle}>
-              <FaClock style={{ marginRight: 10, color: "#611f69", verticalAlign: "middle" }} />
+              <FaClock style={{ marginRight: 10, color: "#0f766e", verticalAlign: "middle" }} />
               Shift Management
             </h1>
-            <p className={adminStyles.subtitle}>
+            <p className={tableStyles.mgmtAttMeta} style={{ marginTop: 4 }}>
               Assign shifts and timings to employees
             </p>
           </div>
@@ -679,26 +705,42 @@ export default function ShiftManagementPage() {
           </button>
         </div>
 
-        <div className={styles.searchContainer}>
+        <div className={leaveStyles.toolbar}>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "inactive")}
-            className={styles.statusFilter}
+            className={leaveStyles.toolbarSelect}
             title="Filter employees by status"
           >
             <option value="all">All</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
           </select>
-          <input
-            type="text"
-            placeholder="Search by name, pseudo name, or ID..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className={styles.searchInput}
-          />
-          <span className={styles.searchCount}>
-            {filteredEmployees.length} / {employees.filter((e) => matchesStatusFilter(e.status)).length} employees
+          <div className={leaveStyles.searchWrap}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden
+            >
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="search"
+              className={leaveStyles.toolbarSearch}
+              placeholder="Search by name, pseudo name, or ID..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <span className={tableStyles.empListShowing}>
+            Showing: {filteredEmployees.length} /{" "}
+            {employees.filter((e) => matchesStatusFilter(e.status)).length}
           </span>
         </div>
 
@@ -1069,8 +1111,9 @@ export default function ShiftManagementPage() {
           </div>
         </div>
 
-        <div className={tableStyles.breakSummaryTableWrapper} style={{ marginTop: "20px" }}>
-          <table className={tableStyles.breakSummaryTable}>
+        <div className={leaveStyles.reqTableShell} style={{ marginTop: 16 }}>
+          <div className={tableStyles.shiftMgmtScroll}>
+          <table className={`${leaveStyles.reqTable} ${tableStyles.shiftMgmtTableFit}`}>
             <thead>
               <tr>
                 <th>ID</th>
@@ -1079,22 +1122,28 @@ export default function ShiftManagementPage() {
                 <th>Department</th>
                 <th>Status</th>
                 <th>Shift</th>
-                  <th>Shift Timing</th>
-                  <th>Overtime?</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+                <th>Shift Timing</th>
+                <th>Overtime?</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
                 {employees.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className={tableStyles.breakSummaryNoRecords}>
+                    <td colSpan={9} className={leaveStyles.reqEmpty}>
                       No employees found
+                    </td>
+                  </tr>
+                ) : filteredEmployees.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className={leaveStyles.reqEmpty}>
+                      No employees match this filter
                     </td>
                   </tr>
                 ) : (
                   filteredEmployees.map((emp, idx) => (
                     <tr key={`row-emp-${emp.id}-${idx}`}>
-                      <td className={tableStyles.cellMuted}>
+                      <td className={leaveStyles.reqId}>
                         {emp.id}
                       </td>
                       <td>
@@ -1156,7 +1205,7 @@ export default function ShiftManagementPage() {
                             ))}
                           </select>
                         ) : emp.shift_name ? (
-                          <span className={styles.shiftName}>
+                          <span className={styles.shiftName} title={emp.shift_name}>
                             {emp.shift_name}
                           </span>
                         ) : (
@@ -1273,6 +1322,7 @@ export default function ShiftManagementPage() {
               </tbody>
             </table>
           </div>
+          </div>
       </div>
       </div>
       {popup}
@@ -1349,6 +1399,6 @@ export default function ShiftManagementPage() {
           </div>
         </div>
       )}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

@@ -8,6 +8,7 @@ import {
   type EmployeeHierarchy,
   type HierarchyPerson,
 } from "../../employee-hierarchy-api";
+import { BackToDashboard } from "../components/BackToDashboard";
 import styles from "./my-team.module.css";
 
 function roleBadgeClass(role: string) {
@@ -20,14 +21,17 @@ function roleBadgeClass(role: string) {
 
 function PersonCard({ person }: { person: HierarchyPerson }) {
   return (
-    <div className={styles.memberCard}>
-      <EmployeeAvatar
-        name={person.name}
-        initials={person.initials}
-        photo={person.photo}
-        size="md"
-        className={styles.memberAvatar}
-      />
+    <article className={styles.memberCard}>
+      <div className={styles.avatarWrap}>
+        <EmployeeAvatar
+          name={person.name}
+          initials={person.initials}
+          photo={person.photo}
+          size="lg"
+          ring={person.photo ? "green" : "none"}
+          className={styles.memberAvatar}
+        />
+      </div>
       <div className={styles.memberName}>{person.name}</div>
       <span className={`${styles.memberRole} ${roleBadgeClass(person.role)}`}>
         {person.role}
@@ -37,7 +41,10 @@ function PersonCard({ person }: { person: HierarchyPerson }) {
       ) : person.pseudonym ? (
         <div className={styles.memberJob}>{person.pseudonym}</div>
       ) : null}
-    </div>
+      {person.departmentName ? (
+        <div className={styles.memberDept}>{person.departmentName}</div>
+      ) : null}
+    </article>
   );
 }
 
@@ -72,25 +79,26 @@ export default function MyTeamPage() {
   return (
     <div className={styles.page}>
       <div className={styles.inner}>
-        <div className={styles.header}>
+        <header className={styles.header}>
           <div>
+            <BackToDashboard />
+            <p className={styles.eyebrow}>Department</p>
             <h1 className={styles.title}>My Team</h1>
             <p className={styles.sub}>
-              {hierarchy?.departmentName || "Direct reports"}
+              {hierarchy?.departmentName
+                ? `Everyone in ${hierarchy.departmentName} — with profile photos`
+                : "Your department colleagues"}
             </p>
           </div>
-          <span className={styles.count}>{team.length} members</span>
-        </div>
+          <span className={styles.count}>{team.length} people</span>
+        </header>
 
         {loading ? (
-          <div className={styles.empty}>Loading team…</div>
+          <div className={styles.empty}>Loading your team…</div>
         ) : team.length === 0 ? (
           <div className={styles.empty}>
-            <p className={styles.emptyTitle}>No team members yet</p>
-            <p>
-              When you are assigned as a team lead or manager, your team will
-              appear here with photos and roles.
-            </p>
+            <p className={styles.emptyTitle}>No teammates found</p>
+            <p>Colleagues in your department will appear here with their profile photos.</p>
           </div>
         ) : (
           <div className={styles.grid}>

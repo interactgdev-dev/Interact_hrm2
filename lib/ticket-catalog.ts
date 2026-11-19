@@ -37,6 +37,7 @@ const CATEGORY_TYPES: Record<Exclude<TicketCategory, "ESS">, TicketTypeOption[]>
     { value: "employment_letter", label: "Employment letter", form: "generic" },
     { value: "benefits_inquiry", label: "Benefits inquiry", form: "generic" },
     { value: "hr_general", label: "HR general request", form: "generic" },
+    { value: "seat_absent", label: "Seat absent (Interact Guard)", form: "generic" },
   ],
   IT: [
     { value: "system_issue", label: "System issue", form: "generic" },

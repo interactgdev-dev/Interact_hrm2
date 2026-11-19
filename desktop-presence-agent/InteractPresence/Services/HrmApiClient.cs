@@ -138,7 +138,7 @@ public sealed class HrmApiClient
             if (root.TryGetProperty("command", out var cmdEl) && cmdEl.ValueKind == JsonValueKind.String)
             {
                 var c = (cmdEl.GetString() ?? "").Trim().ToLowerInvariant();
-                if (c is "restart" or "exit") command = c;
+                if (c is "restart" or "exit" or "start") command = c;
             }
 
             return new HeartbeatResult { Command = command };
@@ -173,6 +173,11 @@ public sealed class HrmApiClient
             if (!root.TryGetProperty("settings", out var s)) return false;
 
             var changed = false;
+            if (s.TryGetProperty("agentsRetired", out var ar) && ar.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                var v = ar.GetBoolean();
+                if (target.AgentsRetired != v) { target.AgentsRetired = v; changed = true; }
+            }
             if (s.TryGetProperty("presenceEnabled", out var pe) && pe.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 var v = pe.GetBoolean();

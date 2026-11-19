@@ -1,10 +1,16 @@
 "use client";
 
 import React from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "./employee-files.module.css";
 import { DOCUMENT_UPLOAD_ACCEPT } from "@/lib/document-constants";
-import { formatFieldValueForDisplay, isCheckboxGroup, toggleCheckboxGroupValue } from "@/lib/form-field-options";
+import {
+  formatFieldValueForDisplay,
+  isCheckboxGroup,
+  isFileField,
+  toggleCheckboxGroupValue,
+} from "@/lib/form-field-options";
+import { parseFormFileValue } from "@/app/components/FormFieldControls";
 import { showAppToast } from "@/lib/app-toast";
 import { showAppConfirm } from "@/lib/app-confirm";
 import { canPreviewMime, documentTypeLabel, formCategoryLabel } from "@/lib/form-display";
@@ -74,21 +80,51 @@ export default function AdminEmployeeFilesPage() {
   const loginId = typeof window !== "undefined" ? localStorage.getItem("loginId") || "hr" : "hr";
 
   const loadEmployees = React.useCallback(async () => {
-    const res = await fetch(`/api/admin/employee-files?q=${encodeURIComponent(q)}`, {
+    const viewerId =
+      typeof window !== "undefined"
+        ? String(localStorage.getItem("employeeId") || "").trim()
+        : "";
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (viewerId) params.set("viewerId", viewerId);
+    const res = await fetch(`/api/admin/employee-files?${params.toString()}`, {
       cache: "no-store",
+      headers: viewerId
+        ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+        : {},
     });
     const data = await res.json();
     if (data.success) setEmployees(data.employees || []);
   }, [q]);
 
   const loadDocs = React.useCallback(async (empId: number) => {
+    const viewerId =
+      typeof window !== "undefined"
+        ? String(localStorage.getItem("employeeId") || "").trim()
+        : "";
+    const scopeHeaders: HeadersInit = viewerId
+      ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+      : {};
+    const viewerQs = viewerId ? `&viewerId=${encodeURIComponent(viewerId)}` : "";
     const [docRes, formRes] = await Promise.all([
-      fetch(`/api/employee-documents?employeeId=${empId}&hr=1`, { cache: "no-store" }),
-      fetch(`/api/form-assignments?employeeId=${empId}`, { cache: "no-store" }),
+      fetch(`/api/employee-documents?employeeId=${empId}&hr=1${viewerQs}`, {
+        cache: "no-store",
+        headers: scopeHeaders,
+      }),
+      fetch(`/api/form-assignments?employeeId=${empId}`, {
+        cache: "no-store",
+        headers: scopeHeaders,
+      }),
     ]);
     const docData = await docRes.json();
     const formData = await formRes.json();
     if (docData.success) setDocuments(docData.documents || []);
+    else {
+      setDocuments([]);
+      if (docRes.status === 403) {
+        showAppToast({ message: "Out of department scope for this employee.", variant: "error" });
+      }
+    }
     if (formData.success) {
       const all = formData.assignments || [];
       setPendingForms(
@@ -98,7 +134,17 @@ export default function AdminEmployeeFilesPage() {
   }, []);
 
   const loadSubmissions = React.useCallback(async () => {
-    const res = await fetch(`/api/form-assignments?hr=1`, { cache: "no-store" });
+    const viewerId =
+      typeof window !== "undefined"
+        ? String(localStorage.getItem("employeeId") || "").trim()
+        : "";
+    const qs = viewerId ? `?hr=1&viewerId=${encodeURIComponent(viewerId)}` : `?hr=1`;
+    const res = await fetch(`/api/form-assignments${qs}`, {
+      cache: "no-store",
+      headers: viewerId
+        ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+        : {},
+    });
     const data = await res.json();
     if (data.success) setSubmissions(data.assignments || []);
   }, []);
@@ -260,6 +306,16 @@ export default function AdminEmployeeFilesPage() {
   function renderManagerField(field: FormField) {
     const key = field.key || "";
     if (!key) return null;
+    if (field.type === "heading") {
+      return (
+        <div key={key} className={styles.field} style={{ marginTop: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{field.label || key}</h3>
+          {Array.isArray(field.options) && field.options[0] ? (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b" }}>{field.options[0]}</p>
+          ) : null}
+        </div>
+      );
+    }
     return (
       <div key={key} className={styles.field}>
         <label className={styles.label}>
@@ -341,7 +397,7 @@ export default function AdminEmployeeFilesPage() {
   }
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.page}>
         <div className={styles.inner}>
           <header className={styles.header}>
@@ -589,6 +645,50 @@ export default function AdminEmployeeFilesPage() {
               {employeeFields.map((field) => {
                   const key = field.key || "";
                   if (!key) return null;
+                  if (String(field.type || "").toLowerCase() === "heading") {
+                    return (
+                      <div key={key} className={styles.responseRow}>
+                        <div className={styles.responseLabel} style={{ fontWeight: 700 }}>
+                          {field.label || key}
+                        </div>
+                        <div className={styles.responseValue}>
+                          {Array.isArray(field.options) && field.options[0] ? field.options[0] : ""}
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (isFileField(field)) {
+                    const file = parseFormFileValue(viewSubmission.form_data?.[key]);
+                    return (
+                      <div key={key} className={styles.responseRow}>
+                        <div className={styles.responseLabel}>{field.label || key}</div>
+                        <div className={styles.responseValue}>
+                          {file ? (
+                            <button
+                              type="button"
+                              className={`${styles.btn} ${styles.btnPrimary}`}
+                              style={{ padding: "6px 12px", fontSize: 12 }}
+                              onClick={() => {
+                                if (file.documentId > 0) {
+                                  window.open(
+                                    `/api/employee-documents/${file.documentId}?action=preview&actorLogin=${encodeURIComponent(loginId)}`,
+                                    "_blank",
+                                    "noopener,noreferrer"
+                                  );
+                                } else if (file.file_path) {
+                                  window.open(file.file_path, "_blank", "noopener,noreferrer");
+                                }
+                              }}
+                            >
+                              Open PDF — {file.file_name}
+                            </button>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={key} className={styles.responseRow}>
                       <div className={styles.responseLabel}>{field.label || key}</div>
@@ -633,6 +733,6 @@ export default function AdminEmployeeFilesPage() {
           </div>
         </div>
       ) : null}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

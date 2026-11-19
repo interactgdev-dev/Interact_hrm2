@@ -28,6 +28,10 @@ const ACTION_LABELS: Record<BiometricAction, string> = {
   break_end: "End Break",
   prayer_start: "Start Prayer",
   prayer_end: "End Prayer",
+  refreshment_start: "Start Refreshment",
+  refreshment_end: "End Refreshment",
+  meeting_start: "Start Meeting",
+  meeting_end: "End Meeting",
 };
 
 export type VerifyModalCloseReason = "cancel" | "success";
@@ -55,6 +59,8 @@ export function useBiometricGate(
   const [modalOpen, setModalOpen] = React.useState(false);
   const [faceEngineReady, setFaceEngineReady] = React.useState(false);
   const pendingRef = React.useRef<PendingAction | null>(null);
+  const bioStatusRef = React.useRef(bioStatus);
+  bioStatusRef.current = bioStatus;
 
   const refreshStatus = React.useCallback(async () => {
     if (!employeeId) {
@@ -91,14 +97,66 @@ export function useBiometricGate(
   }, [employeeId, employeeName]);
 
   React.useEffect(() => {
-    void refreshStatus();
+    // Defer biometric status so clock/attendance APIs win first paint on reload.
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const run = () => {
+      void refreshStatus();
+    };
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(run, { timeout: 1800 });
+    } else {
+      timeoutId = setTimeout(run, 400);
+    }
+    return () => {
+      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [refreshStatus]);
 
-  // Do not preload face-api/TFJS on mount — it steals the main thread and
-  // makes sidebar navigation feel stuck. Models load when verify opens.
+  // Idle-preload models after enroll status is known so Break/Clock open faster.
+  // Avoid blocking first paint — wait until bio status settles, then warm engine.
   React.useEffect(() => {
-    if (!employeeId) setFaceEngineReady(false);
-  }, [employeeId]);
+    if (!employeeId) {
+      setFaceEngineReady(false);
+      return;
+    }
+    if (bioStatus.loading || !bioStatus.enforcementRequired || !bioStatus.enrolled) {
+      return;
+    }
+    let cancelled = false;
+    const idle =
+      typeof window !== "undefined" && "requestIdleCallback" in window
+        ? (window as Window & {
+            requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
+          }).requestIdleCallback
+        : null;
+    const start = () => {
+      void ensureFaceModelsLoaded().then(() => {
+        if (!cancelled) setFaceEngineReady(true);
+      });
+    };
+    const id = idle
+      ? idle(start, { timeout: 2500 })
+      : window.setTimeout(start, 1200);
+    return () => {
+      cancelled = true;
+      if (idle && typeof id === "number") {
+        (
+          window as Window & { cancelIdleCallback?: (n: number) => void }
+        ).cancelIdleCallback?.(id);
+      } else {
+        window.clearTimeout(id as number);
+      }
+    };
+  }, [
+    employeeId,
+    bioStatus.loading,
+    bioStatus.enforcementRequired,
+    bioStatus.enrolled,
+  ]);
 
   const onVerifyOpenRef = React.useRef(options.onVerifyOpen);
   const onVerifyCloseRef = React.useRef(options.onVerifyClose);
@@ -118,40 +176,45 @@ export function useBiometricGate(
 
   const runWithVerify = React.useCallback(
     (action: BiometricAction, callback: (biometricToken: string | null) => void | Promise<void>) => {
-      if (bioStatus.loading) {
-        toastInfo("Face verification is loading. Please wait a moment.");
-        return;
-      }
-
-      // If enforcement is on but models are still downloading, do NOT block the
-      // click — the verify modal starts the camera and loads the engine in
-      // parallel, showing its own "Loading face engine…" state. Kick off the
-      // load (idempotent) and open the modal so the user is never stuck waiting.
-      if (bioStatus.enforcementRequired && !faceEngineReady) {
-        void ensureFaceModelsLoaded().then(() => setFaceEngineReady(true));
-      }
-
-      if (!bioStatus.enforcementRequired) {
-        void callback(null);
-        return;
-      }
-
-      if (!bioStatus.enrolled) {
-        if (bioStatus.needsDescriptorRefresh || bioStatus.enrollmentCount >= 3) {
-          toastInfo(
-            "Your photos are saved but face profiles need a one-time refresh. Ask HR to open Admin → Face Enrollment, select your name — it will auto-update in a few seconds."
-          );
-        } else {
-          toastInfo(
-            `Your face is not enrolled (${bioStatus.descriptorCount}/3 profiles). Ask HR at Admin → Face Enrollment to add 3+ clear front-face photos.`
-          );
+      const proceed = (status: BioStatus) => {
+        // If enforcement is on but models are still downloading, do NOT block the
+        // click — the verify modal starts the camera and loads the engine in
+        // parallel, showing its own "Loading face engine…" state.
+        if (status.enforcementRequired && !faceEngineReady) {
+          void ensureFaceModelsLoaded().then(() => setFaceEngineReady(true));
         }
+
+        if (!status.enforcementRequired) {
+          void callback(null);
+          return;
+        }
+
+        if (!status.enrolled) {
+          if (status.needsDescriptorRefresh || status.enrollmentCount >= 3) {
+            toastInfo(
+              "Your photos are saved but face profiles need a one-time refresh. Ask HR to open Admin → Face Enrollment, select your name — it will auto-update in a few seconds."
+            );
+          } else {
+            toastInfo(
+              `Your face is not enrolled (${status.descriptorCount}/3 profiles). Ask HR at Admin → Face Enrollment to add 3+ clear front-face photos.`
+            );
+          }
+          return;
+        }
+
+        openVerifyModal(action, callback);
+      };
+
+      const current = bioStatusRef.current;
+      if (current.loading) {
+        // Await status instead of toast-blocking the first click on slow staging.
+        void refreshStatus().then(() => proceed(bioStatusRef.current));
         return;
       }
 
-      openVerifyModal(action, callback);
+      proceed(current);
     },
-    [bioStatus, faceEngineReady, openVerifyModal]
+    [faceEngineReady, openVerifyModal, refreshStatus]
   );
 
   const handleVerified = React.useCallback(async (token: string) => {

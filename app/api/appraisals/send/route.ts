@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     const templateId = Number(body.template_id) || (await getBlankAppraisalTemplateId());
     if (!templateId) {
       return NextResponse.json(
-        { success: false, error: "No active appraisal template found. Create one in Formats Library." },
+        { success: false, error: "No active appraisal template found. Create one in Form Templates." },
         { status: 400 }
       );
     }

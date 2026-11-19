@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { sumApprovedClaimsByPayrollMonth } from "@/lib/employee-claims";
 
 function parseMoney(value: unknown): number {
   const n = Number(value);
@@ -22,13 +23,41 @@ export async function GET(request: NextRequest) {
     const connection = await pool.getConnection();
     try {
       const [rows]: any = await connection.query(
-        `SELECT employee_id, month, ctd, fuel_allowance, unpaid_days
+        `SELECT employee_id, month, ctd, fuel_allowance, unpaid_days, medical_claims
          FROM monthly_payroll_adjustments
          WHERE month = ?
          ORDER BY employee_id ASC`,
         [month]
       );
-      return NextResponse.json({ success: true, adjustments: rows || [] });
+      const claimSums = await sumApprovedClaimsByPayrollMonth(month);
+      const byId = new Map<string, any>();
+      for (const row of rows || []) {
+        const id = String(row.employee_id ?? "").trim();
+        if (!id) continue;
+        byId.set(id, { ...row });
+      }
+      // Claims ledger is source of truth for medical_claims column.
+      for (const [id, total] of Object.entries(claimSums)) {
+        const prev = byId.get(id);
+        if (prev) {
+          byId.set(id, { ...prev, medical_claims: total });
+        } else {
+          byId.set(id, {
+            employee_id: id,
+            month,
+            ctd: null,
+            fuel_allowance: null,
+            unpaid_days: null,
+            medical_claims: total,
+          });
+        }
+      }
+      const adjustments = Array.from(byId.values()).sort((a, b) =>
+        String(a.employee_id).localeCompare(String(b.employee_id), undefined, {
+          numeric: true,
+        }),
+      );
+      return NextResponse.json({ success: true, adjustments, claim_sums: claimSums });
     } finally {
       connection.release();
     }
@@ -39,9 +68,43 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * PUT { employee_id, month, ctd?, fuel_allowance?, unpaid_days? }
+ * POST { month, clear_unpaid_days: true }
+ * Clears saved unpaid_days overrides for the month (T.Unpaid falls back to attendance).
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const month = String(body.month ?? "").trim();
+    if (!/^\d{4}-\d{2}$/.test(month) || body.clear_unpaid_days !== true) {
+      return NextResponse.json(
+        { success: false, error: "month and clear_unpaid_days: true required" },
+        { status: 400 },
+      );
+    }
+    const connection = await pool.getConnection();
+    try {
+      const [result]: any = await connection.query(
+        `UPDATE monthly_payroll_adjustments SET unpaid_days = NULL WHERE month = ?`,
+        [month],
+      );
+      return NextResponse.json({
+        success: true,
+        month,
+        cleared: result?.affectedRows ?? 0,
+      });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error("monthly-payroll-adjustments POST clear:", error);
+    return NextResponse.json({ success: false, error: "Failed to clear unpaid days" }, { status: 500 });
+  }
+}
+
+/**
+ * PUT { employee_id, month, ctd?, fuel_allowance?, unpaid_days?, medical_claims? }
  * Upserts; only provided fields are overwritten (others kept).
- * NULL ctd / fuel_allowance / unpaid_days in DB = not set (UI uses employee/system default).
+ * NULL ctd / fuel_allowance / unpaid_days / medical_claims in DB = not set (UI uses defaults).
  */
 export async function PUT(request: NextRequest) {
   try {
@@ -51,6 +114,7 @@ export async function PUT(request: NextRequest) {
     const hasCtd = Object.prototype.hasOwnProperty.call(body, "ctd");
     const hasFuel = Object.prototype.hasOwnProperty.call(body, "fuel_allowance");
     const hasUnpaid = Object.prototype.hasOwnProperty.call(body, "unpaid_days");
+    const hasClaims = Object.prototype.hasOwnProperty.call(body, "medical_claims");
 
     if (!employeeId || !/^\d{4}-\d{2}$/.test(month)) {
       return NextResponse.json(
@@ -58,9 +122,12 @@ export async function PUT(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (!hasCtd && !hasFuel && !hasUnpaid) {
+    if (!hasCtd && !hasFuel && !hasUnpaid && !hasClaims) {
       return NextResponse.json(
-        { success: false, error: "Provide ctd, fuel_allowance, and/or unpaid_days" },
+        {
+          success: false,
+          error: "Provide ctd, fuel_allowance, unpaid_days, and/or medical_claims",
+        },
         { status: 400 }
       );
     }
@@ -68,7 +135,7 @@ export async function PUT(request: NextRequest) {
     const connection = await pool.getConnection();
     try {
       const [existingRows]: any = await connection.query(
-        `SELECT ctd, fuel_allowance, unpaid_days FROM monthly_payroll_adjustments
+        `SELECT ctd, fuel_allowance, unpaid_days, medical_claims FROM monthly_payroll_adjustments
          WHERE employee_id = ? AND month = ? LIMIT 1`,
         [employeeId, month]
       );
@@ -83,20 +150,30 @@ export async function PUT(request: NextRequest) {
         : existing
           ? existing.fuel_allowance
           : null;
+      // null / "" clears override so Monthly Payroll uses attendance-based T.Unpaid Days.
       const unpaidDays = hasUnpaid
-        ? parseUnpaidDays(body.unpaid_days)
+        ? body.unpaid_days === null || body.unpaid_days === ""
+          ? null
+          : parseUnpaidDays(body.unpaid_days)
         : existing
           ? existing.unpaid_days
           : null;
+      const medicalClaims = hasClaims
+        ? parseMoney(body.medical_claims)
+        : existing
+          ? existing.medical_claims
+          : null;
 
       await connection.query(
-        `INSERT INTO monthly_payroll_adjustments (employee_id, month, ctd, fuel_allowance, unpaid_days)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO monthly_payroll_adjustments
+           (employee_id, month, ctd, fuel_allowance, unpaid_days, medical_claims)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            ctd = VALUES(ctd),
            fuel_allowance = VALUES(fuel_allowance),
-           unpaid_days = VALUES(unpaid_days)`,
-        [employeeId, month, ctd, fuelAllowance, unpaidDays]
+           unpaid_days = VALUES(unpaid_days),
+           medical_claims = VALUES(medical_claims)`,
+        [employeeId, month, ctd, fuelAllowance, unpaidDays, medicalClaims]
       );
       return NextResponse.json({
         success: true,
@@ -105,6 +182,7 @@ export async function PUT(request: NextRequest) {
         ctd,
         fuel_allowance: fuelAllowance,
         unpaid_days: unpaidDays,
+        medical_claims: medicalClaims,
       });
     } finally {
       connection.release();

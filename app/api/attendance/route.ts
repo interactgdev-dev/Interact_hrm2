@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { registerAutoPresenceCron } from "@/lib/register-auto-presence-cron";
 import { enforceBiometricOrRespond } from "@/lib/require-biometric";
 import { isGraceExpiredForEmployee } from "@/lib/attendance-presence";
-import { closeActiveBreaksForEmployee } from "@/lib/auto-clock-out";
+import { performAutoClockOut } from "@/lib/auto-clock-out";
 
 registerAutoPresenceCron();
 import { pool } from "../../../lib/db";
@@ -12,6 +12,8 @@ import {
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
 import { computeClockInLateStatus } from "../../../lib/monthly-attendance-status";
+import { breakTypeLabel } from "@/lib/session-break-config";
+import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
 
 // GET: Fetch all attendance records or by employeeId, now with department name
 export async function GET(req: NextRequest) {
@@ -52,7 +54,9 @@ export async function GET(req: NextRequest) {
         e.pseudonym AS pseudonym,
         e.gender AS gender,
         d.name AS department_name,
-        sa.start_time AS shift_start_time
+        sa.start_time AS shift_start_time,
+        sa.end_time AS shift_end_time,
+        sa.allow_overtime AS allow_overtime
       FROM ${ATTENDANCE_TABLE} ea
       LEFT JOIN hrm_employees e ON ea.employee_id = e.id
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
@@ -82,7 +86,8 @@ export async function GET(req: NextRequest) {
         sa.shift_name AS shift_name,
         sa.start_time AS shift_start_time,
         sa.end_time AS shift_end_time,
-        sa.assigned_date AS shift_assigned_date
+        sa.assigned_date AS shift_assigned_date,
+        sa.allow_overtime AS allow_overtime
       FROM ${ATTENDANCE_TABLE} ea
       LEFT JOIN hrm_employees e ON ea.employee_id = e.id
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
@@ -234,6 +239,38 @@ async function checkActiveBreaks(conn: any, employee_id: string) {
       console.error('Error checking prayer_breaks table:', error);
     }
 
+    try {
+      const [refreshmentRows] = await conn.execute(
+        `SELECT refreshment_break_start, refreshment_break_end
+         FROM refreshment_breaks
+         WHERE employee_id = ? AND refreshment_break_end IS NULL
+         ORDER BY refreshment_break_start DESC LIMIT 1`,
+        [Number(employee_id)]
+      );
+      const refreshmentRecord = (refreshmentRows as any[])[0];
+      if (refreshmentRecord?.refreshment_break_start && !refreshmentRecord.refreshment_break_end) {
+        return { hasActiveBreak: true, breakType: 'refreshment_break' };
+      }
+    } catch (error) {
+      console.error('Error checking refreshment_breaks table:', error);
+    }
+
+    try {
+      const [meetingRows] = await conn.execute(
+        `SELECT meeting_break_start, meeting_break_end
+         FROM meeting_breaks
+         WHERE employee_id = ? AND meeting_break_end IS NULL
+         ORDER BY meeting_break_start DESC LIMIT 1`,
+        [Number(employee_id)]
+      );
+      const meetingRecord = (meetingRows as any[])[0];
+      if (meetingRecord?.meeting_break_start && !meetingRecord.meeting_break_end) {
+        return { hasActiveBreak: true, breakType: 'meeting_break' };
+      }
+    } catch (error) {
+      console.error('Error checking meeting_breaks table:', error);
+    }
+
     return { hasActiveBreak: false, breakType: null };
   } catch (error) {
     console.error('Error checking breaks:', error);
@@ -275,6 +312,7 @@ export async function POST(req: NextRequest) {
 
     conn = await pool.getConnection();
     await ensureAttendanceTable(conn);
+    let loggedAction: "clock_in" | "clock_out" | "auto_clock_out" | null = null;
 
     if (clock_in !== undefined && clock_in !== null) {
       const bioBlock = await enforceBiometricOrRespond(
@@ -361,6 +399,7 @@ export async function POST(req: NextRequest) {
         ],
       );
       console.log("Clock-in record inserted successfully");
+      loggedAction = "clock_in";
     } else if (clock_out !== undefined && clock_out !== null) {
       let isAutoClockOut = Boolean(auto_clock_out);
 
@@ -386,7 +425,7 @@ export async function POST(req: NextRequest) {
       const { hasActiveBreak, breakType } = await checkActiveBreaks(conn, employee_id);
       
       if (hasActiveBreak) {
-        const breakName = breakType === 'prayer_break' ? 'Prayer Break' : 'Break';
+        const breakName = breakTypeLabel(breakType);
         console.warn(`Clock-out prevented: ${breakName} is active for employee ${employee_id}`);
         return NextResponse.json(
           { 
@@ -406,29 +445,53 @@ export async function POST(req: NextRequest) {
       );
       const pending = (pendingRows as any[])[0];
       if (pending) {
-        const formattedClockOut = new Date(clock_out).toISOString().slice(0, 19).replace('T', ' ');
+        // Auto clock-out: always prefer T.Punch Out (not browser "now"/grace time)
         if (isAutoClockOut) {
-          await closeActiveBreaksForEmployee(
+          await performAutoClockOut(
             conn,
+            pending.id,
+            employee_name || null,
+            clock_out ? new Date(clock_out).getTime() : undefined,
             String(employee_id),
-            formattedClockOut,
-            new Date(clock_out).toISOString(),
           );
+          console.log("Auto clock-out record updated from T.Punch Out");
+          loggedAction = "auto_clock_out";
+        } else {
+          const formattedClockOut = new Date(clock_out).toISOString().slice(0, 19).replace('T', ' ');
+          await conn.execute(
+            `UPDATE ${ATTENDANCE_TABLE}
+             SET clock_out = ?,
+                 auto_clock_out = 0,
+                 last_presence_ack_at = NULL,
+                 total_hours = LEAST(999.99, ROUND(TIMESTAMPDIFF(MINUTE, clock_in, ?)/60, 2)),
+                 employee_name = ?
+             WHERE id = ?`,
+            [formattedClockOut, formattedClockOut, employee_name || null, pending.id]
+          );
+          console.log("Clock-out record updated successfully");
+          loggedAction = "clock_out";
         }
-        await conn.execute(
-          `UPDATE ${ATTENDANCE_TABLE}
-           SET clock_out = ?,
-               auto_clock_out = ?,
-               last_presence_ack_at = NULL,
-               total_hours = LEAST(999.99, ROUND(TIMESTAMPDIFF(MINUTE, clock_in, ?)/60, 2)),
-               employee_name = ?
-           WHERE id = ?`,
-          [formattedClockOut, isAutoClockOut ? 1 : 0, formattedClockOut, employee_name || null, pending.id]
-        );
-        console.log("Clock-out record updated successfully");
       } else {
         console.warn("No pending clock-in found for clock-out");
       }
+    }
+
+    if (loggedAction) {
+      const detail =
+        loggedAction === "clock_in"
+          ? "Clocked In"
+          : loggedAction === "auto_clock_out"
+            ? "Auto Clocked Out"
+            : "Clocked Out";
+      void logServerEmployeeActivity(req, {
+        type: loggedAction,
+        employeeId: String(employee_id),
+        employeeName: employee_name,
+        detail,
+        page: "/employee-dashboard",
+        method: "POST",
+        url: "/api/attendance",
+      });
     }
 
     return NextResponse.json({ success: true, message: clock_in ? 'inserted' : 'updated' });

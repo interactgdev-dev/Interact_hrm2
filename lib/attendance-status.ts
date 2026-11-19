@@ -5,6 +5,45 @@ export function normalizeAttendanceStatus(status: string): string {
   return s;
 }
 
+/** Status values admins can pick in Monthly Attendance (manual override). */
+export const MONTHLY_ATTENDANCE_STATUS_OPTIONS = [
+  "On Time",
+  "Tardy",
+  "Absent",
+  "1st-Half Day",
+  "2nd-Half Day",
+  "Leave",
+  "Off",
+] as const;
+
+export type MonthlyAttendanceStatusOption =
+  (typeof MONTHLY_ATTENDANCE_STATUS_OPTIONS)[number];
+
+export function isAllowedMonthlyAttendanceStatus(status: string): boolean {
+  const s = normalizeAttendanceStatus(status);
+  return (MONTHLY_ATTENDANCE_STATUS_OPTIONS as readonly string[]).includes(s);
+}
+
+/** Deduction % for a (possibly manual) monthly status. */
+export function deductionForAttendanceStatus(
+  statusLabel: string,
+  tardyCount?: number | string | null,
+): string {
+  const s = normalizeAttendanceStatus(statusLabel);
+  if (s === "Absent") return "100%";
+  if (s === "1st-Half Day" || s === "2nd-Half Day") return "50%";
+  if (s === "Leave" || s === "On Time") return "0%";
+  if (s === "Off" || s === "---" || !s) return "";
+  if (s === "Tardy") {
+    const n = Number(tardyCount);
+    if (!Number.isFinite(n) || n <= 0) return "0%";
+    if (n === 4) return "50%";
+    if (n >= 5) return "100%";
+    return "0%";
+  }
+  return "";
+}
+
 export function isTardyStatus(status: string): boolean {
   return normalizeAttendanceStatus(status) === "Tardy";
 }

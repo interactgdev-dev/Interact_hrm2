@@ -1,0 +1,18 @@
+{
+  "name": "image-to-text",
+  "version": "1.0.0",
+  "description": "Scan images and extract text locally (OCR)",
+  "main": "scan.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "scan": "node scan.js"
+  },
+  "keywords": ["ocr", "image-to-text", "tesseract"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "tesseract.js": "^7.0.0"
+  }
+}

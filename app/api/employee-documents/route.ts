@@ -47,9 +47,53 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "employeeId required" }, { status: 400 });
     }
 
-    const employeeId = Number(employeeIdParam);
-    if (!Number.isFinite(employeeId)) {
-      return NextResponse.json({ success: false, error: "Invalid employeeId" }, { status: 400 });
+    let employeeId = Number(employeeIdParam);
+    if (!Number.isFinite(employeeId) || employeeId <= 0) {
+      const resolved = await resolveEmployeeNumericId(String(employeeIdParam));
+      if (!resolved) {
+        return NextResponse.json({ success: false, error: "Invalid employeeId" }, { status: 400 });
+      }
+      employeeId = resolved;
+    }
+
+    const viewerId = (
+      req.headers.get("x-hrm-employee-id") ||
+      req.headers.get("x-employee-id") ||
+      searchParams.get("viewerId") ||
+      ""
+    ).trim();
+    if (hrView && viewerId) {
+      try {
+        const { resolveViewerDataScope, rowInViewerScope } = await import(
+          "@/lib/access-control/data-scope"
+        );
+        const scope = await resolveViewerDataScope(viewerId);
+        if (scope.mode !== "all") {
+          const [deptRows] = await pool.execute<RowDataPacket[]>(
+            `SELECT d.name AS department_name
+             FROM hrm_employees e
+             LEFT JOIN employee_jobs j ON e.id = j.employee_id
+             LEFT JOIN departments d ON j.department_id = d.id
+             WHERE e.id = ?
+             LIMIT 1`,
+            [employeeId],
+          );
+          const dept = deptRows[0]?.department_name ?? null;
+          if (
+            !rowInViewerScope(scope, {
+              employeeId,
+              departmentName: dept != null ? String(dept) : null,
+            })
+          ) {
+            return NextResponse.json(
+              { success: false, error: "Out of scope for this employee" },
+              { status: 403 },
+            );
+          }
+        }
+      } catch {
+        /* ignore scope helper failure */
+      }
     }
 
     let sql = `SELECT * FROM hrm_employee_documents

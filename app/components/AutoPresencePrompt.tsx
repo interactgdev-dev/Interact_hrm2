@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import { FaRegClock } from "react-icons/fa";
 import { AUTO_PRESENCE_POPUP_MS } from "@/lib/shift-timing";
 import { ModalPortal } from "./ModalPortal";
 import styles from "./AutoPresencePrompt.module.css";
@@ -209,14 +208,16 @@ export function AutoPresencePrompt({
 
   const mins = Math.floor(secondsLeft / 60);
   const secs = secondsLeft % 60;
+  const totalSec = Math.max(1, Math.round(AUTO_PRESENCE_POPUP_MS / 1000));
+  const ringR = 58;
+  const ringC = 2 * Math.PI * ringR;
+  const ringFrac = Math.min(1, Math.max(0, secondsLeft / totalSec));
+  const urgent = secondsLeft <= 60;
 
   return (
     <ModalPortal>
       <div className={styles.overlay} data-hrm-modal-overlay>
         <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="auto-presence-title">
-          <div className={styles.iconWrap} aria-hidden="true">
-            <FaRegClock />
-          </div>
           <div id="auto-presence-title" className={styles.title}>
             Still working?
           </div>
@@ -224,12 +225,23 @@ export function AutoPresencePrompt({
             Your assigned shift ended and the <strong>3-hour grace period</strong> is over.
             You are still clocked in. Tap <strong>I am here</strong> if you are available.
           </p>
-          <div className={styles.timerWrap}>
-            <div className={styles.timerLabel}>Auto clock-out in</div>
-            <div className={styles.timer}>
+          <div className={styles.ringWrap} aria-hidden="true">
+            <svg className={styles.ringSvg} viewBox="0 0 132 132">
+              <circle className={styles.ringTrack} cx="66" cy="66" r={ringR} />
+              <circle
+                className={`${styles.ringProgress}${urgent ? ` ${styles.ringProgressUrgent}` : ""}`}
+                cx="66"
+                cy="66"
+                r={ringR}
+                strokeDasharray={ringC}
+                strokeDashoffset={ringC * (1 - ringFrac)}
+              />
+            </svg>
+            <div className={`${styles.ringTime}${urgent ? ` ${styles.ringTimeUrgent}` : ""}`}>
               {mins}:{String(secs).padStart(2, "0")}
             </div>
           </div>
+          <div className={styles.timerLabel}>Auto clock-out in</div>
           <button type="button" className={styles.ackButton} disabled={busy} onClick={handleAck}>
             I am here
           </button>

@@ -5,7 +5,7 @@ export type FormFieldPreset = {
   id: string;
   label: string;
   description?: string;
-  type: "text" | "textarea" | "select" | "date" | "checkbox";
+  type: "text" | "textarea" | "select" | "date" | "checkbox" | "file";
   group: "auto" | "employee" | "hr" | "manager";
   defaultKey: string;
   autofill?: string;
@@ -138,7 +138,7 @@ export const FORM_FIELD_PRESETS: FormFieldPreset[] = [
 export type CustomFieldDraft = {
   id: string;
   label: string;
-  type: "text" | "textarea" | "select" | "date" | "checkbox";
+  type: "text" | "textarea" | "select" | "date" | "checkbox" | "file";
   required: boolean;
   filled_by: "employee" | "manager" | "hr";
   /** Dropdown / checkbox-group choices */

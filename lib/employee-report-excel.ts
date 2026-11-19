@@ -112,10 +112,21 @@ export async function downloadEmployeeReportExcel(
   const blob = new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
+  const downloadName = fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`;
+  try {
+    const { reportClientFileDownload } = await import(
+      "@/lib/client-activity-download"
+    );
+    reportClientFileDownload(blob, downloadName, {
+      detail: `Downloaded "${downloadName}" via employee report export (${blob.size} B)`,
+    });
+  } catch {
+    /* ignore */
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`;
+  link.download = downloadName;
   link.click();
   URL.revokeObjectURL(url);
 }

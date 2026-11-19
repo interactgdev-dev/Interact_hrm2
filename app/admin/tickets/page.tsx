@@ -9,12 +9,20 @@ import { formatTicketStatusLabel, isTicketClosed } from "../../../lib/ticket-sta
 import { previewTicketToastOnPage } from "../../../lib/ticket-toast-demo";
 import type { TicketThreadMessage } from "../../../lib/ticket-thread";
 import { toastError, toastInfo } from "@/lib/app-toast";
+import {
+  formatDateTimeInServerTz,
+  getDateStringInTimeZone,
+  SERVER_TIMEZONE,
+} from "@/lib/timezone";
+import { sortTicketsNewestFirst } from "@/lib/ticket-sort";
 
 type Ticket = {
   id: number;
   ticket_number: string;
   employee_id: string;
   employee_name: string;
+  employee_pseudonym?: string | null;
+  department_name?: string | null;
   category: TicketCategory;
   ticket_type: string;
   subject: string | null;
@@ -25,31 +33,208 @@ type Ticket = {
   admin_remark: string | null;
   messages?: TicketThreadMessage[];
   requested_at: string;
+  approved_by?: string | null;
+  approved_by_name?: string | null;
+  acknowledged_by?: string | null;
+  acknowledged_by_name?: string | null;
+  acknowledged_at?: string | null;
+  /** Per-ticket: viewer may approve/reject (HR Manager may view all leave but only moderate in-scope). */
+  can_moderate?: boolean;
 };
 
-export default function AdminTicketsPage() {
+type TicketsPageProps = {
+  /** admin = leave hierarchy inbox. hr = HR inbox (all leave + all non-leave). */
+  inboxMode?: "admin" | "hr";
+};
+
+export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPageProps) {
   const [tickets, setTickets] = React.useState<Ticket[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [filter, setFilter] = React.useState<"pending" | "all">("pending");
   const [selected, setSelected] = React.useState<Ticket | null>(null);
   const [reply, setReply] = React.useState("");
   const [processing, setProcessing] = React.useState(false);
+  const [canModerate, setCanModerate] = React.useState(inboxMode === "admin");
+  const [viewerId, setViewerId] = React.useState("");
+  const [viewerName, setViewerName] = React.useState("");
+  const [leaveBalanceInfo, setLeaveBalanceInfo] = React.useState<{
+    annualBalance: number;
+    annualAllowance: number;
+    bereavementBalance: number;
+    maternityBalance: number;
+    maternityAllowance: number;
+    paternityBalance: number;
+    paternityAllowance: number;
+    employment_status?: string;
+  } | null>(null);
+  const [searchText, setSearchText] = React.useState("");
+  const [filterDate, setFilterDate] = React.useState("");
+  const [departmentFilter, setDepartmentFilter] = React.useState("");
+  const [departments, setDepartments] = React.useState<string[]>([]);
+
+  /** Never show Approve/Reject on your own ticket (esp. leave). */
+  const isOwnSelectedTicket = Boolean(
+    selected &&
+      viewerId &&
+      String(selected.employee_id) === String(viewerId),
+  );
+  const selectedCanModerate =
+    selected?.can_moderate !== undefined ? Boolean(selected.can_moderate) : canModerate;
+  const canModerateSelected = selectedCanModerate && !isOwnSelectedTicket;
+
+  React.useEffect(() => {
+    try {
+      const id =
+        localStorage.getItem("employeeId") ||
+        localStorage.getItem("loginId") ||
+        "";
+      setViewerId(String(id).trim());
+      const name =
+        localStorage.getItem("employeeName") ||
+        localStorage.getItem("fullName") ||
+        localStorage.getItem("name") ||
+        "";
+      setViewerName(String(name).trim());
+    } catch {
+      setViewerId("");
+      setViewerName("");
+    }
+  }, []);
 
   const fetchTickets = React.useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      const params = new URLSearchParams({ ts: String(Date.now()) });
+      const params = new URLSearchParams({
+        ts: String(Date.now()),
+        limit: "500",
+        inbox: inboxMode,
+      });
       if (filter === "pending") params.set("status", "open");
-      const res = await fetch(`/api/employee-tickets?${params}`, { cache: "no-store" });
+      if (viewerId) params.set("viewerId", viewerId);
+      const res = await fetch(`/api/employee-tickets?${params}`, {
+        cache: "no-store",
+        headers: viewerId
+          ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+          : undefined,
+      });
       const data = await res.json();
-      if (data.success) setTickets(data.tickets || []);
+      if (data.success) {
+        setTickets(sortTicketsNewestFirst(data.tickets || []));
+        if (typeof data.canModerate === "boolean") setCanModerate(data.canModerate);
+        else setCanModerate(inboxMode === "admin");
+      }
     } finally {
       if (!opts?.silent) setLoading(false);
     }
-  }, [filter]);
+  }, [filter, inboxMode, viewerId]);
 
   React.useEffect(() => {
     void fetchTickets();
+  }, [fetchTickets]);
+
+  React.useEffect(() => {
+    fetch("/api/departments", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data?.success || !Array.isArray(data.departments)) return;
+        const names = data.departments
+          .map((d: { name?: string }) => String(d.name || "").trim())
+          .filter(Boolean)
+          .sort((a: string, b: string) => a.localeCompare(b));
+        setDepartments([...new Set(names)] as string[]);
+      })
+      .catch(() => setDepartments([]));
+  }, []);
+
+  // Merge departments seen on tickets (in case HRM name differs slightly).
+  React.useEffect(() => {
+    const fromTickets = tickets
+      .map((t) => String(t.department_name || "").trim())
+      .filter(Boolean);
+    if (!fromTickets.length) return;
+    setDepartments((prev) =>
+      [...new Set([...prev, ...fromTickets])].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    );
+  }, [tickets]);
+
+  const filteredTickets = React.useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    return tickets.filter((t) => {
+      if (q) {
+        const hay = [
+          t.employee_name,
+          t.employee_pseudonym,
+          t.ticket_number,
+          t.subject,
+          t.employee_id,
+          t.department_name,
+        ]
+          .map((v) => String(v || "").toLowerCase())
+          .join(" ");
+        if (!hay.includes(q)) return false;
+      }
+      if (departmentFilter) {
+        const dept = String(t.department_name || "").trim();
+        if (dept.toLowerCase() !== departmentFilter.toLowerCase()) return false;
+      }
+      if (filterDate) {
+        const day = getDateStringInTimeZone(t.requested_at, SERVER_TIMEZONE);
+        if (day !== filterDate) return false;
+      }
+      return true;
+    });
+  }, [tickets, searchText, departmentFilter, filterDate]);
+
+  const hasActiveFilters = Boolean(
+    searchText.trim() || departmentFilter || filterDate,
+  );
+
+  React.useEffect(() => {
+    if (!selected || selected.ticket_type !== "leave") {
+      setLeaveBalanceInfo(null);
+      return;
+    }
+    let cancelled = false;
+    const empId = String(selected.employee_id || "").trim();
+    if (!empId) {
+      setLeaveBalanceInfo(null);
+      return;
+    }
+    fetch(
+      `/api/leave-balance?employee_id=${encodeURIComponent(empId)}&ts=${Date.now()}`,
+      { cache: "no-store" },
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled || !data?.success) {
+          if (!cancelled) setLeaveBalanceInfo(null);
+          return;
+        }
+        setLeaveBalanceInfo({
+          annualBalance: Number(data.annualBalance) || 0,
+          annualAllowance: Number(data.annualAllowance) || 0,
+          bereavementBalance: Number(data.bereavementBalance) || 0,
+          maternityBalance: Number(data.maternityBalance) || 0,
+          maternityAllowance: Number(data.maternityAllowance) || 0,
+          paternityBalance: Number(data.paternityBalance) || 0,
+          paternityAllowance: Number(data.paternityAllowance) || 0,
+          employment_status: data.employment_status,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setLeaveBalanceInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  // Poll so Guard tickets appear even if WS misses an event
+  React.useEffect(() => {
+    const id = window.setInterval(() => void fetchTickets({ silent: true }), 10_000);
+    return () => window.clearInterval(id);
   }, [fetchTickets]);
 
   React.useEffect(() => {
@@ -60,6 +245,14 @@ export default function AdminTicketsPage() {
       try {
         const msg = JSON.parse(evt.data.toString());
         if (msg?.type === "ticket_update" || msg?.type === "ticket_created") {
+          // Policy alerts belong only in Screenshots → Policy inbox.
+          if (
+            msg?.silent ||
+            msg?.ticket?.ticket_type === "guard_policy_alert" ||
+            msg?.ticket?.ticket_type === "guard_keyword_alert"
+          ) {
+            return;
+          }
           void fetchTickets({ silent: true });
           if (msg.ticket?.id && selected?.id === msg.ticket.id) {
             if (msg.ticket.deleted) setSelected(null);
@@ -73,17 +266,27 @@ export default function AdminTicketsPage() {
     return () => ws.close();
   }, [fetchTickets, selected?.id]);
 
-  const patchTicket = async (id: number, status?: string) => {
+  const patchTicket = async (
+    id: number,
+    opts?: { status?: string; acknowledge?: boolean },
+  ) => {
     setProcessing(true);
     try {
       const res = await fetch("/api/employee-tickets", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(viewerId
+            ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+            : {}),
+        },
         body: JSON.stringify({
           id,
-          status,
+          status: opts?.status,
+          acknowledge: opts?.acknowledge || undefined,
           reply: reply.trim() || undefined,
-          author_name: "Admin",
+          author_name: viewerName || (inboxMode === "hr" ? "HR" : "Admin"),
+          viewerId: viewerId || undefined,
         }),
       });
       const data = await res.json();
@@ -91,7 +294,7 @@ export default function AdminTicketsPage() {
         setReply("");
         if (data.ticket) {
           setSelected(data.ticket);
-        } else if (!status) {
+        } else if (!opts?.status && !opts?.acknowledge) {
           setSelected(null);
         }
         void fetchTickets();
@@ -106,7 +309,11 @@ export default function AdminTicketsPage() {
   };
 
   const handleStatus = (id: number, status: string) => {
-    void patchTicket(id, status);
+    void patchTicket(id, { status });
+  };
+
+  const handleAcknowledge = (id: number) => {
+    void patchTicket(id, { acknowledge: true });
   };
 
   const handleSendReply = (id: number) => {
@@ -144,11 +351,30 @@ export default function AdminTicketsPage() {
   const openTicket = async (t: Ticket) => {
     setReply("");
     try {
-      const res = await fetch(`/api/employee-tickets?id=${t.id}&ts=${Date.now()}`, {
+      const params = new URLSearchParams({
+        id: String(t.id),
+        ts: String(Date.now()),
+        inbox: inboxMode,
+      });
+      if (viewerId) params.set("viewerId", viewerId);
+      const res = await fetch(`/api/employee-tickets?${params}`, {
         cache: "no-store",
+        headers: viewerId
+          ? { "x-employee-id": viewerId, "x-hrm-employee-id": viewerId }
+          : undefined,
       });
       const data = await res.json();
-      setSelected(data.success && data.tickets?.[0] ? data.tickets[0] : t);
+      const fresh =
+        data.success && data.tickets?.[0]
+          ? {
+              ...data.tickets[0],
+              can_moderate:
+                typeof data.canModerate === "boolean"
+                  ? data.canModerate
+                  : data.tickets[0].can_moderate,
+            }
+          : t;
+      setSelected(fresh);
     } catch {
       setSelected(t);
     }
@@ -190,6 +416,22 @@ export default function AdminTicketsPage() {
               <span className={adminStyles.detailLabel}>Leave category</span>
               <span className={adminStyles.detailValue}>
                 {String(fd.leave_category || "—").replace(/_/g, " ")}
+              </span>
+            </div>
+            <div className={adminStyles.detailItem}>
+              <span className={adminStyles.detailLabel}>Type of leave</span>
+              <span className={adminStyles.detailValue}>
+                {String(fd.leave_duration || "").toLowerCase() === "first_half"
+                  ? "1st half day"
+                  : String(fd.leave_duration || "").toLowerCase() === "second_half"
+                    ? "2nd half day"
+                    : String(fd.leave_duration || "").toLowerCase() === "full"
+                      ? "Full day"
+                      : String(fd.half_day_part || "").toLowerCase() === "first"
+                        ? "1st half day"
+                        : String(fd.half_day_part || "").toLowerCase() === "second"
+                          ? "2nd half day"
+                          : "Full day"}
               </span>
             </div>
             <div className={adminStyles.detailItem}>
@@ -294,9 +536,13 @@ export default function AdminTicketsPage() {
     <LayoutDashboard>
       <div className={adminStyles.page}>
         <div className={adminStyles.inner}>
-          <h1 className={adminStyles.title}>Ticket inbox</h1>
+          <h1 className={adminStyles.title}>
+            Ticket Inbox
+          </h1>
           <p className={adminStyles.subtitle}>
-            All employee tickets from Generate Ticket — review and update status.
+            {inboxMode === "hr"
+              ? "All leave tickets (company-wide) plus HR department tickets. View all — approve only within your department hierarchy."
+              : "Employee tickets. Department leave for CEOs (Joe / Max / Mubeen) appears here for their owned depts."}
           </p>
 
           <div className={adminStyles.ticketToolbar}>
@@ -325,15 +571,81 @@ export default function AdminTicketsPage() {
             </button>
           </div>
 
+          <div className={adminStyles.ticketFilterBar}>
+            <div className={adminStyles.ticketSearchWide}>
+              <label htmlFor="ticket-inbox-search">Search</label>
+              <input
+                id="ticket-inbox-search"
+                type="search"
+                className={adminStyles.input}
+                placeholder="Search by name, pseudo name, ticket #…"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            <div className={adminStyles.ticketFilterField}>
+              <label htmlFor="ticket-inbox-date">Date</label>
+              <input
+                id="ticket-inbox-date"
+                type="date"
+                className={adminStyles.input}
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+              />
+            </div>
+            <div className={adminStyles.ticketFilterField}>
+              <label htmlFor="ticket-inbox-dept">Department</label>
+              <select
+                id="ticket-inbox-dept"
+                className={adminStyles.select}
+                value={departmentFilter}
+                onChange={(e) => setDepartmentFilter(e.target.value)}
+              >
+                <option value="">All departments</option>
+                {departments.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                className={adminStyles.ticketFilterClear}
+                onClick={() => {
+                  setSearchText("");
+                  setFilterDate("");
+                  setDepartmentFilter("");
+                }}
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+
+          {!loading && tickets.length > 0 ? (
+            <p className={adminStyles.ticketFilterMeta}>
+              Showing {filteredTickets.length}
+              {hasActiveFilters ? ` of ${tickets.length}` : ""} ticket
+              {filteredTickets.length === 1 ? "" : "s"}
+            </p>
+          ) : null}
+
           {loading ? (
             <p className={adminStyles.muted}>Loading…</p>
           ) : tickets.length === 0 ? (
             <div className={adminStyles.empty}>
               No {filter === "pending" ? "open " : ""}tickets.
             </div>
+          ) : filteredTickets.length === 0 ? (
+            <div className={adminStyles.empty}>
+              No tickets match your search filters.
+            </div>
           ) : (
             <div className={adminStyles.requestList}>
-              {tickets.map((t) => (
+              {filteredTickets.map((t) => (
                 <div
                   key={t.id}
                   className={`${adminStyles.requestCard} ${adminStyles.requestCardClickable}`}
@@ -363,9 +675,35 @@ export default function AdminTicketsPage() {
                       {t.subject}
                     </div>
                     <div className={adminStyles.muted}>
-                      {t.employee_name} · {categoryLabel(t.category)} ·{" "}
+                      {t.employee_name}
+                      {t.employee_pseudonym
+                        ? ` (${t.employee_pseudonym})`
+                        : ""}
+                      {t.department_name ? ` · ${t.department_name}` : ""}
+                      {" · "}
+                      {categoryLabel(t.category)} ·{" "}
                       {ticketTypeLabel(t.category, t.ticket_type)}
                     </div>
+                    {t.ticket_type !== "leave" && t.acknowledged_by_name ? (
+                      <div
+                        className={adminStyles.muted}
+                        style={{ marginTop: 6, fontSize: 13, color: "#1d4ed8", fontWeight: 600 }}
+                      >
+                        Acknowledged by {t.acknowledged_by_name}
+                      </div>
+                    ) : null}
+                    {t.approved_by_name &&
+                    (t.status === "resolved" ||
+                      t.status === "rejected" ||
+                      t.status === "closed") ? (
+                      <div
+                        className={adminStyles.muted}
+                        style={{ marginTop: 6, fontSize: 13, color: "#0f766e", fontWeight: 600 }}
+                      >
+                        {t.status === "rejected" ? "Rejected by" : "Approved by"}{" "}
+                        {t.approved_by_name}
+                      </div>
+                    ) : null}
                     {t.description ? (
                       <div className={adminStyles.muted} style={{ marginTop: 8, color: "#475569" }}>
                         {t.description}
@@ -375,7 +713,7 @@ export default function AdminTicketsPage() {
                       className={adminStyles.muted}
                       style={{ marginTop: 6, fontSize: 12, color: "#94a3b8" }}
                     >
-                      {new Date(t.requested_at).toLocaleString()}
+                      {formatDateTimeInServerTz(t.requested_at)}
                     </div>
                   </div>
                   <div className={adminStyles.actions}>
@@ -435,14 +773,86 @@ export default function AdminTicketsPage() {
               <span className={`${adminStyles.badge} ${statusBadge(selected.status)}`}>
                 {formatTicketStatusLabel(selected.status, selected.ticket_type)}
               </span>
+              {selected.ticket_type !== "leave" && selected.acknowledged_by_name ? (
+                <span
+                  className={`${adminStyles.badge} ${adminStyles.badgeType}`}
+                  style={{ background: "#eff6ff", color: "#1d4ed8" }}
+                >
+                  Acknowledged by {selected.acknowledged_by_name}
+                </span>
+              ) : null}
+              {selected.approved_by_name &&
+              (selected.status === "resolved" ||
+                selected.status === "rejected" ||
+                selected.status === "closed") ? (
+                <span
+                  className={`${adminStyles.badge} ${adminStyles.badgeType}`}
+                  style={{ background: "#ecfdf5", color: "#0f766e" }}
+                >
+                  {selected.status === "rejected" ? "Rejected by" : "Approved by"}{" "}
+                  {selected.approved_by_name}
+                </span>
+              ) : null}
             </div>
             <p style={{ fontWeight: 600, margin: "0 0 12px" }}>{selected.subject}</p>
             {renderTicketDetails(selected)}
 
             {selected.ticket_type === "leave" ? (
-              <p className={adminStyles.muted} style={{ marginBottom: 12 }}>
-                Leave tickets are status-only — chat / replies are disabled.
-              </p>
+              <>
+                <p className={adminStyles.muted} style={{ marginBottom: 12 }}>
+                  Leave tickets are status-only — chat / replies are disabled.
+                </p>
+                {leaveBalanceInfo ? (
+                  <div
+                    style={{
+                      marginBottom: 14,
+                      padding: "12px 14px",
+                      borderRadius: 10,
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      fontSize: 14,
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                      Current leave balance
+                    </div>
+                    <div>
+                      {leaveBalanceInfo.employment_status === "Probation"
+                        ? "Leave balance"
+                        : "Annual"}
+                      :{" "}
+                      <b>
+                        {leaveBalanceInfo.annualBalance} /{" "}
+                        {leaveBalanceInfo.annualAllowance}
+                      </b>
+                    </div>
+                    <div>
+                      Bereavement: <b>{leaveBalanceInfo.bereavementBalance} / 3</b>
+                    </div>
+                    {leaveBalanceInfo.maternityAllowance > 0 ? (
+                      <div>
+                        Maternity:{" "}
+                        <b>
+                          {leaveBalanceInfo.maternityBalance} /{" "}
+                          {leaveBalanceInfo.maternityAllowance}
+                        </b>
+                      </div>
+                    ) : null}
+                    {leaveBalanceInfo.paternityAllowance > 0 ? (
+                      <div>
+                        Paternity:{" "}
+                        <b>
+                          {leaveBalanceInfo.paternityBalance} /{" "}
+                          {leaveBalanceInfo.paternityAllowance}
+                        </b>
+                      </div>
+                    ) : null}
+                    <div style={{ marginTop: 8, color: "#64748b", fontSize: 13 }}>
+                      Approve → balance minus requested days. Reject → balance unchanged.
+                    </div>
+                  </div>
+                ) : null}
+              </>
             ) : (
               <div className={adminStyles.chatSection}>
                 <span className={adminStyles.chatSectionLabel}>Conversation</span>
@@ -504,8 +914,25 @@ export default function AdminTicketsPage() {
             </div>
             ) : null}
 
-            {!ticketClosed ? (
+            {!ticketClosed && canModerateSelected ? (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {selected.ticket_type !== "leave" ? (
+                <button
+                  type="button"
+                  className={adminStyles.btnSecondary}
+                  disabled={processing || Boolean(selected.acknowledged_by)}
+                  onClick={() => handleAcknowledge(selected.id)}
+                  title={
+                    selected.acknowledged_by_name
+                      ? `Already acknowledged by ${selected.acknowledged_by_name}`
+                      : "Mark as acknowledged by you"
+                  }
+                >
+                  {selected.acknowledged_by_name
+                    ? `Acknowledged by ${selected.acknowledged_by_name}`
+                    : "Acknowledge"}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={adminStyles.btnPrimary}
@@ -531,6 +958,21 @@ export default function AdminTicketsPage() {
                 Reject
               </button>
             </div>
+            ) : null}
+            {!ticketClosed && isOwnSelectedTicket ? (
+              <p className={adminStyles.muted} style={{ marginTop: 8 }}>
+                You cannot approve or reject your own{" "}
+                {selected.ticket_type === "leave" ? "leave" : "ticket"}. Ask your
+                department head / CEO (HR/HIT → Max Miles, IT/Marketing/CEst →
+                Mubeen, DM → Joe White).
+              </p>
+            ) : null}
+            {!ticketClosed && !canModerateSelected && !isOwnSelectedTicket ? (
+              <p className={adminStyles.muted} style={{ marginTop: 8 }}>
+                {selected.ticket_type === "leave"
+                  ? "View only — you can see this leave, but approve is limited to the department hierarchy (Team Lead / Manager / dept head CEO)."
+                  : "View only — HR staff can acknowledge or resolve this ticket."}
+              </p>
             ) : null}
           </div>
         </div>

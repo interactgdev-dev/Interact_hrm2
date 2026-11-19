@@ -3,14 +3,15 @@
 # Interact HRM — auto-deploy (pull + conditional install + build + restart)
 #
 # Runs on each Ubuntu server via cron every minute. Because the servers sit on
-# private IPs (10.6.x.x staging, 10.40.x.x production) GitHub cannot reach them
+# private IPs (10.6 staging, 10.98 production) GitHub cannot reach them
 # with webhooks/Actions, so the server PULLS from GitHub instead.
 #
 # Per-server config (edit these on each box, or export before calling):
 #   APP_DIR   – absolute path to the checkout
 #   REMOTE    – git remote for this environment
 #               staging     -> waqas         (waqasahmad18/Interact_hrm.git)
-#               production  -> interactgdev  (interactgdev-dev/Interact_hrm2.git)
+#               production  -> interactgdev  (interactgdev-dev/Interact_hrm2.git, server 10.98)
+#               legacy 10.40 decommissioned — do not deploy there
 #   BRANCH    – deploy branch (main)
 #   PM2_NAME  – pm2 process name
 #
@@ -60,8 +61,16 @@ else
   log "Dependencies unchanged — skipping install."
 fi
 
-log "Running DB migrations…"
-node "$APP_DIR/scripts/run-migrations.mjs" >>"$LOG_FILE" 2>&1
+# Mongo has no MySQL schema_migrations — skip SQL runner when DB_DRIVER=mongo.
+DRIVER="$(
+  grep -E '^DB_DRIVER=' "$APP_DIR/.env.local" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '\r' || true
+)"
+if [ "${DRIVER}" = "mongo" ] || [ "${DB_DRIVER:-}" = "mongo" ]; then
+  log "Skipping SQL migrations (DB_DRIVER=mongo)."
+else
+  log "Running DB migrations…"
+  node "$APP_DIR/scripts/run-migrations.mjs" >>"$LOG_FILE" 2>&1
+fi
 
 log "Building…"
 npm run build >>"$LOG_FILE" 2>&1

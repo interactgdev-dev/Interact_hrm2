@@ -1,6 +1,6 @@
 "use client";
 
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import React from "react";
 import { createPortal } from "react-dom";
 import adminStyles from "../admin-page.module.css";
@@ -102,10 +102,10 @@ export default function AdminFinancialRequestsPage() {
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={adminStyles.page}>
         <div className={adminStyles.inner}>
-          <h1 className={adminStyles.title}>Payroll requests</h1>
+          <h1 className={adminStyles.title}>Advance loan request</h1>
           <p className={adminStyles.subtitle}>
             Review employee advance and loan requests. Approved items are added to payroll.
           </p>
@@ -244,6 +244,6 @@ export default function AdminFinancialRequestsPage() {
         )}
 
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

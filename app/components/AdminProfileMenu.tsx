@@ -6,6 +6,7 @@ import { FaCamera, FaKey, FaSignOutAlt } from "react-icons/fa";
 import { PROFILE_IMAGE_ACCEPT } from "@/lib/document-constants";
 import { saveAdminAvatar } from "@/app/shell-branding-api";
 import { toastError } from "@/lib/app-toast";
+import { clearPortalSessionKeys } from "@/lib/access-control/employee-shell";
 import { AdminUpdatePasswordModal } from "./AdminUpdatePasswordModal";
 import menuStyles from "@/app/employee-dashboard/components/employee-profile-menu.module.css";
 
@@ -39,7 +40,10 @@ export function AdminProfileMenu({ onAvatarUpdated }: Props) {
       typeof window !== "undefined"
         ? String(localStorage.getItem("loginId") || "").trim()
         : "";
-    if (typeof window !== "undefined") localStorage.removeItem("loginId");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("loginId");
+      clearPortalSessionKeys();
+    }
     try {
       void fetch("/api/internal/admin-activity", {
         method: "POST",

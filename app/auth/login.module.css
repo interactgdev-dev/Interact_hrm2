@@ -397,6 +397,7 @@
   box-shadow:
     0 1px 2px rgba(255, 255, 255, 0.35) inset,
     0 12px 32px rgba(15, 23, 42, 0.1);
+  overflow: visible;
 }
 
 .logoWrap {
@@ -446,6 +447,7 @@
   position: relative;
   width: 100%;
   display: block;
+  overflow: visible;
 }
 
 .form {
@@ -648,23 +650,37 @@
   margin-left: 4px;
 }
 
-/* ── Saved logins panel (overlay — don’t shrink input fields) ─ */
+/* ── Saved logins panel — left of fields (not under email) ─ */
 .savedPanel {
   position: absolute;
-  top: 48px;
-  left: 0;
-  right: 0;
+  top: 72px; /* roughly beside password row */
+  right: calc(100% + 14px);
+  left: auto;
   z-index: 40;
-  width: 100%;
-  max-width: none;
+  width: min(280px, 42vw);
+  max-width: 300px;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  overflow: hidden;
-  animation: fadeUp 0.22s ease both;
+  overflow: visible;
+  animation: fadeLeft 0.22s ease both;
+}
+
+/* Caret pointing toward the form fields */
+.savedPanel::after {
+  content: "";
+  position: absolute;
+  top: 28px;
+  right: -8px;
+  width: 14px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  border-right: 1px solid #e5e7eb;
+  border-top: 1px solid #e5e7eb;
+  transform: rotate(45deg);
 }
 
 .savedPanelTitle {
@@ -676,11 +692,14 @@
   color: #616061;
   background: #fafafa;
   border-bottom: 1px solid #e8e8e8;
+  border-radius: 12px 12px 0 0;
 }
 
 .savedPanelList {
   max-height: 220px;
   overflow-y: auto;
+  border-radius: 0 0 12px 12px;
+  overflow: hidden;
 }
 
 .savedAccountBtn {
@@ -744,6 +763,17 @@
   }
 }
 
+@keyframes fadeLeft {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 /* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 980px) {
   .splitWrap {
@@ -789,7 +819,22 @@
   }
 
   .savedPanel {
-    top: 46px;
+    /* Narrow screens: no room on the left — sit under password field */
+    top: auto;
+    bottom: auto;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: none;
+    margin-top: 0;
+    transform: none;
+    position: absolute;
+    top: 118px; /* below email + password rows */
+    animation: fadeUp 0.22s ease both;
+  }
+
+  .savedPanel::after {
+    display: none;
   }
 
   .topLogo {

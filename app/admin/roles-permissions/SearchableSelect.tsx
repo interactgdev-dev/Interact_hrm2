@@ -27,6 +27,8 @@ type Props = {
   emptyText?: string;
   filterOption: (opt: SelectOption, query: string) => boolean;
   disabled?: boolean;
+  /** Sticky action under the list (e.g. Add new role) — always visible while open. */
+  footerAction?: { label: string; onClick: () => void };
 };
 
 function allOptions(groups?: SelectGroup[], options?: SelectOption[]): SelectOption[] {
@@ -45,6 +47,7 @@ export default function SearchableSelect({
   emptyText = "No matches",
   filterOption,
   disabled = false,
+  footerAction,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -179,6 +182,19 @@ export default function SearchableSelect({
               <div className={styles.permSelectEmpty}>{emptyText}</div>
             )}
           </div>
+          {footerAction ? (
+            <button
+              type="button"
+              className={styles.permSelectFooterAction}
+              onClick={() => {
+                setOpen(false);
+                setQuery("");
+                footerAction.onClick();
+              }}
+            >
+              {footerAction.label}
+            </button>
+          ) : null}
         </div>
       )}
     </div>

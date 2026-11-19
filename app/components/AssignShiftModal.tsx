@@ -13,6 +13,10 @@ interface Employee {
 interface Shift {
   id: number;
   name: string;
+  shift_in: string;
+  shift_out: string;
+  overtime_daily?: number;
+  working_days?: string;
 }
 
 export default function AssignShiftModal({ onClose }: { onClose: () => void }) {
@@ -30,12 +34,26 @@ export default function AssignShiftModal({ onClose }: { onClose: () => void }) {
     fetch("/api/departments")
       .then((res) => res.json())
       .then((data: Department[]) => setDepartments(data));
-    fetch("/api/employees")
+    fetch("/api/employee-list")
       .then((res) => res.json())
-      .then((data: Employee[]) => setEmployees(data));
-    fetch("/api/shifts")
+      .then((data) => {
+        if (data?.success && Array.isArray(data.employees)) {
+          setEmployees(
+            data.employees.map((e: { id: number; first_name: string; last_name: string }) => ({
+              id: e.id,
+              first_name: e.first_name,
+              last_name: e.last_name,
+            })),
+          );
+        }
+      });
+    fetch("/api/master-shifts")
       .then((res) => res.json())
-      .then((data: Shift[]) => setShifts(data));
+      .then((data) => {
+        if (data?.success && Array.isArray(data.shifts)) {
+          setShifts(data.shifts);
+        }
+      });
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -48,18 +66,33 @@ export default function AssignShiftModal({ onClose }: { onClose: () => void }) {
     } else if (selectedEmp) {
       empIds = [parseInt(selectedEmp)];
     }
-    let deptId = selectedDept === "all" ? null : parseInt(selectedDept);
+    if (!selectedShift) {
+      setLoading(false);
+      return;
+    }
+    const shift = shifts.find((s) => String(s.id) === String(selectedShift));
+    if (!shift) {
+      setLoading(false);
+      return;
+    }
     for (const empId of empIds) {
-      await fetch("/api/shift-assignments", {
+      const res = await fetch("/api/hrm-shifts-assignments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          department_id: deptId,
           employee_id: empId,
-          shift_id: selectedShift === "all" ? null : parseInt(selectedShift),
-          assign_date: assignDate
-        })
+          shift_name: shift.name,
+          start_time: String(shift.shift_in).slice(0, 5),
+          end_time: String(shift.shift_out).slice(0, 5),
+          assigned_date: assignDate || undefined,
+          allow_overtime: Number(shift.overtime_daily) === 1,
+        }),
       });
+      const data = await res.json();
+      if (!data?.success) {
+        setLoading(false);
+        return;
+      }
     }
     setLoading(false);
     setSuccess(true);

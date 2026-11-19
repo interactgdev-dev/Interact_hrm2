@@ -14,9 +14,77 @@
   top: 0 !important;
 }
 
+/* Employee hover dock — same pattern as admin */
+.sidebarDock {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  z-index: 999;
+  overflow: visible;
+}
+
+.sidebarDockOpen {
+  width: 260px;
+}
+
+.sidebarRail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  z-index: 2;
+  cursor: pointer;
+  background: transparent;
+}
+
+.sidebarRail::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 3px;
+  border-radius: 0 6px 6px 0;
+  background: linear-gradient(180deg, #2dd4bf 0%, #14b8a6 55%, #0d9488 100%);
+  opacity: 0.55;
+  transition: opacity 0.2s ease, width 0.2s ease;
+}
+
+.sidebarDock:hover .sidebarRail::after,
+.sidebarDockOpen .sidebarRail::after {
+  opacity: 1;
+  width: 4px;
+}
+
+.sidebarSlide {
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  height: 100% !important;
+  width: 260px !important;
+  transform: translateX(-100%) !important;
+  transition: transform 0.7s cubic-bezier(0.33, 0.1, 0.25, 1) !important;
+  will-change: transform;
+  background: #0b1220 !important;
+}
+
+.sidebarSlideIn {
+  transform: translateX(0) !important;
+}
+
 .contentFull {
   min-height: 100vh !important;
   max-height: 100vh !important;
+  margin-left: 0;
+  transition: margin-left 0.7s cubic-bezier(0.33, 0.1, 0.25, 1);
+}
+
+.contentPushed {
+  margin-left: 260px !important;
 }
 
 .modernShell {
@@ -24,17 +92,18 @@
 }
 
 .contentModern {
-  background: linear-gradient(165deg, #e8f6fa 0%, #eef5fb 45%, #f3f6fa 100%);
+  background: #f4f5f7;
 }
 
 .sidebarPdf {
-  background: #1a1d24 !important;
+  background: #0b1220 !important;
   border-right: none !important;
-  box-shadow: 8px 0 32px rgba(15, 23, 42, 0.12) !important;
-  width: 240px !important;
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.28) !important;
+  width: 260px !important;
   padding-top: 8px !important;
   display: flex !important;
   flex-direction: column !important;
+  min-height: 0 !important;
 }
 
 .sidebarBrand {
@@ -42,18 +111,19 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 22px 16px 18px;
+  padding: 16px 16px 12px;
   border-bottom: none;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   box-sizing: border-box;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .sidebarGlobe {
-  width: 120px;
-  height: 120px;
+  width: 88px;
+  height: 88px;
   display: block;
   flex-shrink: 0;
   pointer-events: none;
@@ -93,21 +163,63 @@
 }
 
 .sidebarNav {
-  padding-top: 4px !important;
-  gap: 4px !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 4px 10px 20px !important;
+  gap: 6px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
 
 .navItemPdf {
   background: transparent !important;
   color: #f0f0f0 !important;
   font-weight: 500 !important;
-  font-size: 0.9rem !important;
-  padding: 11px 18px !important;
-  margin: 0 8px !important;
-  border-radius: 8px !important;
+  font-size: 0.875rem !important;
+  line-height: 1.25 !important;
+  padding: 10px 14px !important;
+  margin: 0 !important;
+  border-radius: 10px !important;
   gap: 12px !important;
   position: relative;
+  overflow: visible !important;
+  flex: 0 0 auto !important;
+  flex-shrink: 0 !important;
+  min-height: 42px !important;
+  box-sizing: border-box !important;
+  align-items: center !important;
+}
+
+.navLabelPdf {
+  display: inline-block;
   overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.navLabelStacked {
+  display: flex !important;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  white-space: normal !important;
+  line-height: 1.15;
+}
+
+.navLabelLine {
+  display: block;
+  line-height: 1.15;
+}
+
+.navItemPdf > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .navItemPdf:not(.navItemPdfActive)::before {
@@ -122,11 +234,11 @@
 
 .navItemPdfActive,
 .navItemPdf.navItemPdfActive {
-  background: rgba(255, 255, 255, 0.16) !important;
+  background: rgba(255, 255, 255, 0.14) !important;
   color: #fff !important;
   font-weight: 600 !important;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
     inset 0 -1px 0 rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -140,7 +252,7 @@
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
-  height: 62%;
+  height: 58%;
   min-height: 18px;
   border-radius: 0 3px 3px 0;
   background: #00c2cb;
@@ -149,8 +261,11 @@
 
 .navIconPdf {
   color: #fff !important;
-  font-size: 1.05rem !important;
+  font-size: 1rem !important;
   opacity: 0.95;
+  flex-shrink: 0 !important;
+  width: 20px;
+  justify-content: center;
 }
 
 .sidebarFooter {
@@ -360,6 +475,28 @@
 }
 
 @media (max-width: 900px) {
+  .sidebarDock {
+    display: contents;
+  }
+
+  .sidebarRail {
+    display: none;
+  }
+
+  .sidebarSlide {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 272px !important;
+    max-width: 86vw !important;
+    height: 100vh !important;
+    z-index: 1001;
+  }
+
+  .contentPushed {
+    margin-left: 0 !important;
+  }
+
   .heroStrip,
   .attendanceDock,
   .tardyRow,

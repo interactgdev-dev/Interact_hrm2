@@ -13,6 +13,7 @@ import {
 } from "react-icons/fa";
 import { EmployeeAvatar } from "../../components/EmployeeAvatar";
 import { employeeInitials } from "../../../lib/employee-photo-shared";
+import { BackToDashboard } from "../components/BackToDashboard";
 import styles from "./my-info.module.css";
 import filesStyles from "./my-files.module.css";
 import { MyFilesTab } from "./MyFilesTab";
@@ -237,6 +238,7 @@ export default function MyInfoPage() {
       <div className={styles.inner}>
         <header className={styles.header}>
           <div>
+            <BackToDashboard />
             <h1 className={styles.title}>My Info</h1>
             <p className={styles.subtitle}>Personal details and your employee file folder</p>
           </div>

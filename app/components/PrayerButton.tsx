@@ -10,6 +10,11 @@ import {
   notifyPrayerDataChanged,
 } from "../../lib/ui-sync/breakPrayerDataRefresh";
 import { toastError, toastSuccess } from "@/lib/app-toast";
+import {
+  FULL_PRAYER_ALLOWANCE_SECONDS,
+  exceedSecondsOverAllowance,
+  prayerAllowanceFromAttendanceRow,
+} from "@/lib/break-prayer-allowance";
 
 /** When clocked in across midnight, breaks/prayers fall on multiple calendar days; use session range, not date=today only. */
 function buildPrayerBreaksListUrl(employeeId: string, attendanceRows: any[]): string {
@@ -44,7 +49,7 @@ interface PrayerButtonProps {
   pausePrayerTimerForVerify: () => void;
   resumePrayerTimerAfterVerify: () => void;
   resetPrayerPauseState: () => void;
-  onPrayerStateChanged: () => void;
+  onPrayerStateChanged: () => void | Promise<void>;
   disabled?: boolean;
   runWithVerify?: (
     action: BiometricAction,
@@ -100,7 +105,10 @@ export function PrayerButton({
         setIsPrayerOn(true);
         setPrayerStart(startTime);
         notifyPrayerDataChanged();
-        onPrayerStateChanged();
+        await Promise.resolve(onPrayerStateChanged());
+        // Keep started UI even if sync briefly misses the new row
+        setIsPrayerOn(true);
+        setPrayerStart(startTime);
         toastSuccess("Prayer break started.", "Prayer break");
       } else if (
         res.status === 403 &&
@@ -274,11 +282,16 @@ function PrayerTotals({
   const isSlack = variant === "slack" || variant === "todayStatus";
   const slackStyles = variant === "todayStatus" ? todayStyles : slackStylesDefault;
   const [completedPrayerSeconds, setCompletedPrayerSeconds] = React.useState(0);
+  const [prayerAllowanceSeconds, setPrayerAllowanceSeconds] = React.useState(
+    FULL_PRAYER_ALLOWANCE_SECONDS,
+  );
 
   const displayTotalSeconds =
     completedPrayerSeconds + (isPrayerOn ? Math.max(0, livePrayerSeconds) : 0);
-  const displayExceedSeconds =
-    displayTotalSeconds > 1800 ? displayTotalSeconds - 1800 : 0;
+  const displayExceedSeconds = exceedSecondsOverAllowance(
+    displayTotalSeconds,
+    prayerAllowanceSeconds,
+  );
 
   const refreshTotals = React.useCallback(async () => {
     try {
@@ -308,6 +321,10 @@ function PrayerTotals({
         sortedAttendance.find((a: any) => a.clock_in && !a.clock_out) ||
         sortedAttendance[0] ||
         null;
+
+      setPrayerAllowanceSeconds(
+        prayerAllowanceFromAttendanceRow(activeOrLatestAttendance),
+      );
 
       const activeAttendanceId =
         activeOrLatestAttendance?.id !== undefined &&
@@ -405,7 +422,7 @@ function PrayerTotals({
           <div className={slackStyles.summaryLabel}>Total Prayer</div>
           <div
             className={slackStyles.summaryValue}
-            style={displayTotalSeconds > 1800 ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" } : undefined}
+            style={displayExceedSeconds > 0 ? { color: "#dc2626", borderColor: "rgba(220,38,38,0.35)" } : undefined}
           >
             {formatDuration(displayTotalSeconds)}
           </div>
@@ -420,7 +437,7 @@ function PrayerTotals({
   return (
     <div style={{ marginTop: 12, background: "#fff", borderRadius: 12, boxShadow: "0 2px 8px rgba(142,68,173,0.10)", padding: "8px 12px", minWidth: 120 }}>
       <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#8e44ad", marginBottom: 6 }}>Today's Total Prayer</div>
-      <div style={{ fontSize: "1rem", fontWeight: 500, color: displayTotalSeconds > 1800 ? "#e74c3c" : "#2d3436" }}>{formatDuration(displayTotalSeconds)}</div>
+      <div style={{ fontSize: "1rem", fontWeight: 500, color: displayExceedSeconds > 0 ? "#e74c3c" : "#2d3436" }}>{formatDuration(displayTotalSeconds)}</div>
       {displayExceedSeconds > 0 && (
         <div style={{ fontSize: "0.9rem", color: "#e74c3c", marginTop: 4 }}>Exceed: {formatDuration(displayExceedSeconds)}</div>
       )}

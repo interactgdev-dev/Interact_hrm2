@@ -11,8 +11,16 @@ import { fieldsForAudience } from "@/lib/form-schema";
 import {
   formatFieldValueForDisplay,
   isCheckboxGroup,
+  isFileField,
   toggleCheckboxGroupValue,
 } from "@/lib/form-field-options";
+import {
+  FormFileUpload,
+  FormSelect,
+  familySlotFromKey,
+  inferFamilyCountFromData,
+  isFamilyAddAnotherKey,
+} from "@/app/components/FormFieldControls";
 import styles from "./my-files.module.css";
 
 type Doc = {
@@ -82,16 +90,33 @@ function HrMessageBox({
 
 function FormFillModal({
   assignment,
+  employeeId,
+  actorLogin,
   onClose,
   onSaved,
 }: {
   assignment: Assignment;
+  employeeId: string;
+  actorLogin: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const fields = fieldsForAudience(assignment.form_schema, "employee") as FormField[];
+  const maxFamilySlot = React.useMemo(() => {
+    let max = 0;
+    for (const f of fields) {
+      const slot = familySlotFromKey(f.key);
+      if (slot && slot > max) max = slot;
+    }
+    return max;
+  }, [fields]);
   const [formData, setFormData] = React.useState<Record<string, unknown>>(
     () => ({ ...(assignment.form_data || {}) })
+  );
+  const [familyCount, setFamilyCount] = React.useState(() =>
+    maxFamilySlot > 0
+      ? Math.min(maxFamilySlot, inferFamilyCountFromData(assignment.form_data || {}, maxFamilySlot))
+      : 1
   );
   const [error, setError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
@@ -100,10 +125,23 @@ function FormFillModal({
     setSaving(true);
     setError("");
     try {
+      const cleaned = { ...formData };
+      if (maxFamilySlot > 0) {
+        for (let i = familyCount + 1; i <= maxFamilySlot; i++) {
+          for (const key of Object.keys(cleaned)) {
+            if (familySlotFromKey(key) === i || isFamilyAddAnotherKey(key)) {
+              delete cleaned[key];
+            }
+          }
+        }
+        for (const key of Object.keys(cleaned)) {
+          if (isFamilyAddAnotherKey(key)) delete cleaned[key];
+        }
+      }
       const res = await fetch(`/api/form-assignments/${assignment.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, form_data: formData }),
+        body: JSON.stringify({ action, form_data: cleaned }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Failed");
@@ -117,6 +155,130 @@ function FormFillModal({
   }
 
   if (typeof document === "undefined") return null;
+
+  const rendered: React.ReactNode[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i];
+    if (isFamilyAddAnotherKey(f.key)) continue;
+    const slot = familySlotFromKey(f.key);
+    if (slot != null && slot > familyCount) continue;
+
+    if (f.type === "heading") {
+      rendered.push(
+        <div key={f.key} className={styles.field} style={{ marginTop: 18, marginBottom: 4 }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
+            {f.label || f.key}
+          </h3>
+          {Array.isArray(f.options) && f.options[0] ? (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+              {f.options[0]}
+            </p>
+          ) : null}
+        </div>
+      );
+    } else {
+      rendered.push(
+        <div key={f.key} className={styles.field}>
+          <label className={styles.label}>
+            {f.label || f.key}
+            {f.required ? " *" : ""}
+          </label>
+          {Array.isArray(f.options) && f.options[0] && isFileField(f) ? (
+            <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b" }}>{f.options[0]}</p>
+          ) : null}
+          {f.type === "textarea" ? (
+            <textarea
+              className={styles.textarea}
+              value={String(formData[f.key] ?? "")}
+              readOnly={f.readonly}
+              onChange={(e) => setFormData((d) => ({ ...d, [f.key]: e.target.value }))}
+            />
+          ) : f.type === "select" ? (
+            <FormSelect
+              className={styles.select}
+              value={String(formData[f.key] ?? "")}
+              disabled={f.readonly}
+              options={f.options || []}
+              onChange={(next) => setFormData((d) => ({ ...d, [f.key]: next }))}
+            />
+          ) : isFileField(f) ? (
+            <FormFileUpload
+              value={formData[f.key]}
+              disabled={f.readonly}
+              employeeId={employeeId}
+              actorLogin={actorLogin}
+              onChange={(next) => setFormData((d) => ({ ...d, [f.key]: next }))}
+              onError={(message) => setError(message)}
+            />
+          ) : f.type === "checkbox" ? (
+            isCheckboxGroup(f) ? (
+              <div className={styles.checkboxGroup}>
+                {(f.options || []).map((opt) => {
+                  const selected = Array.isArray(formData[f.key])
+                    ? (formData[f.key] as string[])
+                    : [];
+                  return (
+                    <label key={opt} className={styles.checkItem}>
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(opt)}
+                        disabled={f.readonly}
+                        onChange={(e) =>
+                          setFormData((d) => ({
+                            ...d,
+                            [f.key]: toggleCheckboxGroupValue(d[f.key], opt, e.target.checked),
+                          }))
+                        }
+                      />{" "}
+                      {opt}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <label className={styles.checkItem}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(formData[f.key])}
+                  disabled={f.readonly}
+                  onChange={(e) => setFormData((d) => ({ ...d, [f.key]: e.target.checked }))}
+                />{" "}
+                I acknowledge
+              </label>
+            )
+          ) : (
+            <input
+              className={styles.input}
+              type={f.type === "date" ? "date" : "text"}
+              value={String(formData[f.key] ?? "")}
+              readOnly={f.readonly}
+              onChange={(e) => setFormData((d) => ({ ...d, [f.key]: e.target.value }))}
+            />
+          )}
+        </div>
+      );
+    }
+
+    const isLastOfVisibleFamilySlot =
+      slot != null &&
+      slot === familyCount &&
+      (i === fields.length - 1 || familySlotFromKey(fields[i + 1]?.key) !== slot);
+
+    if (isLastOfVisibleFamilySlot && familyCount < maxFamilySlot) {
+      rendered.push(
+        <div key={`add-family-${slot}`} className={styles.field} style={{ marginTop: 4 }}>
+          <button
+            type="button"
+            className={styles.btnSm}
+            style={{ color: "#611f69", borderColor: "#e9d5ef", background: "#fdf4ff" }}
+            onClick={() => setFamilyCount((n) => Math.min(maxFamilySlot, n + 1))}
+          >
+            + Add another family member
+          </button>
+        </div>
+      );
+    }
+  }
 
   return createPortal(
     <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
@@ -133,80 +295,7 @@ function FormFillModal({
           />
         ) : null}
         {error ? <div className={`${styles.alert} ${styles.alertError}`}>{error}</div> : null}
-        {fields.map((f) => (
-          <div key={f.key} className={styles.field}>
-            <label className={styles.label}>
-              {f.label || f.key}
-              {f.required ? " *" : ""}
-            </label>
-            {f.type === "textarea" ? (
-              <textarea
-                className={styles.textarea}
-                value={String(formData[f.key] ?? "")}
-                readOnly={f.readonly}
-                onChange={(e) => setFormData((d) => ({ ...d, [f.key]: e.target.value }))}
-              />
-            ) : f.type === "select" ? (
-              <select
-                className={styles.select}
-                value={String(formData[f.key] ?? "")}
-                disabled={f.readonly}
-                onChange={(e) => setFormData((d) => ({ ...d, [f.key]: e.target.value }))}
-              >
-                <option value="">Select…</option>
-                {(f.options || []).map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
-            ) : f.type === "checkbox" ? (
-              isCheckboxGroup(f) ? (
-                <div className={styles.checkboxGroup}>
-                  {(f.options || []).map((opt) => {
-                    const selected = Array.isArray(formData[f.key])
-                      ? (formData[f.key] as string[])
-                      : [];
-                    return (
-                      <label key={opt} className={styles.checkItem}>
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(opt)}
-                          disabled={f.readonly}
-                          onChange={(e) =>
-                            setFormData((d) => ({
-                              ...d,
-                              [f.key]: toggleCheckboxGroupValue(d[f.key], opt, e.target.checked),
-                            }))
-                          }
-                        />{" "}
-                        {opt}
-                      </label>
-                    );
-                  })}
-                </div>
-              ) : (
-                <label className={styles.checkItem}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(formData[f.key])}
-                    disabled={f.readonly}
-                    onChange={(e) => setFormData((d) => ({ ...d, [f.key]: e.target.checked }))}
-                  />{" "}
-                  I acknowledge
-                </label>
-              )
-            ) : (
-              <input
-                className={styles.input}
-                type={f.type === "date" ? "date" : "text"}
-                value={String(formData[f.key] ?? "")}
-                readOnly={f.readonly}
-                onChange={(e) => setFormData((d) => ({ ...d, [f.key]: e.target.value }))}
-              />
-            )}
-          </div>
-        ))}
+        <div className={styles.modalBody}>{rendered}</div>
         <div className={styles.modalActions}>
           <button type="button" className={styles.btnSm} onClick={onClose} disabled={saving}>
             Cancel
@@ -245,21 +334,39 @@ export function MyFilesTab({ employeeId }: { employeeId: string }) {
   const loginId = typeof window !== "undefined" ? localStorage.getItem("loginId") || "" : "";
 
   const load = React.useCallback(async () => {
-    if (!employeeId) return;
+    const empId = String(employeeId || "").trim();
+    if (!empId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [docRes, assignRes] = await Promise.all([
-        fetch(`/api/employee-documents?employeeId=${encodeURIComponent(employeeId)}`, {
+        fetch(`/api/employee-documents?employeeId=${encodeURIComponent(empId)}`, {
           cache: "no-store",
         }),
-        fetch(`/api/form-assignments?employeeId=${encodeURIComponent(employeeId)}`, {
+        fetch(`/api/form-assignments?employeeId=${encodeURIComponent(empId)}`, {
           cache: "no-store",
         }),
       ]);
       const docData = await docRes.json();
       const assignData = await assignRes.json();
       if (docData.success) setDocuments(docData.documents || []);
+      else setDocuments([]);
       if (assignData.success) setAssignments(assignData.assignments || []);
+      else {
+        setAssignments([]);
+        if (assignData.error) {
+          showAppToast({
+            message: assignData.error || "Could not load forms from HR",
+            variant: "error",
+          });
+        }
+      }
+    } catch {
+      setDocuments([]);
+      setAssignments([]);
+      showAppToast({ message: "Could not load My Files", variant: "error" });
     } finally {
       setLoading(false);
     }
@@ -372,7 +479,10 @@ export function MyFilesTab({ employeeId }: { employeeId: string }) {
     doc.folder_type === "hr_issued";
 
   const pendingForms = assignments.filter((a) =>
-    ["pending", "in_progress", "draft"].includes(a.status)
+    ["pending", "in_progress", "draft"].includes(String(a.status || "").toLowerCase())
+  );
+  const submittedForms = assignments.filter(
+    (a) => String(a.status || "").toLowerCase() === "submitted"
   );
 
   if (loading) {
@@ -381,14 +491,24 @@ export function MyFilesTab({ employeeId }: { employeeId: string }) {
 
   return (
     <div>
-      {pendingForms.length > 0 ? (
-        <section className={styles.section}>
-          <h3 className={styles.sectionTitle}>
-            <FaFileAlt /> Forms to complete
-          </h3>
-          {pendingForms.map((a) => (
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>
+          <FaFileAlt /> Forms to complete
+        </h3>
+        <p className={styles.uploadHint} style={{ marginBottom: 12 }}>
+          When HR sends you a form (Form Templates → Send to employee), it appears here. Fill and
+          submit — then it moves to <strong>Submitted forms</strong> and <strong>My folder</strong>.
+        </p>
+        {pendingForms.length === 0 ? (
+          <div className={styles.empty}>
+            No form waiting right now. If HR just sent one, refresh this page.
+          </div>
+        ) : (
+          pendingForms.map((a) => (
             <div key={a.id} className={styles.formCard}>
-              <p className={styles.formCardTitle}>{a.template_title || formCategoryLabel(a.template_category)}</p>
+              <p className={styles.formCardTitle}>
+                {a.template_title || formCategoryLabel(a.template_category)}
+              </p>
               <p className={styles.formCardMeta}>
                 {formCategoryLabel(a.template_category)}
                 {a.template_id ? ` · Form #${a.template_id}` : ""}
@@ -410,6 +530,38 @@ export function MyFilesTab({ employeeId }: { employeeId: string }) {
                   onClick={() => void openFillForm(a.id)}
                 >
                   <FaEdit /> Fill form
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </section>
+
+      {submittedForms.length > 0 ? (
+        <section className={styles.section}>
+          <h3 className={styles.sectionTitle}>
+            <FaFileAlt /> Submitted forms
+          </h3>
+          {submittedForms.map((a) => (
+            <div key={a.id} className={styles.formCard}>
+              <p className={styles.formCardTitle}>
+                {a.template_title || formCategoryLabel(a.template_category)}
+              </p>
+              <p className={styles.formCardMeta}>
+                {formCategoryLabel(a.template_category)}
+                {" · "}
+                <span className={`${styles.badge} ${styles.badgeSubmitted}`}>submitted</span>
+                {a.submitted_at
+                  ? ` · ${new Date(a.submitted_at).toLocaleString()}`
+                  : ""}
+              </p>
+              <div className={styles.actions}>
+                <button
+                  type="button"
+                  className={`${styles.btnSm} ${styles.btnPrimary}`}
+                  onClick={() => previewForm(a.id)}
+                >
+                  <FaEye /> Open / print
                 </button>
               </div>
             </div>
@@ -525,6 +677,8 @@ export function MyFilesTab({ employeeId }: { employeeId: string }) {
       {fillAssignment ? (
         <FormFillModal
           assignment={fillAssignment}
+          employeeId={employeeId}
+          actorLogin={loginId}
           onClose={() => setFillAssignment(null)}
           onSaved={() => void load()}
         />

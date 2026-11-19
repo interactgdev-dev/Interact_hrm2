@@ -1,6 +1,12 @@
-.page {
-  padding: 24px 28px 48px;
+.pageInner {
   max-width: 1200px;
+  margin: 0 auto;
+}
+
+.pageSub {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  color: #64748b;
 }
 
 .pageHeader {
@@ -541,9 +547,72 @@
    forced 1280px so columns are not spread with huge gaps. */
 .enrollCompactWrapper {
   width: 100% !important;
+  max-height: 62vh;
 }
 
 .enrollCompactTable {
   min-width: 680px !important;
   width: 100% !important;
+}
+
+.faceEnrollTableFit {
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.faceEnrollTableFit thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.faceEnrollTableFit thead th {
+  background: #111827;
+  padding: 8px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  color: #fff;
+}
+
+.faceEnrollTableFit tbody td {
+  padding: 7px 8px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faceEnrollTableFit td:nth-child(2) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.faceEnrollTableFit th:nth-child(1),
+.faceEnrollTableFit td:nth-child(1) {
+  width: 8%;
+}
+
+.faceEnrollTableFit th:nth-child(2),
+.faceEnrollTableFit td:nth-child(2) {
+  width: 34%;
+}
+
+.faceEnrollTableFit th:nth-child(3),
+.faceEnrollTableFit td:nth-child(3) {
+  width: 22%;
+}
+
+.faceEnrollTableFit th:nth-child(4),
+.faceEnrollTableFit td:nth-child(4) {
+  width: 12%;
+}
+
+.faceEnrollTableFit th:nth-child(5),
+.faceEnrollTableFit td:nth-child(5) {
+  width: 24%;
 }

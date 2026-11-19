@@ -9,6 +9,7 @@ import {
   saveTicketSeen,
   type TicketThreadMessage,
 } from "../../lib/ticket-thread";
+import { parseTicketInstant } from "@/lib/ticket-time";
 import { ATTENDANCE_DATA_CHANGED } from "../../lib/ui-sync/breakPrayerDataRefresh";
 import type { TicketCategory } from "../../lib/ticket-catalog";
 import { resolveEventColor } from "../../lib/event-colors";
@@ -24,6 +25,10 @@ import {
 import { normalizeAttendanceStatus } from "../../lib/attendance-status";
 import { useRouter } from "next/navigation";
 import React from "react";
+import { sanitizeEmployeeDisplayName } from "@/lib/employee-login-lookup";
+import { fetchAccessControlMe } from "@/lib/access-control/me-client-cache";
+import { useEmployeeSession } from "./employee-session-context";
+import { ClockBreakPrayerWidget } from "../components/ClockBreakPrayer";
 
 type AttendanceRow = {
   id?: number;
@@ -51,6 +56,10 @@ type LeaveBalance = {
   annualAllowance: number;
   bereavement: number;
   bereavementAllowance: number;
+  maternity: number;
+  maternityAllowance: number;
+  paternity: number;
+  paternityAllowance: number;
 };
 
 type TicketWidgetRow = {
@@ -60,8 +69,13 @@ type TicketWidgetRow = {
   status: string;
   category: TicketCategory;
   ticket_type: string;
+  employee_name?: string | null;
+  employee_id?: string | null;
   messages?: TicketThreadMessage[];
+  requested_at?: string;
   updated_at: string;
+  approved_by?: string | null;
+  approved_by_name?: string | null;
 };
 
 function addDaysToDateKey(dateKey: string, daysToAdd: number) {
@@ -143,6 +157,11 @@ function recordDateKey(record: AttendanceRow) {
   return "";
 }
 
+function isTardyAttendance(row?: AttendanceRow | null): boolean {
+  if (!row) return false;
+  return Boolean(row.is_late) || (row.late_minutes ?? 0) > 0;
+}
+
 function workHours(record: AttendanceRow): number {
   if (!record.clock_in) return 0;
   const inParts = getParts(record.clock_in, SERVER_TIMEZONE);
@@ -200,7 +219,6 @@ function eventDateKey(startAt: string) {
 
 export default function EmployeeDashboardPage() {
   const router = useRouter();
-  const [employeeId, setEmployeeId] = React.useState("");
   const [calendarNow, setCalendarNow] = React.useState(() => new Date());
   const [eventsMonthOffset, setEventsMonthOffset] = React.useState(0);
   const eventsYearRef = React.useRef(new Date().getFullYear());
@@ -216,6 +234,10 @@ export default function EmployeeDashboardPage() {
     annualAllowance: 20,
     bereavement: 0,
     bereavementAllowance: 3,
+    maternity: 0,
+    maternityAllowance: 0,
+    paternity: 0,
+    paternityAllowance: 0,
   });
   const [events, setEvents] = React.useState<DashboardEvent[]>([]);
   const [holidays, setHolidays] = React.useState<DashboardEvent[]>([]);
@@ -227,9 +249,17 @@ export default function EmployeeDashboardPage() {
   const [loadingTickets, setLoadingTickets] = React.useState(false);
   const [ticketPulseIds, setTicketPulseIds] = React.useState<number[]>([]);
   const [ticketSeenMap, setTicketSeenMap] = React.useState<Record<number, string>>({});
+  const [isHrTicketInbox, setIsHrTicketInbox] = React.useState(false);
+  const [inboxTickets, setInboxTickets] = React.useState<TicketWidgetRow[]>([]);
   const ticketsRef = React.useRef<TicketWidgetRow[]>([]);
   const ticketTimerRef = React.useRef<number | null>(null);
-  const [employeeName, setEmployeeName] = React.useState("Employee");
+  // Same name as Welcome Back (layout session) — never a separate local email cache
+  const {
+    employeeId,
+    employeeName,
+    setEmployeeId,
+    setEmployeeName,
+  } = useEmployeeSession();
   const [profilePhoto, setProfilePhoto] = React.useState<string | null>(null);
   const [profileContact, setProfileContact] = React.useState<{
     email: string;
@@ -272,36 +302,56 @@ export default function EmployeeDashboardPage() {
   }, []);
 
   React.useLayoutEffect(() => {
+    // Prefer layout session; only seed from storage when layout has not resolved yet
     const empId =
       localStorage.getItem("employeeId") || localStorage.getItem("loginId") || "";
-    setEmployeeId(empId);
-    setEmployeeName(localStorage.getItem("employeeName") || "Employee");
+    if (empId && /^\d+$/.test(empId)) setEmployeeId(empId);
+    const cached = sanitizeEmployeeDisplayName(
+      localStorage.getItem("employeeName"),
+      "",
+    );
+    if (cached) setEmployeeName(cached);
     if (empId) setTicketSeenMap(loadTicketSeenMap(empId));
-  }, []);
+  }, [setEmployeeId, setEmployeeName]);
+
+  // Identity comes from layout EmployeeSessionProvider — no duplicate /hrm_employees.
 
   React.useEffect(() => {
     if (!employeeId) return;
     let cancelled = false;
-    void Promise.all([
-      fetch(`/api/employee_contacts?employeeId=${encodeURIComponent(employeeId)}`, {
-        cache: "no-store",
-      }).then((r) => r.json()),
-      fetchShellBranding().catch(() => null),
-    ]).then(([contactData, branding]) => {
-      if (cancelled) return;
-      const c = contactData?.success ? contactData.contact : null;
-      const city = [c?.city, c?.country].filter(Boolean).join(", ");
-      setProfileContact({
-        email: c?.email_work || c?.email_other || "",
-        phone: c?.phone_mobile || c?.phone_work || c?.phone_home || "",
-        location: city || "—",
+    let idleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const load = () => {
+      void Promise.all([
+        fetch(`/api/employee_contacts?employeeId=${encodeURIComponent(employeeId)}`, {
+          cache: "no-store",
+        }).then((r) => r.json()),
+        fetchShellBranding().catch(() => null),
+      ]).then(([contactData, branding]) => {
+        if (cancelled) return;
+        const c = contactData?.success ? contactData.contact : null;
+        const city = [c?.city, c?.country].filter(Boolean).join(", ");
+        setProfileContact({
+          email: c?.email_work || c?.email_other || "",
+          phone: c?.phone_mobile || c?.phone_work || c?.phone_home || "",
+          location: city || "—",
+        });
+        if (branding?.employeeAvatars?.[employeeId]) {
+          setProfilePhoto(branding.employeeAvatars[employeeId]);
+        }
       });
-      if (branding?.employeeAvatars?.[employeeId]) {
-        setProfilePhoto(branding.employeeAvatars[employeeId]);
-      }
-    });
+    };
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(load, { timeout: 2500 });
+    } else {
+      timeoutId = setTimeout(load, 700);
+    }
     return () => {
       cancelled = true;
+      if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [employeeId]);
 
@@ -341,6 +391,62 @@ export default function EmployeeDashboardPage() {
       if (!opts?.silent) setLoadingTickets(false);
     }
   }, [employeeId]);
+
+  const fetchHrInboxTickets = React.useCallback(async () => {
+    if (!employeeId || !isHrTicketInbox) return;
+    try {
+      const params = new URLSearchParams({
+        status: "open",
+        limit: "30",
+        inbox: "hr",
+        viewerId: employeeId,
+        ts: String(Date.now()),
+      });
+      const res = await fetch(`/api/employee-tickets?${params}`, {
+        cache: "no-store",
+        headers: {
+          "x-employee-id": employeeId,
+          "x-hrm-employee-id": employeeId,
+        },
+      });
+      const data = await res.json();
+      if (data?.success) {
+        setInboxTickets(Array.isArray(data.tickets) ? data.tickets : []);
+      }
+    } catch (err) {
+      console.error("hr inbox tickets fetch", err);
+    }
+  }, [employeeId, isHrTicketInbox]);
+
+  React.useEffect(() => {
+    if (!employeeId || !/^\d+$/.test(employeeId)) {
+      setIsHrTicketInbox(false);
+      return;
+    }
+    let cancelled = false;
+    fetchAccessControlMe(employeeId)
+      .then((data) => {
+        if (cancelled || !data?.success) return;
+        const perms = Array.isArray(data.permissions) ? data.permissions : [];
+        setIsHrTicketInbox(perms.includes("ops.tickets.view"));
+      })
+      .catch(() => {
+        if (!cancelled) setIsHrTicketInbox(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeId]);
+
+  React.useEffect(() => {
+    if (!isHrTicketInbox) {
+      setInboxTickets([]);
+      return;
+    }
+    void fetchHrInboxTickets();
+    const id = window.setInterval(() => void fetchHrInboxTickets(), 60_000);
+    return () => window.clearInterval(id);
+  }, [isHrTicketInbox, fetchHrInboxTickets]);
 
   const openTicketPage = React.useCallback(
     (ticket?: TicketWidgetRow) => {
@@ -451,7 +557,11 @@ export default function EmployeeDashboardPage() {
           annual: data.annualBalance ?? 0,
           annualAllowance: data.annualAllowance ?? 20,
           bereavement: data.bereavementBalance ?? 0,
-          bereavementAllowance: 3,
+          bereavementAllowance: data.bereavementAllowance ?? 3,
+          maternity: data.maternityBalance ?? 0,
+          maternityAllowance: data.maternityAllowance ?? 0,
+          paternity: data.paternityBalance ?? 0,
+          paternityAllowance: data.paternityAllowance ?? 0,
         });
       }
     } catch (err) {
@@ -491,19 +601,20 @@ export default function EmployeeDashboardPage() {
 
   React.useEffect(() => {
     if (!employeeId) return;
-    // Attendance first — rest deferred so route paint stays snappy
+    // Attendance first for Hours today / week pulse — everything else waits for idle.
     void fetchAttendance();
-    void fetchMonthAbsentContext();
     const runSecondary = () => {
+      void fetchMonthAbsentContext();
       void fetchLeaveBalance();
       void fetchTickets();
+      void fetchReminders();
     };
     let idleId: number | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      idleId = window.requestIdleCallback(runSecondary, { timeout: 1800 });
+      idleId = window.requestIdleCallback(runSecondary, { timeout: 2200 });
     } else {
-      timeoutId = setTimeout(runSecondary, 120);
+      timeoutId = setTimeout(runSecondary, 250);
     }
     return () => {
       if (idleId !== undefined && typeof window !== "undefined" && "cancelIdleCallback" in window) {
@@ -511,7 +622,14 @@ export default function EmployeeDashboardPage() {
       }
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [employeeId, fetchAttendance, fetchMonthAbsentContext, fetchLeaveBalance, fetchTickets]);
+  }, [
+    employeeId,
+    fetchAttendance,
+    fetchMonthAbsentContext,
+    fetchLeaveBalance,
+    fetchTickets,
+    fetchReminders,
+  ]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -519,7 +637,6 @@ export default function EmployeeDashboardPage() {
     let ws: WebSocket | null = null;
     const connect = () => {
       if (cancelled) return;
-      void fetchReminders();
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
       ws = new WebSocket(`${protocol}://${window.location.host}/api/ws`);
       ws.onmessage = (evt) => {
@@ -748,35 +865,6 @@ export default function EmployeeDashboardPage() {
     return `Clocked In: ${time}`;
   }, [activeSession, todayKey]);
 
-  const profileInitials = (employeeName || "E")
-    .split(" ")
-    .map((p) => p[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-
-  const calendarYear = todayParts.year;
-  const calendarMonthIndex = todayParts.month - 1;
-  const monthName = new Intl.DateTimeFormat(undefined, {
-    month: "long",
-    timeZone: SERVER_TIMEZONE,
-  }).format(new Date(Date.UTC(calendarYear, calendarMonthIndex, 1, 12, 0, 0)));
-  const calendarSlots = React.useMemo(() => {
-    const monthStartUtc = new Date(Date.UTC(calendarYear, calendarMonthIndex, 1));
-    const daysInMonth = new Date(
-      Date.UTC(calendarYear, calendarMonthIndex + 1, 0)
-    ).getUTCDate();
-    const leadingBlanks = monthStartUtc.getUTCDay();
-    return Array.from({ length: leadingBlanks + daysInMonth }, (_, idx) => {
-      if (idx < leadingBlanks) return null;
-      const day = idx - leadingBlanks + 1;
-      const key = `${calendarYear}-${String(todayParts.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const isToday = day === todayParts.day;
-      const isTardy = attendanceByDate.get(key)?.is_late === true;
-      return { day, isToday, isTardy };
-    });
-  }, [calendarYear, calendarMonthIndex, todayParts.month, todayParts.day, attendanceByDate]);
-
   const newReplyCount = React.useMemo(
     () =>
       tickets.filter(
@@ -809,10 +897,38 @@ export default function EmployeeDashboardPage() {
             ? 1
             : 0;
         if (bUnread !== aUnread) return bUnread - aUnread;
-        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        const aMs =
+          parseTicketInstant(a.requested_at)?.getTime() ||
+          parseTicketInstant(a.updated_at)?.getTime() ||
+          0;
+        const bMs =
+          parseTicketInstant(b.requested_at)?.getTime() ||
+          parseTicketInstant(b.updated_at)?.getTime() ||
+          0;
+        if (bMs !== aMs) return bMs - aMs;
+        return b.id - a.id;
       })
       .slice(0, 1);
   }, [tickets, ticketSeenMap]);
+
+  const inboxTicketItems = React.useMemo(() => {
+    return [...inboxTickets]
+      .sort((a, b) => {
+        const aMs =
+          parseTicketInstant(a.requested_at)?.getTime() ||
+          parseTicketInstant(a.updated_at)?.getTime() ||
+          0;
+        const bMs =
+          parseTicketInstant(b.requested_at)?.getTime() ||
+          parseTicketInstant(b.updated_at)?.getTime() ||
+          0;
+        if (bMs !== aMs) return bMs - aMs;
+        return b.id - a.id;
+      })
+      .slice(0, 5);
+  }, [inboxTickets]);
+
+  const inboxPendingCount = inboxTickets.length;
 
   const weekStats = React.useMemo(() => {
     let onTime = 0;
@@ -878,49 +994,40 @@ export default function EmployeeDashboardPage() {
     const slots = Array.from({ length: leading + daysInMonth }, (_, idx) => {
       if (idx < leading) return null;
       const day = idx - leading + 1;
-      return { day, tags: byDay.get(day) || [] };
+      const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const isTardy = isTardyAttendance(attendanceByDate.get(dateKey));
+      return { day, tags: byDay.get(day) || [], isTardy };
     });
     return { year, month, monthLabel, slots };
-  }, [todayParts.year, todayParts.month, eventsMonthOffset, allCalendarEvents]);
+  }, [todayParts.year, todayParts.month, eventsMonthOffset, allCalendarEvents, attendanceByDate]);
 
-  /** Sidebar: next upcoming US / company events with distinct palette colors. */
-  const sidebarEvents = React.useMemo(() => {
-    const todayKey = `${todayParts.year}-${String(todayParts.month).padStart(2, "0")}-${String(todayParts.day).padStart(2, "0")}`;
-    const upcoming = allCalendarEvents
+  /** Real upcoming events for the home widget (no placeholder filler). */
+  const upcomingEvents = React.useMemo(() => {
+    const keyToday = `${todayParts.year}-${String(todayParts.month).padStart(2, "0")}-${String(todayParts.day).padStart(2, "0")}`;
+    return allCalendarEvents
       .filter((ev) => {
         const key = eventDateKey(ev.start_at);
-        return key && key >= todayKey;
+        return key && key >= keyToday;
       })
-      .slice(0, 5);
-
-    if (upcoming.length > 0) {
-      return upcoming.map((ev, i) => ({
-        ...ev,
-        // Keep a stable chip color: prefer saved color, else cycle palette by slot
+      .slice(0, 4)
+      .map((ev, i) => ({
+        id: ev.id,
+        title: ev.title || "Event",
+        start_at: String(ev.start_at || ""),
         color: resolveEventColor(ev, i),
+        source: ev.source || undefined,
       }));
-    }
-
-    // Rare empty fallback — same colorful layout as the PDF mock
-    return [
-      { id: -1, title: "Lunch", start_at: "", color: "#25c6da" },
-      { id: -2, title: "Go Home", start_at: "", color: "#45aef0" },
-      { id: -3, title: "Do Homework", start_at: "", color: "#ffb22c" },
-      { id: -4, title: "Work On UI Design", start_at: "", color: "#e03756" },
-      { id: -5, title: "Sleep Tight", start_at: "", color: "#7c4dff" },
-    ] as DashboardEvent[];
   }, [allCalendarEvents, todayParts]);
 
-  const jumpCalendarToEvent = React.useCallback(
-    (ev: DashboardEvent) => {
-      const key = eventDateKey(ev.start_at);
-      if (!key) return;
-      const [y, m] = key.split("-").map(Number);
-      if (!y || !m) return;
-      setEventsMonthOffset((y - todayParts.year) * 12 + (m - todayParts.month));
-    },
-    [todayParts.year, todayParts.month]
-  );
+  const todayLabel = React.useMemo(() => {
+    return new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      timeZone: SERVER_TIMEZONE,
+    }).format(calendarNow);
+  }, [calendarNow]);
 
   React.useEffect(() => {
     eventsYearRef.current = eventsCal.year;
@@ -942,6 +1049,16 @@ export default function EmployeeDashboardPage() {
     };
   }, [eventsCal.year, fetchEvents]);
 
+  const todayClock =
+    employeeId && /^\d+$/.test(employeeId) ? (
+      <ClockBreakPrayerWidget
+        key="emp-clock-widget"
+        employeeId={employeeId}
+        employeeName={employeeName || "Employee"}
+        variant="todayStatus"
+      />
+    ) : null;
+
   return (
     <DashboardHomeView
       employeeId={employeeId}
@@ -950,17 +1067,32 @@ export default function EmployeeDashboardPage() {
       onAvatarUpdated={(url) => setProfilePhoto(url)}
       profileContact={profileContact}
       clockedInLabel={clockedInLabel}
+      todayStatus={todayStatus}
+      todayHours={todayHours}
+      sessionClockIn={activeSession?.clock_in ?? null}
+      sessionClockOut={openAttendance ? null : activeSession?.clock_out ?? null}
+      shiftStart={activeSession?.shift_start_time ?? todayRecord?.shift_start_time ?? null}
+      shiftEnd={activeSession?.shift_end_time ?? todayRecord?.shift_end_time ?? null}
+      greetingHour={todayParts.hour}
+      todayLabel={todayLabel}
       monthAttendanceStats={monthAttendanceStats}
+      monthTardies={monthTardies}
       leaveBalance={leaveBalance}
-      eventsCal={eventsCal}
-      eventsMonthOffset={eventsMonthOffset}
-      todayDay={todayParts.day}
-      setEventsMonthOffset={setEventsMonthOffset}
+      weekChart={weekChart}
+      weekStats={weekStats}
+      maxChartHours={maxChartHours}
+      upcomingEvents={upcomingEvents}
+      reminders={reminders}
       ticketWidgetItems={ticketWidgetItems}
       ticketSeenMap={ticketSeenMap}
       newReplyCount={newReplyCount}
       openTicketPage={openTicketPage}
+      isHrTicketInbox={isHrTicketInbox}
+      inboxTicketItems={inboxTicketItems}
+      inboxPendingCount={inboxPendingCount}
+      openTicketInbox={() => router.push("/employee-dashboard/tickets")}
       onNavigate={(path) => router.push(path)}
+      todayClock={todayClock}
     />
   );
 }

@@ -22,8 +22,8 @@ type FaceScanHudProps = {
   loadingLabel?: string;
 };
 
-const PINK_RGB = [236, 72, 153] as const;
-const GREEN_RGB = [34, 197, 94] as const;
+const TEAL_RGB = [15, 118, 110] as const;
+const GREEN_RGB = [20, 184, 166] as const;
 
 export function verifyProgressForMode(
   mode: FaceScanMode,
@@ -43,9 +43,9 @@ export function verifyProgressForMode(
 
 export function scanColorFromProgress(progress: number): string {
   const p = Math.min(1, Math.max(0, progress));
-  const r = Math.round(PINK_RGB[0] + (GREEN_RGB[0] - PINK_RGB[0]) * p);
-  const g = Math.round(PINK_RGB[1] + (GREEN_RGB[1] - PINK_RGB[1]) * p);
-  const b = Math.round(PINK_RGB[2] + (GREEN_RGB[2] - PINK_RGB[2]) * p);
+  const r = Math.round(TEAL_RGB[0] + (GREEN_RGB[0] - TEAL_RGB[0]) * p);
+  const g = Math.round(TEAL_RGB[1] + (GREEN_RGB[1] - TEAL_RGB[1]) * p);
+  const b = Math.round(TEAL_RGB[2] + (GREEN_RGB[2] - TEAL_RGB[2]) * p);
   return `rgb(${r}, ${g}, ${b})`;
 }
 

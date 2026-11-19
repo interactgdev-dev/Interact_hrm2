@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   getDateStringInTimeZone,
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
+import { leaveCategoriesForEmployeeGender } from "../../../lib/leave-categories";
+import { displayLeaveReason } from "@/lib/leave-reason-display";
+import { BackToDashboard } from "../components/BackToDashboard";
 import styles from "./leave.module.css";
 
 interface Leave {
@@ -22,15 +25,9 @@ interface Leave {
   requested_at: string;
   document_paths?: string | string[];
   admin_remark?: string;
+  approved_by_name?: string | null;
+  decided_by_label?: string | null;
 }
-
-const LEAVE_CATEGORIES = [
-  { value: "annual", label: "Annual" },
-  { value: "casual", label: "Casual" },
-  { value: "sick", label: "Sick" },
-  { value: "bereavement", label: "Bereavement" },
-  { value: "other", label: "Other" },
-];
 
 function formatDate(dateString: string) {
   if (!dateString) return "";
@@ -81,7 +78,12 @@ export default function LeavePage() {
   const [annualAllowance, setAnnualAllowance] = useState(20);
   const [employmentStatus, setEmploymentStatus] = useState<string>("Permanent");
   const [bereavementBalance, setBereavementBalance] = useState(3);
+  const [maternityBalance, setMaternityBalance] = useState(0);
+  const [maternityAllowance, setMaternityAllowance] = useState(90);
+  const [paternityBalance, setPaternityBalance] = useState(0);
+  const [paternityAllowance, setPaternityAllowance] = useState(5);
   const [category, setCategory] = useState("annual");
+  const [employeeGender, setEmployeeGender] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
@@ -92,6 +94,11 @@ export default function LeavePage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const leaveCategoryOptions = useMemo(
+    () => leaveCategoriesForEmployeeGender(employeeGender),
+    [employeeGender],
+  );
+
   const closeModal = () => {
     setModalOpen(false);
     setSelectedLeave(null);
@@ -101,6 +108,7 @@ export default function LeavePage() {
     const initEmployeeInfo = async () => {
       let empId = localStorage.getItem("employeeId") || "";
       let empName = localStorage.getItem("employeeName") || "";
+      let gender = "";
 
       if (!empId) {
         const loginId = localStorage.getItem("loginId");
@@ -111,6 +119,7 @@ export default function LeavePage() {
             if (data.success && data.employee) {
               empId = String(data.employee.id || data.employee.employee_id || loginId);
               empName = `${data.employee.first_name || ""} ${data.employee.middle_name || ""} ${data.employee.last_name || ""}`.trim();
+              gender = String(data.employee.gender || "").trim();
               localStorage.setItem("employeeId", empId);
               localStorage.setItem("employeeName", empName);
             }
@@ -120,12 +129,37 @@ export default function LeavePage() {
         }
       }
 
+      if (empId && !gender) {
+        try {
+          const res = await fetch("/api/employee-list", { cache: "no-store" });
+          const data = await res.json();
+          const list = Array.isArray(data?.employees)
+            ? data.employees
+            : Array.isArray(data)
+              ? data
+              : [];
+          const me = list.find(
+            (e: any) => String(e?.id ?? "").trim() === String(empId).trim(),
+          );
+          gender = String(me?.gender || "").trim();
+        } catch {
+          /* ignore */
+        }
+      }
+
       setEmployeeId(empId);
       setEmployeeName(empName);
+      setEmployeeGender(gender);
     };
 
     void initEmployeeInfo();
   }, []);
+
+  useEffect(() => {
+    if (!leaveCategoryOptions.some((c) => c.value === category)) {
+      setCategory(leaveCategoryOptions[0]?.value || "annual");
+    }
+  }, [leaveCategoryOptions, category]);
 
   const fetchLeaves = async () => {
     try {
@@ -151,7 +185,14 @@ export default function LeavePage() {
         setLeaveBalance(balanceData.annualBalance || 0);
         setAnnualAllowance(balanceData.annualAllowance || 20);
         setBereavementBalance(balanceData.bereavementBalance || 0);
+        setMaternityBalance(balanceData.maternityBalance || 0);
+        setMaternityAllowance(balanceData.maternityAllowance || 90);
+        setPaternityBalance(balanceData.paternityBalance || 0);
+        setPaternityAllowance(balanceData.paternityAllowance || 5);
         setEmploymentStatus(balanceData.employment_status || "Permanent");
+        if (balanceData.gender) {
+          setEmployeeGender(String(balanceData.gender).trim());
+        }
       }
     } catch {
       /* keep current state */
@@ -196,6 +237,23 @@ export default function LeavePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const rem =
+      category === "bereavement"
+        ? bereavementBalance
+        : category === "maternity"
+          ? maternityBalance
+          : category === "paternity"
+            ? paternityBalance
+            : leaveBalance;
+    const days = calcDays(startDate, endDate);
+    if (rem <= 0) {
+      setError("Leave balance is 0. You cannot apply for leave.");
+      return;
+    }
+    if (days > rem) {
+      setError(`Not enough leave balance. Remaining: ${rem}, requested: ${days}.`);
+      return;
+    }
     setSubmitting(true);
     setError("");
     setSuccess("");
@@ -263,23 +321,47 @@ export default function LeavePage() {
 
   const balanceLabel =
     employmentStatus === "Probation" ? "Leave balance" : "Annual leave balance";
+  const effectiveBalance =
+    category === "bereavement"
+      ? bereavementBalance
+      : category === "maternity"
+        ? maternityBalance
+        : category === "paternity"
+          ? paternityBalance
+          : leaveBalance;
+  const leaveDisabled = effectiveBalance <= 0;
 
   return (
     <div className={styles.page}>
       <div className={styles.inner}>
+        <BackToDashboard />
         <h1 className={styles.title}>Leave</h1>
 
         <div className={styles.statRow}>
-          <div className={`${styles.statCard} ${styles.statCardPurple}`}>
+          <div
+            className={`${styles.statCard} ${styles.statCardPurple}`}
+            style={
+              leaveBalance <= 0
+                ? { outline: "2px solid #dc2626", background: "#fef2f2" }
+                : undefined
+            }
+          >
             <p className={styles.statLabel}>{balanceLabel}</p>
-            <p className={styles.statValue}>
+            <p
+              className={styles.statValue}
+              style={leaveBalance <= 0 ? { color: "#dc2626" } : undefined}
+            >
               {leaveBalance}
               <span style={{ fontSize: "1rem", fontWeight: 600, color: "#94a3b8" }}>
                 {" "}
                 / {annualAllowance}
               </span>
             </p>
-            <p className={styles.statSub}>Days remaining this year</p>
+            <p className={styles.statSub}>
+              {leaveBalance <= 0
+                ? "Balance finished — leave apply disabled"
+                : "Days remaining this year"}
+            </p>
           </div>
           <div className={`${styles.statCard} ${styles.statCardGreen}`}>
             <p className={styles.statLabel}>Bereavement leave</p>
@@ -289,10 +371,41 @@ export default function LeavePage() {
             </p>
             <p className={styles.statSub}>Days remaining</p>
           </div>
+          {maternityAllowance > 0 ? (
+            <div className={`${styles.statCard} ${styles.statCardPurple}`}>
+              <p className={styles.statLabel}>Maternity leave</p>
+              <p className={styles.statValue}>
+                {maternityBalance}
+                <span style={{ fontSize: "1rem", fontWeight: 600, color: "#94a3b8" }}>
+                  {" "}
+                  / {maternityAllowance}
+                </span>
+              </p>
+              <p className={styles.statSub}>Days remaining</p>
+            </div>
+          ) : null}
+          {paternityAllowance > 0 ? (
+            <div className={`${styles.statCard} ${styles.statCardGreen}`}>
+              <p className={styles.statLabel}>Paternity leave</p>
+              <p className={styles.statValue}>
+                {paternityBalance}
+                <span style={{ fontSize: "1rem", fontWeight: 600, color: "#94a3b8" }}>
+                  {" "}
+                  / {paternityAllowance}
+                </span>
+              </p>
+              <p className={styles.statSub}>Days remaining</p>
+            </div>
+          ) : null}
         </div>
 
         <form className={styles.formCard} onSubmit={handleSubmit}>
           <h2 className={styles.formTitle}>Apply for leave</h2>
+          {leaveDisabled ? (
+            <div className={styles.alertError} role="alert" style={{ marginBottom: 12 }}>
+              Leave balance is 0. You cannot apply for leave.
+            </div>
+          ) : null}
           <div className={styles.formGrid}>
             <div className={styles.field}>
               <label className={styles.label} htmlFor="leave-category">
@@ -304,7 +417,7 @@ export default function LeavePage() {
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
               >
-                {LEAVE_CATEGORIES.map((cat) => (
+                {leaveCategoryOptions.map((cat) => (
                   <option key={cat.value} value={cat.value}>
                     {cat.label}
                   </option>
@@ -322,6 +435,7 @@ export default function LeavePage() {
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
                 required
+                disabled={leaveDisabled}
               />
             </div>
             <div className={styles.field}>
@@ -335,6 +449,7 @@ export default function LeavePage() {
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 required
+                disabled={leaveDisabled}
               />
             </div>
           </div>
@@ -350,6 +465,7 @@ export default function LeavePage() {
               onChange={(e) => setReason(e.target.value)}
               required
               rows={3}
+              disabled={leaveDisabled}
             />
           </div>
 
@@ -382,8 +498,12 @@ export default function LeavePage() {
             ) : null}
           </div>
 
-          <button type="submit" className={styles.submitBtn} disabled={submitting}>
-            {submitting ? "Submitting…" : "Submit request"}
+          <button
+            type="submit"
+            className={styles.submitBtn}
+            disabled={submitting || leaveDisabled}
+          >
+            {submitting ? "Submitting…" : leaveDisabled ? "Leave balance 0" : "Submit request"}
           </button>
           {error ? <div className={styles.alertError}>{error}</div> : null}
           {success ? <div className={styles.alertSuccess}>{success}</div> : null}
@@ -413,6 +533,12 @@ export default function LeavePage() {
               ) : (
                 leaves.map((l) => {
                   const docs = parseDocs(l.document_paths);
+                  const decided =
+                    l.decided_by_label ||
+                    (l.approved_by_name &&
+                    (l.status === "approved" || l.status === "rejected")
+                      ? `${l.status === "rejected" ? "Rejected by" : "Approved by"} ${l.approved_by_name}`
+                      : null);
                   return (
                     <tr key={l.id}>
                       <td style={{ fontWeight: 600 }}>
@@ -449,6 +575,18 @@ export default function LeavePage() {
                         <span className={`${styles.badge} ${statusBadgeClass(l.status)}`}>
                           {l.status}
                         </span>
+                        {decided ? (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: l.status === "rejected" ? "#b91c1c" : "#0f766e",
+                            }}
+                          >
+                            {decided}
+                          </div>
+                        ) : null}
                       </td>
                       <td>{l.requested_at ? formatDateTime(l.requested_at) : "—"}</td>
                     </tr>
@@ -484,8 +622,16 @@ export default function LeavePage() {
                     {selectedLeave.status}
                   </span>
                 </div>
+                {selectedLeave.approved_by_name || selectedLeave.decided_by_label ? (
+                  <div className={styles.modalRow}>
+                    <b>
+                      {selectedLeave.status === "rejected" ? "Rejected by:" : "Approved by:"}
+                    </b>{" "}
+                    {selectedLeave.approved_by_name || selectedLeave.decided_by_label}
+                  </div>
+                ) : null}
                 <div className={styles.modalRow}>
-                  <b>Reason:</b> {selectedLeave.reason}
+                  <b>Reason:</b> {displayLeaveReason(selectedLeave.reason) || "—"}
                 </div>
                 {selectedLeave.admin_remark ? (
                   <div className={styles.modalRow}>

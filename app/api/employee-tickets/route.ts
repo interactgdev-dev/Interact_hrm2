@@ -10,6 +10,7 @@ import {
   type EmployeeTicketRow,
   type TicketStatus,
 } from "@/lib/employee-tickets-table";
+import { sortTicketsNewestFirst } from "@/lib/ticket-sort";
 import { isTicketClosed } from "@/lib/ticket-status";
 import {
   appendAdminMessage,
@@ -17,12 +18,46 @@ import {
   latestAdminRemark,
   seedEmployeeMessage,
 } from "@/lib/ticket-thread";
-import { getEmployeePseudonym } from "@/lib/ticket-employee-meta";
+import {
+  getEmployeePseudonym,
+  getEmployeeTicketMetaMap,
+} from "@/lib/ticket-employee-meta";
 import {
   findTicketType,
   ticketTypeLabel,
   type TicketCategory,
 } from "@/lib/ticket-catalog";
+import {
+  canModerateTicketStatus,
+  canModerateTicketStatusAsync,
+  filterTicketsForInbox,
+  getEmployeeDeptChipMap,
+  getHrEmployeeIdSet,
+  isHrDepartmentSubmitter,
+  loadHrTicketViewer,
+} from "@/lib/hr-department-tickets";
+import { syncLeaveRecordFromTicket } from "@/lib/leave-ticket-sync";
+import {
+  assertLeaveBalanceAllowsRequest,
+  getEmployeeLeaveBalance,
+} from "@/lib/leave-balance";
+import { resolveEmployeeDisplayName } from "@/lib/dept-heads";
+
+function viewerIdFromReq(req: NextRequest, searchParams?: URLSearchParams) {
+  const q =
+    searchParams?.get("viewerId") ||
+    searchParams?.get("viewer_id") ||
+    "";
+  const h =
+    req.headers.get("x-employee-id") ||
+    req.headers.get("x-hrm-employee-id") ||
+    "";
+  return String(q || h || "").trim();
+}
+
+function isLeaveTicketType(ticketType?: string | null) {
+  return String(ticketType || "").toLowerCase() === "leave";
+}
 
 const VALID_CATEGORIES = new Set(["ESS", "IT", "HR", "ADMIN", "OPERATIONS"]);
 const VALID_STATUSES = new Set([
@@ -47,38 +82,169 @@ export async function GET(req: NextRequest) {
     const ticketId = searchParams.get("id");
     const status = searchParams.get("status");
     const category = searchParams.get("category");
-    const limit = Math.min(parseInt(searchParams.get("limit") || "100", 10), 500);
+    const ticketType = searchParams.get("ticketType");
+    const includePolicy = searchParams.get("includePolicy") === "1";
+    const inboxRaw = String(searchParams.get("inbox") || "").trim().toLowerCase();
+    const inbox: "admin" | "hr" | "own" =
+      inboxRaw === "hr" ? "hr" : inboxRaw === "own" ? "own" : "admin";
+    const viewerId = viewerIdFromReq(req, searchParams);
+    const limit = Math.min(parseInt(searchParams.get("limit") || "500", 10), 1000);
 
-    let sql = `SELECT * FROM ${EMPLOYEE_TICKETS_TABLE} WHERE 1=1`;
+    let sql = `SELECT * FROM ${EMPLOYEE_TICKETS_TABLE}`;
     const params: (string | number)[] = [];
+    const clauses: string[] = [];
 
     if (employeeId) {
-      sql += " AND employee_id = ?";
+      clauses.push("employee_id = ?");
       params.push(employeeId);
     }
     if (ticketId) {
-      sql += " AND id = ?";
+      clauses.push("id = ?");
       params.push(parseInt(ticketId, 10));
     }
     if (status === "open") {
-      sql += " AND status IN ('pending', 'in_progress')";
+      clauses.push("status IN ('pending', 'in_progress')");
     } else if (status) {
-      sql += " AND status = ?";
+      clauses.push("status = ?");
       params.push(status);
     }
     if (category) {
-      sql += " AND category = ?";
+      clauses.push("category = ?");
       params.push(category);
     }
+    if (ticketType) {
+      clauses.push("ticket_type = ?");
+      params.push(ticketType);
+    }
 
-    sql += " ORDER BY requested_at DESC LIMIT ?";
-    params.push(limit);
+    if (clauses.length) {
+      sql += ` WHERE ${clauses.join(" AND ")}`;
+    }
+
+    // Fetch a wide window; final newest-first sort uses updated/resolved/requested.
+    sql += ` ORDER BY id DESC LIMIT ${limit}`;
 
     const [rows]: unknown[] = await query(sql, params);
-    const tickets = (Array.isArray(rows) ? rows : []).map((r) =>
-      rowToTicket(r as Record<string, unknown>)
+    const POLICY_TYPES = new Set(["guard_policy_alert", "guard_keyword_alert"]);
+    let tickets = sortTicketsNewestFirst(
+      (Array.isArray(rows) ? rows : []).map((r) =>
+        rowToTicket(r as Record<string, unknown>)
+      )
     );
-    return NextResponse.json({ success: true, tickets });
+    // Keep Guard Policy alerts out of the normal Ticket Inbox unless asked for.
+    if (!ticketType && !includePolicy && !ticketId) {
+      tickets = tickets.filter((t) => !POLICY_TYPES.has(String(t.ticket_type || "")));
+    }
+
+    const hrIds = await getHrEmployeeIdSet();
+    const empChips = await getEmployeeDeptChipMap();
+    const viewer = viewerId ? await loadHrTicketViewer(viewerId) : null;
+
+    // Single-ticket fetch: owner or HR inbox viewer (for HR tickets) or admin (non-HR).
+    if (ticketId) {
+      let viewerDirectReports: Set<string> | undefined;
+      if (viewer?.employeeId) {
+        const { listDirectReportIds } = await import(
+          "@/lib/employee-hierarchy-table"
+        );
+        viewerDirectReports = new Set(
+          await listDirectReportIds(viewer.employeeId),
+        );
+      }
+      tickets = tickets.filter((t) => {
+        if (viewer && String(t.employee_id) === viewer.employeeId) return true;
+        if (isLeaveTicketType(t.ticket_type)) {
+          // Leave: HR inbox / dept-head owned chips / direct reports / classic admin.
+          if (viewerDirectReports?.has(String(t.employee_id))) return true;
+          if (viewer?.canViewHrInbox) return true;
+          if (viewer?.deptHead?.headHint) {
+            const chip = empChips.get(String(t.employee_id));
+            return Boolean(
+              chip &&
+                viewer.deptHead.ownedChips.some(
+                  (c) => c.toLowerCase() === chip.toLowerCase()
+                )
+            );
+          }
+          return !isHrDepartmentSubmitter(t.employee_id, hrIds);
+        }
+        // Non-leave: owner or HR inbox viewers only.
+        return Boolean(viewer?.canViewHrInbox);
+      });
+      const sample = tickets[0];
+      const canMod = sample
+        ? await canModerateTicketStatusAsync({
+            ticketEmployeeId: sample.employee_id,
+            viewer,
+            hrIds,
+            ticketType: sample.ticket_type,
+            submitterChip: empChips.get(String(sample.employee_id)) || null,
+          })
+        : false;
+      return NextResponse.json({
+        success: true,
+        tickets,
+        count: tickets.length,
+        canModerate: canMod,
+      });
+    }
+
+    // Own tickets list (employee portal "my tickets") — always own only.
+    if (employeeId) {
+      return NextResponse.json({
+        success: true,
+        tickets,
+        count: tickets.length,
+        canModerate: false,
+      });
+    }
+
+    // Inbox lists — HR sees all leave; admin hides HR non-leave; dept heads get owned leave.
+    let directReportIds: Set<string> | undefined;
+    if (viewer?.employeeId) {
+      const { listDirectReportIds } = await import(
+        "@/lib/employee-hierarchy-table"
+      );
+      directReportIds = new Set(await listDirectReportIds(viewer.employeeId));
+    }
+    const filtered = filterTicketsForInbox(tickets, {
+      inbox,
+      viewer,
+      hrIds,
+      empChips,
+      directReportIds,
+    });
+
+    // Per-ticket moderation flags (HR Manager may view all leave but approve only in-scope).
+    const metaMap = await getEmployeeTicketMetaMap(
+      filtered.map((t) => t.employee_id),
+    );
+    const ticketsOut = [];
+    let anyModerate = false;
+    for (const t of filtered) {
+      const canMod = await canModerateTicketStatusAsync({
+        ticketEmployeeId: t.employee_id,
+        viewer,
+        hrIds,
+        ticketType: t.ticket_type,
+        submitterChip: empChips.get(String(t.employee_id)) || null,
+      });
+      if (canMod) anyModerate = true;
+      const meta = metaMap.get(String(t.employee_id)) || null;
+      ticketsOut.push({
+        ...t,
+        can_moderate: canMod,
+        employee_pseudonym: meta?.pseudonym ?? null,
+        department_name: meta?.department_name ?? null,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      tickets: sortTicketsNewestFirst(ticketsOut),
+      count: ticketsOut.length,
+      canModerate: anyModerate,
+    });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : String(error) },
@@ -148,6 +314,63 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Leave tickets: require duration (full / 1st / 2nd half), then balance gate.
+    if (typeKey === "leave") {
+      const fd =
+        form_data && typeof form_data === "object"
+          ? (form_data as Record<string, unknown>)
+          : {};
+      const { parseLeaveDuration, leaveDaysForDuration } = await import(
+        "@/lib/leave-duration"
+      );
+      const duration = parseLeaveDuration(fd.leave_duration);
+      if (!duration) {
+        return NextResponse.json(
+          { success: false, error: "Please select type of leave." },
+          { status: 400 }
+        );
+      }
+      const startDate = String(fd.start_date || "").trim();
+      let endDate = String(fd.end_date || "").trim() || startDate;
+      if (duration === "first_half" || duration === "second_half") {
+        endDate = startDate;
+        fd.end_date = startDate;
+        fd.total_days = 0.5;
+        fd.half_day_part = duration === "first_half" ? "first" : "second";
+      } else {
+        const days = leaveDaysForDuration("full", startDate, endDate);
+        fd.total_days = days;
+        fd.half_day_part = null;
+      }
+      fd.leave_duration = duration;
+      const leaveCategory = String(fd.leave_category || "annual");
+      const totalDays = Number(fd.total_days) || 0;
+      const bal = await getEmployeeLeaveBalance(employee_id);
+      if (!bal.success) {
+        return NextResponse.json(
+          { success: false, error: bal.error || "Could not check leave balance" },
+          { status: 400 }
+        );
+      }
+      const gate = assertLeaveBalanceAllowsRequest(bal, {
+        leaveCategory,
+        totalDays,
+      });
+      if (!gate.ok) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: gate.error,
+            annualBalance: bal.annualBalance,
+            bereavementBalance: bal.bereavementBalance,
+            maternityBalance: bal.maternityBalance,
+            paternityBalance: bal.paternityBalance,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const formJson = form_data ? JSON.stringify(form_data) : null;
 
     const [result]: any = await pool.query(
@@ -192,6 +415,15 @@ export async function POST(req: NextRequest) {
     );
     const ticket = rowToTicket(rows?.[0] ?? {});
 
+    // Leave tickets also create employee_leaves (pending) for attendance / leave inbox.
+    if (typeKey === "leave") {
+      try {
+        await syncLeaveRecordFromTicket(ticket);
+      } catch (err) {
+        console.warn("[employee-tickets] leave sync on create failed", err);
+      }
+    }
+
     broadcastWsEvent({
       type: "ticket_created",
       ticket: await ticketForBroadcast(ticket),
@@ -210,6 +442,7 @@ export async function PATCH(req: NextRequest) {
     await ensureEmployeeTicketsTable();
     const body = await req.json();
     const { id, status, reply, admin_remark, author_name, from, employee_id } = body;
+    const wantAcknowledge = Boolean(body.acknowledge);
     if (!id) {
       return NextResponse.json({ success: false, error: "Invalid data" }, { status: 400 });
     }
@@ -217,10 +450,10 @@ export async function PATCH(req: NextRequest) {
     const replyText = String(reply ?? admin_remark ?? "").trim();
     const hasStatus = status && VALID_STATUSES.has(String(status));
     const isEmployeeReply = String(from || "").toLowerCase() === "employee";
-    if (!hasStatus && !replyText) {
+    if (!hasStatus && !replyText && !wantAcknowledge) {
       return NextResponse.json({ success: false, error: "Nothing to update" }, { status: 400 });
     }
-    if (isEmployeeReply && hasStatus) {
+    if (isEmployeeReply && (hasStatus || wantAcknowledge)) {
       return NextResponse.json(
         { success: false, error: "Employees cannot change ticket status" },
         { status: 403 }
@@ -241,6 +474,55 @@ export async function PATCH(req: NextRequest) {
         { success: false, error: "This ticket is closed. No further replies are allowed." },
         { status: 403 }
       );
+    }
+
+    if (wantAcknowledge && isLeaveTicketType(current.ticket_type)) {
+      return NextResponse.json(
+        { success: false, error: "Acknowledge is only for non-leave tickets." },
+        { status: 400 }
+      );
+    }
+
+    // Status / acknowledge: scoped approvers only. Nobody may act on their own ticket.
+    let actorViewerId = "";
+    let actorDisplayName: string | null = null;
+    if ((hasStatus || wantAcknowledge) && !isEmployeeReply) {
+      actorViewerId =
+        String(body.viewerId || body.viewer_id || employee_id || "").trim() ||
+        viewerIdFromReq(req);
+      const viewer = actorViewerId ? await loadHrTicketViewer(actorViewerId) : null;
+      const hrIds = await getHrEmployeeIdSet();
+      const empChips = await getEmployeeDeptChipMap();
+      const allowed = await canModerateTicketStatusAsync({
+        ticketEmployeeId: current.employee_id,
+        viewer,
+        hrIds,
+        ticketType: current.ticket_type,
+        submitterChip: empChips.get(String(current.employee_id)) || null,
+      });
+      if (!allowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Not allowed to approve or reject this ticket. View only if outside your department hierarchy.",
+          },
+          { status: 403 }
+        );
+      }
+      actorDisplayName =
+        String(author_name || "").trim() ||
+        (await resolveEmployeeDisplayName(actorViewerId)) ||
+        null;
+      // Prefer real employee name over generic "HR"/"Admin" labels for Approved by.
+      if (
+        actorDisplayName &&
+        /^(hr|admin)$/i.test(actorDisplayName) &&
+        actorViewerId
+      ) {
+        actorDisplayName =
+          (await resolveEmployeeDisplayName(actorViewerId)) || actorDisplayName;
+      }
     }
 
     let messages = current.messages ?? [];
@@ -268,7 +550,11 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
-    const newStatus = (hasStatus ? String(status) : current.status) as TicketStatus;
+    // Acknowledge bumps pending → in_progress unless an explicit status was sent.
+    let newStatus = (hasStatus ? String(status) : current.status) as TicketStatus;
+    if (wantAcknowledge && !hasStatus && newStatus === "pending") {
+      newStatus = "in_progress";
+    }
     const resolvedAt =
       newStatus === "resolved" || newStatus === "rejected" || newStatus === "closed"
         ? new Date()
@@ -276,18 +562,86 @@ export async function PATCH(req: NextRequest) {
           ? null
           : current.resolved_at;
 
-    await query(
-      `UPDATE ${EMPLOYEE_TICKETS_TABLE}
-       SET status = ?, admin_remark = ?, messages = ?, resolved_at = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [newStatus, latestAdminRemark(messages), JSON.stringify(messages), resolvedAt, id]
-    );
+    const closing =
+      newStatus === "resolved" || newStatus === "rejected" || newStatus === "closed";
+    const nextApprovedBy = closing
+      ? actorViewerId || null
+      : current.approved_by || null;
+    const nextApprovedByName = closing
+      ? actorDisplayName || null
+      : current.approved_by_name || null;
+    const nextAckBy = wantAcknowledge
+      ? actorViewerId || current.acknowledged_by || null
+      : current.acknowledged_by || null;
+    const nextAckByName = wantAcknowledge
+      ? actorDisplayName || current.acknowledged_by_name || null
+      : current.acknowledged_by_name || null;
+    const nextAckAt = wantAcknowledge
+      ? new Date()
+      : current.acknowledged_at || null;
+
+    try {
+      await query(
+        `UPDATE ${EMPLOYEE_TICKETS_TABLE}
+         SET status = ?, admin_remark = ?, messages = ?, resolved_at = ?, updated_at = NOW(),
+             approved_by = ?, approved_by_name = ?,
+             acknowledged_by = ?, acknowledged_by_name = ?, acknowledged_at = ?
+         WHERE id = ?`,
+        [
+          newStatus,
+          latestAdminRemark(messages),
+          JSON.stringify(messages),
+          resolvedAt,
+          nextApprovedBy,
+          nextApprovedByName,
+          nextAckBy,
+          nextAckByName,
+          nextAckAt,
+          id,
+        ]
+      );
+    } catch {
+      try {
+        await query(
+          `UPDATE ${EMPLOYEE_TICKETS_TABLE}
+           SET status = ?, admin_remark = ?, messages = ?, resolved_at = ?, updated_at = NOW(),
+               approved_by = ?, approved_by_name = ?
+           WHERE id = ?`,
+          [
+            newStatus,
+            latestAdminRemark(messages),
+            JSON.stringify(messages),
+            resolvedAt,
+            nextApprovedBy,
+            nextApprovedByName,
+            id,
+          ]
+        );
+      } catch {
+        await query(
+          `UPDATE ${EMPLOYEE_TICKETS_TABLE}
+           SET status = ?, admin_remark = ?, messages = ?, resolved_at = ?, updated_at = NOW()
+           WHERE id = ?`,
+          [newStatus, latestAdminRemark(messages), JSON.stringify(messages), resolvedAt, id]
+        );
+      }
+    }
 
     const [rows]: any = await query(
       `SELECT * FROM ${EMPLOYEE_TICKETS_TABLE} WHERE id = ? LIMIT 1`,
       [id]
     );
     const ticket = rows?.[0] ? rowToTicket(rows[0] as Record<string, unknown>) : null;
+
+    // Approve/reject leave ticket → employee_leaves (Monthly Attendance Leave status).
+    if (ticket && ticket.ticket_type === "leave" && hasStatus) {
+      try {
+        await syncLeaveRecordFromTicket(ticket);
+      } catch (err) {
+        console.warn("[employee-tickets] leave sync on status failed", err);
+      }
+    }
+
     if (ticket) {
       broadcastTicketUpdate(await ticketForBroadcast(ticket));
     } else {
@@ -321,11 +675,27 @@ export async function DELETE(req: NextRequest) {
     }
 
     const [existing]: any = await query(
-      `SELECT id, ticket_number FROM ${EMPLOYEE_TICKETS_TABLE} WHERE id = ? LIMIT 1`,
+      `SELECT * FROM ${EMPLOYEE_TICKETS_TABLE} WHERE id = ? LIMIT 1`,
       [id]
     );
     if (!existing?.[0]) {
       return NextResponse.json({ success: false, error: "Ticket not found" }, { status: 404 });
+    }
+    const current = rowToTicket(existing[0] as Record<string, unknown>);
+    const viewerId = viewerIdFromReq(req);
+    const viewer = viewerId ? await loadHrTicketViewer(viewerId) : null;
+    const hrIds = await getHrEmployeeIdSet();
+    if (
+      !canModerateTicketStatus({
+        ticketEmployeeId: current.employee_id,
+        viewer,
+        hrIds,
+      })
+    ) {
+      return NextResponse.json(
+        { success: false, error: "Not allowed to delete this ticket." },
+        { status: 403 }
+      );
     }
 
     await query(`DELETE FROM ${EMPLOYEE_TICKETS_TABLE} WHERE id = ?`, [id]);

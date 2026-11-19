@@ -3,6 +3,7 @@ import {
   clockInDateKey,
   computeShiftEndEpochMs,
   normalizeDateKey,
+  normalizeShiftTimeString,
   parseAttendanceDateTimeMs,
   resolvePresencePromptAtMs,
   type ShiftAssignmentTiming,
@@ -22,30 +23,53 @@ export type DbExecuteConn = {
   ) => Promise<[unknown[], unknown]>;
 };
 
+function employeeIdQueryVariants(employeeId: string): Array<string | number> {
+  const raw = String(employeeId ?? "").trim();
+  if (!raw) return [];
+  const out: Array<string | number> = [raw];
+  if (/^\d+$/.test(raw)) {
+    const n = Number(raw);
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Latest assignment on/before session date with usable start/end times.
+ * Tries string + numeric employee_id (Mongo/MySQL id type mismatch).
+ */
 export async function fetchShiftForEmployee(
   conn: DbExecuteConn,
   employeeId: string,
   onOrBeforeDate: string,
 ): Promise<ShiftAssignmentTiming | null> {
-  const [rows] = await conn.execute(
-    `SELECT start_time, end_time, assigned_date
-     FROM shift_assignments
-     WHERE employee_id = ?
-       AND assigned_date <= ?
-     ORDER BY assigned_date DESC, id DESC
-     LIMIT 1`,
-    [employeeId, onOrBeforeDate],
-  );
-  const list = rows as ShiftAssignmentTiming[];
-  if (!list.length || !list[0].start_time || !list[0].end_time) return null;
-  const row = list[0];
-  const assigned_date = normalizeDateKey(row.assigned_date);
-  if (!assigned_date) return null;
-  return {
-    start_time: String(row.start_time),
-    end_time: String(row.end_time),
-    assigned_date,
-  };
+  const dateKey = normalizeDateKey(onOrBeforeDate) || String(onOrBeforeDate || "").trim();
+  if (!dateKey) return null;
+
+  for (const eid of employeeIdQueryVariants(employeeId)) {
+    const [rows] = await conn.execute(
+      `SELECT start_time, end_time, assigned_date
+       FROM shift_assignments
+       WHERE employee_id = ?
+         AND assigned_date <= ?
+       ORDER BY assigned_date DESC, id DESC
+       LIMIT 8`,
+      [eid, dateKey],
+    );
+    const list = (rows || []) as Array<{
+      start_time?: unknown;
+      end_time?: unknown;
+      assigned_date?: unknown;
+    }>;
+    for (const row of list) {
+      const start_time = normalizeShiftTimeString(row.start_time);
+      const end_time = normalizeShiftTimeString(row.end_time);
+      const assigned_date = normalizeDateKey(row.assigned_date);
+      if (!start_time || !end_time || !assigned_date) continue;
+      return { start_time, end_time, assigned_date };
+    }
+  }
+  return null;
 }
 
 export function evaluatePresencePrompt(
@@ -120,6 +144,27 @@ export function evaluatePresencePrompt(
     lastPresenceAckMs: ackParsed,
     presenceMode: mode,
   };
+}
+
+/** Open attendance row (clocked in, not clocked out). */
+export async function employeeHasOpenClockIn(
+  employeeId: string | null | undefined,
+): Promise<boolean> {
+  const eid = String(employeeId ?? "").trim();
+  if (!eid) return false;
+  try {
+    const { pool } = await import("./db");
+    const [rows] = await pool.execute(
+      `SELECT id FROM ${ATTENDANCE_TABLE}
+       WHERE employee_id = ? AND clock_out IS NULL
+       ORDER BY clock_in DESC
+       LIMIT 1`,
+      [eid],
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** True when shift/session 3h grace has ended — auto clock-out must not require face verify. */

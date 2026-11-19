@@ -1,7 +1,13 @@
-import { pool } from "@/lib/db";
+import { getDbDriver, pool } from "@/lib/db";
+import { loadZkbioDepartmentNamesFast } from "@/lib/mongo-zkbio-punch-log";
 
 /** ZKBio device dept names + HRM departments (+ raw_json fallback) for filter dropdowns. */
 export async function loadZkbioDepartmentNames(): Promise<string[]> {
+  // Mongo SQL DISTINCT + JSON_EXTRACT on zkbio_punch_log hangs — use native path.
+  if (getDbDriver() === "mongo") {
+    return loadZkbioDepartmentNamesFast();
+  }
+
   const [deptRows] = await pool.query(
     `SELECT DISTINCT TRIM(dept_name) AS d
      FROM zkbio_punch_log

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import { toastError, toastSuccess } from "@/lib/app-toast";
 
@@ -73,7 +73,7 @@ export default function PendingAppraisalsPage() {
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.breakSummaryContainer}>
         <div style={{ marginBottom: 20 }}>
           <h1 className={styles.pageTitle}>Pending Appraisals</h1>
@@ -149,6 +149,6 @@ export default function PendingAppraisalsPage() {
           </table>
         </div>
       </div>
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

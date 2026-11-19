@@ -30,4 +30,10 @@ internal static class AgentCommands
     {
         WpfApp.Current?.Shutdown();
     }
+
+    public static void PermanentExit()
+    {
+        AutoStartHelper.TryDisable();
+        Exit();
+    }
 }

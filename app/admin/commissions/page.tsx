@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import LayoutDashboard from "../../layout-dashboard";
+import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
 import { FaFileExcel, FaUpload, FaDownload } from "react-icons/fa";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
@@ -117,7 +117,7 @@ export default function CommissionsPage() {
   };
 
   return (
-    <LayoutDashboard>
+    <OptionalAdminShell>
       <div className={styles.breakSummaryContainer}>
         <h1 className={styles.pageTitle}>Employee Commissions & Incentives</h1>
 
@@ -239,6 +239,6 @@ export default function CommissionsPage() {
         )}
       </div>
       {popup}
-    </LayoutDashboard>
+    </OptionalAdminShell>
   );
 }

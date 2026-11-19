@@ -1,5 +1,7 @@
 import { pool } from "@/lib/db";
 import { getAllOrgChartPhotos } from "@/lib/org-chart-photos-table";
+import { orgDeptChipLabel } from "@/app/admin/roles-permissions/system-control-data";
+import { DEPT_HEAD_NAME_HINT } from "@/lib/dept-heads";
 
 export const HIERARCHY_TABLE = "hrm_employee_hierarchy";
 export const TEAM_MEMBERS_TABLE = "hrm_team_members";
@@ -41,9 +43,9 @@ type EmpRow = {
 const ROLE_RANK: Record<string, number> = {
   "BOD/CEO": 1,
   Management: 2,
-  HOD: 3,
-  Leader: 4,
-  Officer: 5,
+  HOD: 2,
+  Leader: 3,
+  Officer: 4,
 };
 
 function roleRank(role: string | null | undefined): number {
@@ -162,17 +164,6 @@ function inferReportsTo(emp: EmpRow, deptEmployees: EmpRow[]): EmpRow | null {
   return [...higher].sort((a, b) => roleRank(a.role) - roleRank(b.role))[0] ?? null;
 }
 
-function inferTeamMembers(emp: EmpRow, deptEmployees: EmpRow[]): EmpRow[] {
-  const rank = roleRank(emp.role);
-  if (rank > 4) return [];
-
-  return deptEmployees.filter((e) => {
-    if (e.id === emp.id) return false;
-    const manager = inferReportsTo(e, deptEmployees);
-    return manager?.id === emp.id;
-  });
-}
-
 function resolvePhoto(
   employeeId: string,
   employeePhotos: Record<string, string>,
@@ -205,6 +196,115 @@ function toPerson(
   };
 }
 
+function sameOrgFamily(a: EmpRow, b: EmpRow): boolean {
+  const ca = orgDeptChipLabel(a.department_name);
+  const cb = orgDeptChipLabel(b.department_name);
+  if (ca && cb) return ca.toLowerCase() === cb.toLowerCase();
+  if (a.department_id != null && b.department_id != null) {
+    return Number(a.department_id) === Number(b.department_id);
+  }
+  return false;
+}
+
+/** Employees in the same org-dept family (IT includes Marketing). */
+function orgFamilyEmployees(emp: EmpRow, all: EmpRow[]): EmpRow[] {
+  return all.filter((e) => sameOrgFamily(emp, e));
+}
+
+/**
+ * Dept head / CEO by org map:
+ * Max → HIT + HR + Medical Billing + Finance | Mubeen → IT + CEst. (+ Marketing) | Joe → DM
+ */
+function findDeptHeadCeo(all: EmpRow[], chip: string | null): EmpRow | null {
+  if (!chip) return null;
+  const hl = DEPT_HEAD_NAME_HINT[chip];
+  if (!hl) return null;
+  const matches = all.filter((e) => {
+    const first = String(e.first_name || "").trim().toLowerCase();
+    const last = String(e.last_name || "").trim().toLowerCase();
+    const full = `${first} ${last}`.trim();
+    return (
+      first === hl ||
+      first.startsWith(hl) ||
+      full.startsWith(hl) ||
+      (hl === "max" && last === "miles") ||
+      (hl === "mubeen" && (last.includes("chugtai") || last.includes("chughtai"))) ||
+      (hl === "joe" && last === "white")
+    );
+  });
+  if (!matches.length) return null;
+  const ceo = matches.find((e) => roleRank(e.role) <= 1);
+  return ceo || matches[0];
+}
+
+async function upsertReportsTo(
+  conn: Awaited<ReturnType<typeof pool.getConnection>>,
+  employeeId: number,
+  reportsToId: number | null,
+): Promise<void> {
+  try {
+    await conn.execute(
+      `INSERT INTO ${HIERARCHY_TABLE} (employee_id, reports_to_employee_id)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE reports_to_employee_id = VALUES(reports_to_employee_id)`,
+      [employeeId, reportsToId],
+    );
+  } catch {
+    /* mongo adapter / table missing — non-fatal */
+  }
+}
+
+/** Persist Reporting Manager (used by Add Employee for Manager / Team Lead → CEO). */
+export async function setEmployeeReportsTo(
+  employeeId: string | number,
+  reportsToEmployeeId: string | number | null,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const eid = Number(employeeId);
+  if (!Number.isFinite(eid) || eid <= 0) {
+    return { success: false, error: "Invalid employee id" };
+  }
+  const ridRaw = reportsToEmployeeId == null ? null : Number(reportsToEmployeeId);
+  const rid =
+    ridRaw != null && Number.isFinite(ridRaw) && ridRaw > 0 ? ridRaw : null;
+  if (rid != null && rid === eid) {
+    return { success: false, error: "Employee cannot report to themselves" };
+  }
+  const conn = await pool.getConnection();
+  try {
+    await ensureHierarchyTables(conn);
+    await upsertReportsTo(conn, eid, rid);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    conn.release();
+  }
+}
+
+/** Employee ids that report directly to this manager/CEO. */
+export async function listDirectReportIds(
+  managerEmployeeId: string | number,
+): Promise<string[]> {
+  const mid = Number(managerEmployeeId);
+  if (!Number.isFinite(mid) || mid <= 0) return [];
+  const conn = await pool.getConnection();
+  try {
+    await ensureHierarchyTables(conn);
+    const [rows] = await conn.execute(
+      `SELECT employee_id FROM ${HIERARCHY_TABLE} WHERE reports_to_employee_id = ?`,
+      [mid],
+    );
+    return (rows as { employee_id: number }[]).map((r) => String(r.employee_id));
+  } catch {
+    return [];
+  } finally {
+    conn.release();
+  }
+}
+
 export async function getEmployeeHierarchy(
   employeeId: string | number,
 ): Promise<EmployeeHierarchyResult | null> {
@@ -216,23 +316,39 @@ export async function getEmployeeHierarchy(
     const emp = all.find((e) => e.id === targetId);
     if (!emp) return null;
 
-    const deptEmployees =
-      emp.department_id != null
-        ? all.filter((e) => e.department_id === emp.department_id)
-        : all;
+    // IT lead sees Marketing peers too (org chart fold).
+    const deptEmployees = orgFamilyEmployees(emp, all);
 
     const photos = await getAllOrgChartPhotos();
     const employeePhotos = photos.employeePhotos;
     const shellAvatars = photos.shellBranding.employeeAvatars;
 
     let reportsToRow: EmpRow | null = null;
+    const chip = orgDeptChipLabel(emp.department_name);
+    const deptHead = findDeptHeadCeo(all, chip);
     const explicitManagerId = await fetchExplicitReportsTo(conn, targetId);
+
     if (explicitManagerId) {
+      // Explicit Reporting Manager (e.g. Add Employee → any of 3 CEOs) wins.
       reportsToRow = all.find((e) => e.id === explicitManagerId) ?? null;
     } else {
       reportsToRow = inferReportsTo(emp, deptEmployees);
       if (!reportsToRow) {
         reportsToRow = inferReportsTo(emp, all);
+      }
+
+      // No explicit boss yet: Managers / TLs default to that dept's head CEO.
+      if (deptHead && roleRank(emp.role) > 1 && emp.id !== deptHead.id) {
+        const missingBoss = !reportsToRow;
+        const managerNeedsCeo =
+          roleRank(emp.role) <= 2 &&
+          (!reportsToRow || roleRank(reportsToRow.role) > 1);
+        if (missingBoss || managerNeedsCeo) {
+          reportsToRow = deptHead;
+          if (missingBoss) {
+            void upsertReportsTo(conn, targetId, deptHead.id);
+          }
+        }
       }
     }
 
@@ -242,8 +358,17 @@ export async function getEmployeeHierarchy(
       teamRows = explicitMemberIds
         .map((id) => all.find((e) => e.id === id))
         .filter((e): e is EmpRow => Boolean(e));
+      // Still include rest of org-dept family so My Team shows full department
+      const byId = new Set(teamRows.map((r) => r.id));
+      for (const e of deptEmployees) {
+        if (e.id !== emp.id && !byId.has(e.id)) {
+          teamRows.push(e);
+          byId.add(e.id);
+        }
+      }
     } else {
-      teamRows = inferTeamMembers(emp, deptEmployees);
+      // My Team = all employees in same org department family (excl. self)
+      teamRows = deptEmployees.filter((e) => e.id !== emp.id);
     }
 
     const isTeamLead = teamRows.length > 0 || roleRank(emp.role) <= 4;

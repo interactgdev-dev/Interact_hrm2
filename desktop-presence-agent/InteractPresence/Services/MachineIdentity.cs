@@ -1,45 +1,22 @@
+using System;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace InteractPresence;
 
-/// <summary>Stable machine identity for HRM agent registry.</summary>
+/// <summary>
+/// Stable per-PC identity. Never uses random Guid (that caused duplicate HRM agent rows).
+/// </summary>
 public static class MachineIdentity
 {
+    private static string? _cached;
+
     private static string IdPath =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "InteractPresence",
             "machine-id.txt");
-
-    public static string GetOrCreate()
-    {
-        try
-        {
-            if (File.Exists(IdPath))
-            {
-                var existing = (File.ReadAllText(IdPath) ?? "").Trim();
-                if (existing.Length >= 8 && existing.Length <= 128)
-                    return existing;
-            }
-        }
-        catch
-        {
-            /* regenerate */
-        }
-
-        var id = Guid.NewGuid().ToString("N");
-        try
-        {
-            var dir = Path.GetDirectoryName(IdPath)!;
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(IdPath, id);
-        }
-        catch
-        {
-            /* still return in-memory id for this session */
-        }
-        return id;
-    }
 
     public static string Hostname
     {
@@ -66,6 +43,65 @@ public static class MachineIdentity
             {
                 return "unknown";
             }
+        }
+    }
+
+    public static string GetOrCreate()
+    {
+        if (!string.IsNullOrEmpty(_cached)) return _cached!;
+
+        var deterministic = ComputeDeterministicId();
+        try
+        {
+            if (File.Exists(IdPath))
+            {
+                var existing = (File.ReadAllText(IdPath) ?? "").Trim();
+                if (string.Equals(existing, deterministic, StringComparison.OrdinalIgnoreCase))
+                {
+                    _cached = existing;
+                    return _cached;
+                }
+            }
+        }
+        catch
+        {
+            /* rewrite below */
+        }
+
+        _cached = deterministic;
+        try
+        {
+            var dir = Path.GetDirectoryName(IdPath)!;
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(IdPath, _cached);
+        }
+        catch
+        {
+            /* in-memory still stable for this session */
+        }
+        return _cached;
+    }
+
+    private static string ComputeDeterministicId()
+    {
+        var guid = ReadMachineGuid() ?? "no-guid";
+        var raw = $"{Hostname.Trim().ToUpperInvariant()}|{guid}|{WindowsUser.Trim().ToUpperInvariant()}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
+        return hash[..32];
+    }
+
+    private static string? ReadMachineGuid()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Microsoft\Cryptography");
+            var v = key?.GetValue("MachineGuid")?.ToString()?.Trim();
+            return string.IsNullOrEmpty(v) ? null : v;
+        }
+        catch
+        {
+            return null;
         }
     }
 }

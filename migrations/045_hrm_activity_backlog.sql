@@ -1,0 +1,28 @@
+-- HRM Backlog Tracker: every click / upload / download / page / API mutation.
+CREATE TABLE IF NOT EXISTS hrm_activity_backlog (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  event_ts DATETIME(3) NOT NULL,
+  day_key CHAR(10) NOT NULL,
+  event_type VARCHAR(64) NOT NULL,
+  employee_id VARCHAR(64) NULL,
+  employee_name VARCHAR(255) NULL,
+  pseudonym VARCHAR(255) NULL,
+  employee_code VARCHAR(64) NULL,
+  login_id VARCHAR(128) NULL,
+  page_path VARCHAR(512) NULL,
+  detail TEXT NULL,
+  method VARCHAR(16) NULL,
+  url VARCHAR(512) NULL,
+  file_name VARCHAR(255) NULL,
+  file_bytes INT UNSIGNED NULL,
+  ip VARCHAR(64) NULL,
+  user_agent VARCHAR(512) NULL,
+  payload_json JSON NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_hab_day (day_key),
+  KEY idx_hab_ts (event_ts),
+  KEY idx_hab_emp (employee_id),
+  KEY idx_hab_type (event_type),
+  KEY idx_hab_code (employee_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

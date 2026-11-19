@@ -137,10 +137,7 @@ public sealed class TrayHost : IDisposable
     {
         AutoStartHelper.EnsureEnabled();
         RefreshAutoStartLabel();
-        _notify.BalloonTipTitle = "Interact Presence";
-        _notify.BalloonTipText = "Agent is running.";
-        _notify.ShowBalloonTip(2500);
-        DesktopNotify.Success("Presence agent started.");
+        // No startup toast — avoids spam during any unexpected restarts.
     }
 
     private void RefreshAutoStartLabel()

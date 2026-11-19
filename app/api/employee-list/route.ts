@@ -45,7 +45,8 @@ export async function GET(req: NextRequest) {
     const selectCols = `
         SELECT e.id, e.first_name, e.last_name, e.employee_code, e.gender, e.nationality, e.status, e.pseudonym,
           e.father_name, e.dob, e.cnic_number, e.cnic_issuance_date, e.cnic_expiry_date, e.blood_group,
-          d.name AS department_name, j.job_title,
+          e.employment_type, e.working_hours,
+          d.name AS department_name, j.department_id AS department_id, j.job_title,
           ec.phone_mobile, ec.email_other, ec.email_work,
           ec.street1, ec.street2, ec.city, ec.state, ec.zip, ec.country,
           ec.permanent_street, ec.permanent_city, ec.permanent_state, ec.permanent_zip, ec.permanent_country
@@ -107,7 +108,7 @@ export async function GET(req: NextRequest) {
       /* emergency table optional */
     }
 
-    const employees = (rows || []).map((row: any) => {
+    let employees = (rows || []).map((row: any) => {
       const id = String(row.id ?? "");
       return {
         ...row,
@@ -136,6 +137,61 @@ export async function GET(req: NextRequest) {
         emergency_phone: emergencyMap[id] || "",
       };
     });
+
+    // Scope employee directory to viewer's department (unless CEO / HR / all-depts perm)
+    const viewerId =
+      req.headers.get("x-hrm-employee-id") ||
+      req.headers.get("x-employee-id") ||
+      searchParams.get("viewerId") ||
+      "";
+    if (viewerId.trim()) {
+      try {
+        const { resolveViewerDataScope, rowInViewerScope } = await import(
+          "@/lib/access-control/data-scope"
+        );
+        const scope = await resolveViewerDataScope(viewerId.trim());
+        if (scope.mode !== "all") {
+          employees = employees.filter((e: any) =>
+            rowInViewerScope(scope, {
+              employeeId: e.id,
+              departmentName: e.department_name,
+            }),
+          );
+        }
+      } catch {
+        /* keep full list if scope helper fails */
+      }
+
+      try {
+        const { filterSalariesForViewer } = await import(
+          "@/lib/access-control/salary-visibility"
+        );
+        const forFilter = employees.map((e: any) => ({
+          employee_id: String(e.id),
+          amount: e.basic_salary,
+          account_number: e.account_number,
+          routing_number: e.bank_name,
+        }));
+        const filtered = await filterSalariesForViewer(
+          viewerId.trim(),
+          forFilter,
+        );
+        const hide = new Set(
+          filtered
+            .filter((r) => r.salary_hidden)
+            .map((r) => String(r.employee_id)),
+        );
+        for (const e of employees) {
+          if (!hide.has(String(e.id))) continue;
+          e.basic_salary = 0;
+          e.account_number = "";
+          e.bank_name = "";
+          e.salary_hidden = true;
+        }
+      } catch {
+        /* keep unfiltered if helper fails */
+      }
+    }
 
     return NextResponse.json({ success: true, employees });
   } catch (err) {
