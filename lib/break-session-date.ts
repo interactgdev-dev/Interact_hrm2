@@ -60,12 +60,6 @@ export function breakEventDate(row: Record<string, unknown>): string {
   return getDateStringInTimeZone(String(start), SERVER_TIMEZONE);
 }
 
-function isRunningBreak(row: Record<string, unknown>): boolean {
-  const start = firstTruthy(row, START_FIELDS);
-  if (!start) return false;
-  return !firstTruthy(row, END_FIELDS);
-}
-
 function sessionKey(row: Record<string, unknown>): string {
   const emp = String(row.employee_id ?? row.employeeId ?? "");
   const sid = row.attendance_session_id ?? row.attendanceSessionId;
@@ -91,9 +85,8 @@ export function overnightFetchRange(fromDate: string, toDate: string): {
 
 /**
  * Keep rows whose clock-in session date falls in [fromDate, toDate].
- * Also, when viewing a single day D, keep overnight sessions that clocked in on D-1
- * and still have activity on/after D (or an open/running break) so live totals
- * after midnight include pre-midnight breaks.
+ * Overnight / midnight shifts stay on the clock-in day only — never spill into
+ * the next calendar day just because break_start/clock_out is after midnight.
  */
 export function filterRowsByClockInSessionDate<T extends Record<string, unknown>>(
   rows: T[],
@@ -103,23 +96,13 @@ export function filterRowsByClockInSessionDate<T extends Record<string, unknown>
   if (!fromDate || !toDate || !rows.length) return rows;
 
   const allowedSessions = new Set<string>();
-  const dayBeforeFrom = addCalendarDays(fromDate, -1);
 
   for (const row of rows) {
     const sessionDate = breakSessionDate(row);
-    const eventDate = breakEventDate(row);
     const key = sessionKey(row);
 
     if (sessionDate && sessionDate >= fromDate && sessionDate <= toDate) {
       allowedSessions.add(key);
-      continue;
-    }
-
-    // Overnight continuation into the viewed day(s)
-    if (sessionDate && sessionDate === dayBeforeFrom && sessionDate < fromDate) {
-      const crosses =
-        Boolean(eventDate && eventDate >= fromDate) || isRunningBreak(row);
-      if (crosses) allowedSessions.add(key);
     }
   }
 
@@ -151,16 +134,10 @@ export function attendanceSessionDate(row: {
   return "";
 }
 
-function attendanceClockOutDate(row: {
-  clock_out?: string | null;
-}): string {
-  if (!row.clock_out) return "";
-  return getDateStringInTimeZone(String(row.clock_out), SERVER_TIMEZONE);
-}
-
 /**
- * Keep attendance rows for the viewed range by clock-in session date.
- * Overnight: open (or still crossing) sessions from D-1 stay visible on D.
+ * Keep attendance rows for the viewed range by clock-in session date only.
+ * A shift that clocks in on the 19th and out after midnight on the 20th
+ * belongs entirely to the 19th — it must not appear when filtering the 20th.
  */
 export function filterAttendanceByClockInSessionDate<T extends Record<string, unknown>>(
   rows: T[],
@@ -169,21 +146,9 @@ export function filterAttendanceByClockInSessionDate<T extends Record<string, un
 ): T[] {
   if (!fromDate || !toDate || !rows.length) return rows;
 
-  const dayBeforeFrom = addCalendarDays(fromDate, -1);
-
   return rows.filter((row) => {
     const sessionDate = attendanceSessionDate(row as any);
     if (!sessionDate) return false;
-
-    if (sessionDate >= fromDate && sessionDate <= toDate) return true;
-
-    // Overnight continuation into viewed day(s)
-    if (sessionDate === dayBeforeFrom && sessionDate < fromDate) {
-      const outDate = attendanceClockOutDate(row as any);
-      const stillOpen = !(row as any).clock_out;
-      return stillOpen || Boolean(outDate && outDate >= fromDate);
-    }
-
-    return false;
+    return sessionDate >= fromDate && sessionDate <= toDate;
   });
 }

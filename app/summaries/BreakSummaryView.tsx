@@ -114,7 +114,7 @@ export default function BreakSummaryView() {
   useEffect(() => {
     const effectiveFrom = fromDate || toDate || today;
     const effectiveTo = toDate || fromDate || today;
-    // ±1 day so overnight clock-in sessions (pre + post midnight) load together
+    // ±1 day fetch window; client keeps rows by clock-in date only (no next-day spill).
     const range = overnightFetchRange(effectiveFrom, effectiveTo);
     const params = new URLSearchParams({
       fromDate: range.fromDate,
@@ -171,7 +171,7 @@ export default function BreakSummaryView() {
       if (department && b.department_name !== department) return false;
       return true;
     });
-    // Attribute to clock-in session date (overnight: keep pre-midnight totals)
+    // Attribute entirely to clock-in session date (overnight stays on start day).
     return filterRowsByClockInSessionDate(scoped, effectiveFrom, effectiveTo);
   }, [breaks, deferredSearch, department, viewerScope, fromDate, toDate, today]);
 
