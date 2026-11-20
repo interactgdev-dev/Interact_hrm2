@@ -355,34 +355,53 @@ export default function DashboardPage() {
     }
   }, []);
 
+  // One shared employee-list fetch — dashboard used to hit this API 6× on every load.
+  const employeesCacheRef = React.useRef<{ at: number; rows: any[] } | null>(null);
+  const employeesInflightRef = React.useRef<Promise<any[]> | null>(null);
+  const loadEmployees = React.useCallback(async (force = false) => {
+    const now = Date.now();
+    const cached = employeesCacheRef.current;
+    if (!force && cached && now - cached.at < 20_000) return cached.rows;
+    if (!force && employeesInflightRef.current) return employeesInflightRef.current;
+    const inflight = (async () => {
+      try {
+        const res = await fetch("/api/employee-list", { cache: "no-store" });
+        const data = await res.json();
+        const rows =
+          data?.success && Array.isArray(data.employees) ? data.employees : [];
+        employeesCacheRef.current = { at: Date.now(), rows };
+        return rows;
+      } finally {
+        employeesInflightRef.current = null;
+      }
+    })();
+    employeesInflightRef.current = inflight;
+    return inflight;
+  }, []);
+
   const fetchEmployeeCount = React.useCallback(async () => {
     try {
-      const res = await fetch("/api/employee-list", { cache: "no-store" });
-      const data = await res.json();
-      if (data?.success && data.employees) {
-        const employeeCount = data.employees.filter((emp: any) => {
-          const status = String(emp?.status || "").toLowerCase();
-          return status === "active" || status === "enabled";
-        }).length;
-        setStats((prev) => [
-          { label: "Employees", value: employeeCount.toString(), badge: "Team size" },
-          prev[1],
-          prev[2],
-          prev[3],
-        ]);
-      }
+      const employees = await loadEmployees();
+      const employeeCount = employees.filter((emp: any) => {
+        const status = String(emp?.status || "").toLowerCase();
+        return status === "active" || status === "enabled";
+      }).length;
+      setStats((prev) => [
+        { label: "Employees", value: employeeCount.toString(), badge: "Team size" },
+        prev[1],
+        prev[2],
+        prev[3],
+      ]);
     } catch (err) {
       console.error("employee count fetch", err);
     }
-  }, []);
+  }, [loadEmployees]);
 
   const fetchTodayAttendance = React.useCallback(async () => {
     try {
       const today = new Date().toISOString().split("T")[0];
-      const empRes = await fetch("/api/employee-list", { cache: "no-store" });
-      const empData = await empRes.json();
-      const totalEmployees =
-        empData.success && empData.employees ? empData.employees.length : 0;
+      const employees = await loadEmployees();
+      const totalEmployees = employees.length;
 
       if (totalEmployees === 0) {
         setStats((prev) => [
@@ -412,7 +431,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("today attendance fetch", err);
     }
-  }, []);
+  }, [loadEmployees]);
 
   const fetchWeekChart = React.useCallback(async () => {
     try {
@@ -421,10 +440,8 @@ export default function DashboardPage() {
       const fromDate = weekdays[0].toISOString().split("T")[0];
       const toDate = weekdays[weekdays.length - 1].toISOString().split("T")[0];
 
-      const empRes = await fetch("/api/employee-list", { cache: "no-store" });
-      const empData = await empRes.json();
-      const totalEmployees =
-        empData.success && empData.employees ? empData.employees.length : 0;
+      const employees = await loadEmployees();
+      const totalEmployees = employees.length;
 
       if (totalEmployees === 0) {
         setWeekChart(
@@ -466,7 +483,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("week chart fetch", err);
     }
-  }, []);
+  }, [loadEmployees]);
 
   const fetchWeeklyAttendance = React.useCallback(async () => {
     try {
@@ -483,10 +500,8 @@ export default function DashboardPage() {
       const fromDate = lastMonday.toISOString().split("T")[0];
       const toDate = lastFriday.toISOString().split("T")[0];
 
-      const empRes = await fetch("/api/employee-list", { cache: "no-store" });
-      const empData = await empRes.json();
-      const totalEmployees =
-        empData.success && empData.employees ? empData.employees.length : 0;
+      const employees = await loadEmployees();
+      const totalEmployees = employees.length;
 
       if (totalEmployees === 0) {
         setWeeklyAttendance("0%");
@@ -510,19 +525,17 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("weekly attendance fetch", err);
     }
-  }, []);
+  }, [loadEmployees]);
 
   const fetchEmployeeSnapshot = React.useCallback(async () => {
     try {
-      const empRes = await fetch("/api/employee-list", { cache: "no-store" });
-      const empData = await empRes.json();
+      const employees = await loadEmployees();
 
-      if (!empData.success || !empData.employees) {
+      if (!employees.length) {
         setEmployeeSnapshot({ active: 0, onLeave: 0, probation: 0 });
         return;
       }
 
-      const employees = empData.employees;
       const todayStr = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
       const leaveDayKey = (v: unknown) => {
         const s = String(v || "").trim();
@@ -606,15 +619,13 @@ export default function DashboardPage() {
 
   const fetchUpcomingBirthdays = React.useCallback(async () => {
     try {
-      const empRes = await fetch("/api/employee-list", { cache: "no-store" });
-      const empData = await empRes.json();
+      const employees = await loadEmployees();
 
-      if (!empData.success || !empData.employees) {
+      if (!employees.length) {
         setBirthdays([]);
         return;
       }
 
-      const employees = empData.employees;
       const today = new Date();
       const upcomingBdayList: { name: string; date: Date }[] = [];
 
@@ -657,7 +668,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("upcoming birthdays fetch", err);
     }
-  }, []);
+  }, [loadEmployees]);
 
   React.useEffect(() => {
     const syncGreeting = () => setGreeting(timeGreeting());
@@ -667,58 +678,97 @@ export default function DashboardPage() {
   }, []);
 
   React.useEffect(() => {
-    fetchLeaves();
-    fetchFinancialRequests();
-    fetchTickets();
-    fetchPendingAppraisals();
-    fetchEmployeeCount();
-    fetchTodayAttendance();
-    fetchWeeklyAttendance();
-    fetchWeekChart();
-    fetchEmployeeSnapshot();
-    fetchAnnouncementsAndReminders();
-    fetchUpcomingBirthdays();
+    // Critical first paint — stats + inbox widgets.
+    void Promise.all([
+      fetchLeaves(),
+      fetchTickets(),
+      fetchEmployeeCount(),
+      fetchTodayAttendance(),
+      fetchEmployeeSnapshot(),
+    ]);
+
+    // Secondary widgets after idle so first paint stays snappy.
+    const idle =
+      typeof window !== "undefined" && "requestIdleCallback" in window
+        ? (
+            window as Window & {
+              requestIdleCallback: (
+                cb: () => void,
+                opts?: { timeout: number },
+              ) => number;
+              cancelIdleCallback?: (id: number) => void;
+            }
+          )
+        : null;
+    const runSecondary = () => {
+      void fetchFinancialRequests();
+      void fetchPendingAppraisals();
+      void fetchWeeklyAttendance();
+      void fetchWeekChart();
+      void fetchAnnouncementsAndReminders();
+      void fetchUpcomingBirthdays();
+    };
+    const idleId = idle
+      ? idle.requestIdleCallback(runSecondary, { timeout: 2500 })
+      : window.setTimeout(runSecondary, 400);
 
     const dataInterval = setInterval(() => {
-      fetchTodayAttendance();
-      fetchWeeklyAttendance();
-      fetchWeekChart();
-      fetchEmployeeSnapshot();
-      fetchAnnouncementsAndReminders();
-      fetchUpcomingBirthdays();
+      void loadEmployees(true);
+      void fetchTodayAttendance();
+      void fetchWeeklyAttendance();
+      void fetchWeekChart();
+      void fetchEmployeeSnapshot();
+      void fetchAnnouncementsAndReminders();
+      void fetchUpcomingBirthdays();
     }, 30000);
 
-    if (typeof window === "undefined") return;
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${protocol}://${window.location.host}/api/ws`);
-    ws.onmessage = (evt) => {
-      try {
-        const msg = JSON.parse(evt.data.toString());
-        if (msg?.type === "leave_update") {
-          fetchLeaves();
-          fetchEmployeeSnapshot();
+    let ws: WebSocket | null = null;
+    const connectWs = () => {
+      if (typeof window === "undefined") return;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${protocol}://${window.location.host}/api/ws`);
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data.toString());
+          if (msg?.type === "leave_update") {
+            fetchLeaves();
+            fetchEmployeeSnapshot();
+          }
+          if (msg?.type === "financial_request_update") {
+            fetchFinancialRequests();
+          }
+          if (msg?.type === "ticket_update" || msg?.type === "ticket_created") {
+            void fetchTickets({ silent: true });
+          }
+        } catch {
+          /* ignore */
         }
-        if (msg?.type === "financial_request_update") {
-          fetchFinancialRequests();
-        }
-        if (msg?.type === "ticket_update" || msg?.type === "ticket_created") {
-          void fetchTickets({ silent: true });
-        }
-      } catch {
-        /* ignore */
-      }
+      };
     };
+    const wsIdleId = idle
+      ? idle.requestIdleCallback(connectWs, { timeout: 4000 })
+      : window.setTimeout(connectWs, 800);
+
     return () => {
-      ws.close();
+      ws?.close();
       clearInterval(dataInterval);
+      if (idle) {
+        idle.cancelIdleCallback?.(idleId);
+        idle.cancelIdleCallback?.(wsIdleId);
+      } else {
+        window.clearTimeout(idleId as number);
+        window.clearTimeout(wsIdleId as number);
+      }
       if (timerRef.current) window.clearTimeout(timerRef.current);
       if (finTimerRef.current) window.clearTimeout(finTimerRef.current);
       if (ticketTimerRef.current) window.clearTimeout(ticketTimerRef.current);
     };
   }, [
+    loadEmployees,
     fetchLeaves,
     fetchFinancialRequests,
     fetchTickets,
+    fetchPendingAppraisals,
     fetchEmployeeCount,
     fetchTodayAttendance,
     fetchWeeklyAttendance,

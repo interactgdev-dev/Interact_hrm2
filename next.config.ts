@@ -3,6 +3,10 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /** face-api / tfjs are browser-only; avoid server bundle resolution issues on Linux CI. */
   serverExternalPackages: ["@tensorflow/tfjs", "@vladmandic/face-api", "tesseract.js"],
+  /** Smaller client graphs for icon-heavy admin/employee shells. */
+  experimental: {
+    optimizePackageImports: ["react-icons", "react-icons/fa", "react-icons/fi"],
+  },
   async redirects() {
     return [
       {

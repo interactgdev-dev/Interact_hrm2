@@ -3,7 +3,7 @@ import "./globals.css";
 import { TicketToastHost } from "./components/TicketToastHost";
 import { AppToastHost } from "./components/AppToastHost";
 import { AppConfirmHost } from "./components/AppConfirmHost";
-import { AdminActivityProbe } from "./components/AdminActivityProbe";
+import { DeferredGlobalHosts } from "./components/DeferredGlobalHosts";
 
 export const metadata: Metadata = {
   title: "Interact HRM",
@@ -22,7 +22,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="antialiased" suppressHydrationWarning style={{ background: "#F7FAFC" }}>
         {children}
-        <AdminActivityProbe />
+        <DeferredGlobalHosts />
         <TicketToastHost />
         <AppToastHost />
         <AppConfirmHost />

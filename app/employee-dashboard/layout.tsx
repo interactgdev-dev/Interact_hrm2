@@ -265,6 +265,13 @@ const PREFETCH_PATHS = [
   "/employee-dashboard/my-tickets",
   "/employee-dashboard/time",
   "/employee-dashboard/attendance",
+  "/employee-dashboard/leave",
+  "/employee-dashboard/summaries",
+  "/employee-dashboard/monthly-attendance",
+  "/employee-dashboard/tickets",
+  "/employee-dashboard/employee-list",
+  "/employee-dashboard/formats-library",
+  "/employee-dashboard/employee-files",
 ];
 
 function EmployeeSidebarNav({ tabs }: { tabs: NavTab[] }) {

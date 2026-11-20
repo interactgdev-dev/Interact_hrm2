@@ -112,6 +112,45 @@ const sidebarLinks = [
 	},
 ];
 
+const ADMIN_PREFETCH_PATHS = [
+	"/dashboard",
+	"/admin/employee-list",
+	"/admin/tickets",
+	"/admin/monthly-attendance",
+	"/admin/monthly-payroll",
+	"/admin/manage-leaves",
+	"/admin/manage-attendance",
+	"/admin/shift-management",
+	"/admin/employee-files",
+	"/admin/formats-library",
+	"/admin/system-control",
+	"/summaries",
+	"/add-employee",
+];
+
+function runWhenIdle(cb: () => void, timeout = 3500) {
+	if (typeof window === "undefined") return () => {};
+	const idle =
+		"requestIdleCallback" in window
+			? (
+					window as Window & {
+						requestIdleCallback: (
+							fn: () => void,
+							opts?: { timeout: number },
+						) => number;
+						cancelIdleCallback?: (id: number) => void;
+					}
+				)
+			: null;
+	const id = idle
+		? idle.requestIdleCallback(cb, { timeout })
+		: window.setTimeout(cb, Math.min(timeout, 1200));
+	return () => {
+		if (idle) idle.cancelIdleCallback?.(id);
+		else window.clearTimeout(id as number);
+	};
+}
+
 export default function LayoutDashboard({ children }: { children: React.ReactNode }) {
 	const [attendanceDropdownOpen, setAttendanceDropdownOpen] = React.useState(false);
 	const [onboardDropdownOpen, setOnboardDropdownOpen] = React.useState(false);
@@ -147,15 +186,31 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 		setNavPeek(false);
 	}, [pathname]);
 
+	// Prefetch common admin routes after first paint — same pattern as employee dashboard.
 	React.useEffect(() => {
-		void fetchShellBranding()
-			.then((branding) => {
-				setCompanyLogo(branding.companyLogo);
-				setAdminAvatar(branding.adminAvatar);
-			})
-			.catch(() => {
-				/* keep placeholders */
-			});
+		if (embedInEmployeeShell) return;
+		return runWhenIdle(() => {
+			for (const path of ADMIN_PREFETCH_PATHS) {
+				try {
+					router.prefetch(path);
+				} catch {
+					/* ignore */
+				}
+			}
+		}, 5000);
+	}, [router, embedInEmployeeShell]);
+
+	React.useEffect(() => {
+		return runWhenIdle(() => {
+			void fetchShellBranding()
+				.then((branding) => {
+					setCompanyLogo(branding.companyLogo);
+					setAdminAvatar(branding.adminAvatar);
+				})
+				.catch(() => {
+					/* keep placeholders */
+				});
+		}, 2000);
 	}, []);
 
 	// Heal leftover employee keys when admin is logged in (restores full sidebar).
