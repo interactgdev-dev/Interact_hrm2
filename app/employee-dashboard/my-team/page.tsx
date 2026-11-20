@@ -80,6 +80,16 @@ export default function MyTeamPage() {
     for (const member of raw) {
       const id = String(member.id || "").trim();
       if (!id || byId.has(id)) continue;
+      // Inactive / disabled profiles must never appear in My Team.
+      const status = String(member.status || "").trim().toLowerCase();
+      if (
+        status === "inactive" ||
+        status === "disabled" ||
+        status === "terminated" ||
+        status === "left"
+      ) {
+        continue;
+      }
       byId.set(id, member);
     }
     return [...byId.values()];

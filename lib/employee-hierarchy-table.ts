@@ -126,7 +126,13 @@ async function fetchEmployees(conn: Awaited<ReturnType<typeof pool.getConnection
     WHERE e.status IS NULL OR e.status IN ('enabled', 'active', 'Enabled', 'Active')
     ORDER BY e.id ASC
   `);
-  return dedupeEmployeesById(rows as EmpRow[]);
+  // Active-only query + one row per employee id (duplicate jobs must not multiply My Team).
+  const activeOnly = (rows as EmpRow[]).filter((row) => {
+    const status = String(row.status || "").trim().toLowerCase();
+    if (!status) return true;
+    return status === "enabled" || status === "active";
+  });
+  return dedupeEmployeesById(activeOnly);
 }
 
 async function fetchExplicitReportsTo(

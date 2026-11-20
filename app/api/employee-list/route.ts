@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
       /* emergency table optional */
     }
 
-    let employees = (rows || []).map((row: any) => {
+    const mapped = (rows || []).map((row: any) => {
       const id = String(row.id ?? "");
       return {
         ...row,
@@ -137,6 +137,26 @@ export async function GET(req: NextRequest) {
         emergency_phone: emergencyMap[id] || "",
       };
     });
+
+    // JOIN employee_jobs / employee_contacts can multiply the same employee.
+    // Always return one row per employee id (prefer the richest filled row).
+    const byId = new Map<string, (typeof mapped)[number]>();
+    for (const row of mapped) {
+      const id = String(row.id ?? "").trim();
+      if (!id) continue;
+      const prev = byId.get(id);
+      if (!prev) {
+        byId.set(id, row);
+        continue;
+      }
+      const score = (r: any) =>
+        [r.department_name, r.job_title, r.phone_mobile, r.email_work, r.present_address]
+          .reduce((n: number, v) => n + (String(v || "").trim() ? 1 : 0), 0);
+      byId.set(id, score(row) > score(prev) ? row : prev);
+    }
+    let employees = [...byId.values()].sort(
+      (a, b) => Number(b.id) - Number(a.id),
+    );
 
     // Scope employee directory to viewer's department (unless CEO / HR / all-depts perm)
     const viewerId =
@@ -178,8 +198,8 @@ export async function GET(req: NextRequest) {
         );
         const hide = new Set(
           filtered
-            .filter((r) => r.salary_hidden)
-            .map((r) => String(r.employee_id)),
+            .filter((r: any) => Boolean(r.salary_hidden))
+            .map((r: any) => String(r.employee_id)),
         );
         for (const e of employees) {
           if (!hide.has(String(e.id))) continue;
