@@ -5,7 +5,7 @@ import { isGraceExpiredForEmployee } from "@/lib/attendance-presence";
 import { performAutoClockOut } from "@/lib/auto-clock-out";
 
 registerAutoPresenceCron();
-import { pool } from "../../../lib/db";
+import { getDbDriver, pool } from "../../../lib/db";
 import { ATTENDANCE_TABLE, ensureAttendanceTable } from "../../../lib/attendance-table";
 import {
   getDateStringInTimeZone,
@@ -14,6 +14,7 @@ import {
 import { computeClockInLateStatus } from "../../../lib/monthly-attendance-status";
 import { breakTypeLabel } from "@/lib/session-break-config";
 import { logServerEmployeeActivity } from "@/lib/admin-activity-log";
+import { mongoHasActiveBreak, mongoListAttendance } from "@/lib/mongo-attendance";
 
 // GET: Fetch all attendance records or by employeeId, now with department name
 export async function GET(req: NextRequest) {
@@ -29,6 +30,24 @@ export async function GET(req: NextRequest) {
     const openOnly = searchParams.get("openOnly") === "1";
     /** Lighter payload for summary pages — skips shift subquery + contacts */
     const summaryOnly = searchParams.get("summary") === "1";
+
+    // Mongo SQL adapter JOINs drop department when employee_id types mix (string vs number).
+    // Native list resolves jobs/departments via idKey so summary Department column fills.
+    if (getDbDriver() === "mongo") {
+      if (activeBreakCheck && employeeId) {
+        const breakStatus = await mongoHasActiveBreak(employeeId);
+        return NextResponse.json({ success: true, ...breakStatus });
+      }
+      const attendance = await mongoListAttendance({
+        employeeId,
+        date,
+        fromDate,
+        toDate,
+        openOnly,
+        summaryOnly,
+      });
+      return NextResponse.json({ success: true, attendance });
+    }
     
     conn = await pool.getConnection();
     if (!conn) {
@@ -58,15 +77,15 @@ export async function GET(req: NextRequest) {
         sa.end_time AS shift_end_time,
         sa.allow_overtime AS allow_overtime
       FROM ${ATTENDANCE_TABLE} ea
-      LEFT JOIN hrm_employees e ON ea.employee_id = e.id
-      LEFT JOIN employee_jobs j ON e.id = j.employee_id
-      LEFT JOIN departments d ON j.department_id = d.id
+      LEFT JOIN hrm_employees e ON CAST(ea.employee_id AS CHAR) = CAST(e.id AS CHAR)
+      LEFT JOIN employee_jobs j ON CAST(e.id AS CHAR) = CAST(j.employee_id AS CHAR)
+      LEFT JOIN departments d ON CAST(j.department_id AS CHAR) = CAST(d.id AS CHAR)
       LEFT JOIN shift_assignments sa
-        ON sa.employee_id = ea.employee_id
+        ON CAST(sa.employee_id AS CHAR) = CAST(ea.employee_id AS CHAR)
        AND sa.assigned_date = (
          SELECT MAX(sa2.assigned_date)
          FROM shift_assignments sa2
-         WHERE sa2.employee_id = ea.employee_id
+         WHERE CAST(sa2.employee_id AS CHAR) = CAST(ea.employee_id AS CHAR)
            AND sa2.assigned_date <= ea.date
        )
     `
@@ -89,16 +108,16 @@ export async function GET(req: NextRequest) {
         sa.assigned_date AS shift_assigned_date,
         sa.allow_overtime AS allow_overtime
       FROM ${ATTENDANCE_TABLE} ea
-      LEFT JOIN hrm_employees e ON ea.employee_id = e.id
-      LEFT JOIN employee_jobs j ON e.id = j.employee_id
-      LEFT JOIN departments d ON j.department_id = d.id
-      LEFT JOIN employee_contacts ec ON e.id = ec.employee_id
+      LEFT JOIN hrm_employees e ON CAST(ea.employee_id AS CHAR) = CAST(e.id AS CHAR)
+      LEFT JOIN employee_jobs j ON CAST(e.id AS CHAR) = CAST(j.employee_id AS CHAR)
+      LEFT JOIN departments d ON CAST(j.department_id AS CHAR) = CAST(d.id AS CHAR)
+      LEFT JOIN employee_contacts ec ON CAST(e.id AS CHAR) = CAST(ec.employee_id AS CHAR)
       LEFT JOIN shift_assignments sa
-        ON sa.employee_id = ea.employee_id
+        ON CAST(sa.employee_id AS CHAR) = CAST(ea.employee_id AS CHAR)
        AND sa.assigned_date = (
          SELECT MAX(sa2.assigned_date)
          FROM shift_assignments sa2
-         WHERE sa2.employee_id = ea.employee_id
+         WHERE CAST(sa2.employee_id AS CHAR) = CAST(ea.employee_id AS CHAR)
            AND sa2.assigned_date <= ea.date
        )
     `;
@@ -190,6 +209,7 @@ export async function GET(req: NextRequest) {
         late_minutes,
         pseudonym: row.pseudonym || null,
         gender: row.gender || null,
+        department_name: row.department_name || null,
         email: row.email_work || row.email_other || null,
       };
     });

@@ -171,9 +171,25 @@ export function indexFirstByEmployee<T extends Document>(rows: T[]): Map<string,
   return m;
 }
 
+/** Expand ids to string+number so Mongo $in matches mixed-type legacy rows. */
+export function mixedIdValues(ids: unknown[]): Array<string | number> {
+  const out: Array<string | number> = [];
+  const seen = new Set<string>();
+  for (const raw of ids) {
+    if (raw == null || raw === "") continue;
+    for (const v of employeeIdValues(raw as string | number)) {
+      const marker = `${typeof v}:${idKey(v)}`;
+      if (!idKey(v) || seen.has(marker)) continue;
+      seen.add(marker);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
 export async function loadEmployeeLookups(employeeIds: Array<string | number>) {
   const db = await getMongoDb();
-  const ids = [...new Set(employeeIds.flatMap((id) => employeeIdValues(id)))];
+  const ids = mixedIdValues(employeeIds);
   if (!ids.length) {
     return {
       employees: new Map<string, Document>(),
@@ -189,9 +205,9 @@ export async function loadEmployeeLookups(employeeIds: Array<string | number>) {
     db.collection("employee_jobs").find({ employee_id: { $in: ids } }).toArray(),
     db.collection("shift_assignments").find({ employee_id: { $in: ids } }).toArray(),
   ]);
-  const deptIds = [
-    ...new Set(jobs.map((j) => j.department_id).filter((v) => v != null && v !== "")),
-  ];
+  const deptIds = mixedIdValues(
+    jobs.map((j) => j.department_id).filter((v) => v != null && v !== ""),
+  );
   const departments = deptIds.length
     ? await db.collection("departments").find({ id: { $in: deptIds } }).toArray()
     : [];
