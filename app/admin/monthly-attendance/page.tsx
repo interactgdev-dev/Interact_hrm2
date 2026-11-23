@@ -408,6 +408,7 @@ export default function MonthlyAttendancePage() {
   const [metricModal, setMetricModal] = useState<
     null | "employees" | "workingDays" | "expanded" | "departments"
   >(null);
+  const [fullViewEmployeeId, setFullViewEmployeeId] = useState<string>("");
   const [exportMenuEmployeeId, setExportMenuEmployeeId] = useState<string>("");
   const fetchGenRef = useRef(0);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
@@ -417,6 +418,10 @@ export default function MonthlyAttendancePage() {
       if (e.key !== "Escape") return;
       if (deductionPreview) {
         setDeductionPreview(null);
+        return;
+      }
+      if (fullViewEmployeeId) {
+        setFullViewEmployeeId("");
         return;
       }
       if (metricModal) {
@@ -429,7 +434,7 @@ export default function MonthlyAttendancePage() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deductionPreview, metricModal, exportMenuEmployeeId]);
+  }, [deductionPreview, metricModal, exportMenuEmployeeId, fullViewEmployeeId]);
 
   useEffect(() => {
     if (!exportMenuEmployeeId) return;
@@ -2593,321 +2598,8 @@ export default function MonthlyAttendancePage() {
   const allDeductionSelected =
     attendanceIds.length > 0 && selectedDeductionCount === attendanceIds.length;
 
-  const metricModalTitle =
-    metricModal === "employees"
-      ? "Employees"
-      : metricModal === "workingDays"
-        ? "Working days"
-        : metricModal === "expanded"
-          ? "Expanded attendance"
-          : metricModal === "departments"
-            ? "Departments"
-            : "";
 
-  return (
-    <OptionalAdminShell>
-      <div className={styles.page}>
-        <header className={styles.topBar}>
-          <div className={styles.topLeft}>
-            <p className={styles.eyebrow}>
-              <span className={styles.eyebrowDot} aria-hidden />
-              Interact Attendance
-            </p>
-            <h1 className={styles.heroTitle}>
-              Monthly attendance
-              {monthInfo.label ? ` — ${monthInfo.label}` : ""}
-            </h1>
-            <p className={styles.heroSub}>
-              Review clock-in/out, shift punches, status, and deductions for the selected month.
-            </p>
-            {showingImported ? (
-              <p className={styles.importBanner}>
-                Showing imported Excel data for {monthInfo.label} (sheet values as-is)
-              </p>
-            ) : null}
-          </div>
-          <div className={styles.topRight}>
-            <label className={styles.monthChip}>
-              <span>Month</span>
-              <input
-                type="month"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                aria-label="Attendance month"
-              />
-            </label>
-            <button type="button" className={styles.secondaryBtn} onClick={fetchAttendance}>
-              {loading ? "…" : "Refresh"}
-            </button>
-          </div>
-        </header>
-
-        <div className={styles.metricStrip}>
-          <button
-            type="button"
-            className={`${styles.metric} ${styles.metricAccent} ${styles.metricClickable}`}
-            onClick={() => setMetricModal("employees")}
-            title="View employee list"
-          >
-            <div className={styles.metricLabel}>Employees</div>
-            <div className={styles.metricValue}>{attendanceByEmployee.length}</div>
-          </button>
-          <button
-            type="button"
-            className={`${styles.metric} ${styles.metricClickable}`}
-            onClick={() => setMetricModal("workingDays")}
-            title="View working days"
-          >
-            <div className={styles.metricLabel}>Working days</div>
-            <div className={styles.metricValue}>{workingDaysCount}</div>
-          </button>
-          <button
-            type="button"
-            className={`${styles.metric} ${styles.metricClickable}`}
-            onClick={() => setMetricModal("expanded")}
-            title="View expanded employees"
-          >
-            <div className={styles.metricLabel}>Expanded</div>
-            <div className={styles.metricValue}>{expandedCount}</div>
-          </button>
-          <button
-            type="button"
-            className={`${styles.metric} ${styles.metricClickable}`}
-            onClick={() => setMetricModal("departments")}
-            title="View departments"
-          >
-            <div className={styles.metricLabel}>Departments</div>
-            <div className={styles.metricValue}>{departmentMetricCount}</div>
-          </button>
-        </div>
-
-        <div className={styles.panel}>
-          <div className={styles.panelHead}>
-            <div className={styles.panelHeadLeft}>
-              <h2 className={styles.panelTitle}>Filters &amp; exports</h2>
-              <p className={styles.panelHint}>
-                Search by name, filter department, then Export Attendance or Export Deduction Summary
-              </p>
-            </div>
-            <button
-              type="button"
-              className={styles.secondaryBtn}
-              onClick={() => {
-                setSearchName("");
-                setSelectedDepartment("");
-              }}
-            >
-              Clear filters
-            </button>
-          </div>
-          <div className={styles.panelBody}>
-            <div className={styles.filters}>
-              <label className={styles.field}>
-                <span className={styles.label}>Search</span>
-                <input
-                  type="text"
-                  placeholder="Name, pseudo or ID…"
-                  value={searchName}
-                  onChange={(e) => setSearchName(e.target.value)}
-                  className={styles.input}
-                />
-              </label>
-              <label className={styles.field}>
-                <span className={styles.label}>Department</span>
-                <select
-                  value={selectedDepartment}
-                  onChange={(e) => setSelectedDepartment(e.target.value)}
-                  className={styles.select}
-                >
-                  <option value="">All Departments</option>
-                  {departments.map((dept) => (
-                    <option key={dept.id} value={dept.name || dept.department_name}>
-                      {dept.name || dept.department_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className={styles.actions}>
-                <button type="button" onClick={fetchAttendance} className={styles.primaryBtn}>
-                  Search
-                </button>
-                <button type="button" onClick={downloadExcel} className={styles.secondaryBtn}>
-                  <FaFileExcel /> Export Attendance
-                </button>
-                <button
-                  type="button"
-                  onClick={downloadDeductionSummary}
-                  className={styles.secondaryBtn}
-                  title={
-                    selectedDeductionCount > 0
-                      ? `Export Deduction Summary for ${selectedDeductionCount} selected`
-                      : "Export Deduction Summary for all visible employees"
-                  }
-                >
-                  <FaFileExcel />{" "}
-                  {selectedDeductionCount > 0
-                    ? `Export Deduction Summary (${selectedDeductionCount})`
-                    : "Export Deduction Summary"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {loading ? (
-          <div className={styles.loading}>Loading attendance records…</div>
-        ) : (
-          <div className={styles.list}>
-            {attendanceByEmployee.length === 0 ? (
-              <div className={styles.empty}>No attendance records found</div>
-            ) : (
-              <>
-              <div className={styles.selectBar}>
-                <label className={styles.selectAllLabel}>
-                  <input
-                    type="checkbox"
-                    checked={allDeductionSelected}
-                    onChange={(e) =>
-                      setAllDeductionSelected(attendanceIds, e.target.checked)
-                    }
-                    className={styles.cardCheck}
-                  />
-                  <span>
-                    {allDeductionSelected
-                      ? "Deselect all cards"
-                      : "Select all cards"}
-                  </span>
-                </label>
-                {selectedDeductionCount > 0 ? (
-                  <button
-                    type="button"
-                    className={styles.ghostBtn}
-                    onClick={() => setSelectedDeductionIds({})}
-                  >
-                    Clear ({selectedDeductionCount})
-                  </button>
-                ) : (
-                  <span className={styles.selectHint}>
-                    Select cards, then Export Deduction Summary
-                  </span>
-                )}
-              </div>
-              {attendanceByEmployee.map((employee) => {
-                const isExpanded = Boolean(expandedEmployeeIds[employee.employeeId]);
-                const isDeductionSelected = Boolean(
-                  selectedDeductionIds[String(employee.employeeId)],
-                );
-                const revealPunches = shouldRevealTPunches(
-                  employee.departmentName,
-                  selectedDepartment,
-                  deferredSearchName,
-                );
-                return (
-                <div
-                  key={employee.employeeId}
-                  className={`${styles.empCard}${isExpanded ? ` ${styles.empCardExpanded}` : ""}${isDeductionSelected ? ` ${styles.empCardSelected}` : ""}${exportMenuEmployeeId === String(employee.employeeId) ? ` ${styles.empCardMenuOpen}` : ""}`}
-                >
-                  <div
-                    className={styles.empCardHead}
-                    style={{ marginBottom: isExpanded ? 8 : 0 }}
-                  >
-                    <div className={styles.empCardLeft}>
-                      <label className={styles.cardCheckWrap} title="Select for deduction export">
-                        <input
-                          type="checkbox"
-                          checked={isDeductionSelected}
-                          onChange={() => toggleDeductionSelected(employee.employeeId)}
-                          className={styles.cardCheck}
-                        />
-                      </label>
-                      <div>
-                        <EmployeeTableNameCell
-                          name={employee.employeeName}
-                          employeeId={employee.employeeId}
-                          photo={getPhoto(employee.employeeId)}
-                          onOpen={() =>
-                            openFromRow({
-                              employee_id: employee.employeeId,
-                              employee_name: employee.employeeName,
-                              pseudonym: employee.pseudonym,
-                              department_name: employee.departmentName,
-                            })
-                          }
-                        />
-                        <div className={styles.empMeta}>
-                          {employee.pseudonym} · {employee.departmentName}
-                        </div>
-                      </div>
-                    </div>
-                    <div className={styles.empActions}>
-                      <div className={styles.empId}>Emp. ID {employee.employeeId}</div>
-                      <button
-                        type="button"
-                        title={isExpanded ? "Hide month table" : "Show month table"}
-                        className={`${styles.ghostBtn} ${isExpanded ? styles.ghostBtnActive : ""}`}
-                        onClick={() => toggleEmployeeExpanded(employee.employeeId)}
-                      >
-                        {isExpanded ? "Hide attendance" : "View attendance"}
-                      </button>
-                      <button
-                        type="button"
-                        title="View deduction summary (same as export)"
-                        className={styles.ghostBtn}
-                        disabled={deductionPreviewLoadingId === String(employee.employeeId)}
-                        onClick={() => void openDeductionSummaryPreview(employee)}
-                      >
-                        {deductionPreviewLoadingId === String(employee.employeeId)
-                          ? "…"
-                          : "View deduction"}
-                      </button>
-                      <div className={styles.exportMenuWrap} data-export-menu>
-                        <button
-                          type="button"
-                          title="Export Attendance or Deduction Summary"
-                          className={styles.ghostBtn}
-                          aria-expanded={
-                            exportMenuEmployeeId === String(employee.employeeId)
-                          }
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const id = String(employee.employeeId);
-                            setExportMenuEmployeeId((prev) => (prev === id ? "" : id));
-                          }}
-                        >
-                          <FaFileExcel /> Export ▾
-                        </button>
-                        {exportMenuEmployeeId === String(employee.employeeId) ? (
-                          <div className={styles.exportMenu} role="menu">
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className={styles.exportMenuItem}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setExportMenuEmployeeId("");
-                                void downloadEmployeeExcel(employee);
-                              }}
-                            >
-                              Attendance
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className={styles.exportMenuItem}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setExportMenuEmployeeId("");
-                                void downloadEmployeeDeductionSummary(employee);
-                              }}
-                            >
-                              Deduction Summary
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  {isExpanded ? (
+  const renderEmployeeMonthTable = (employee: any, revealPunches: boolean) => (
                   <div className={styles.tableWrap}>
                     <table className={styles.table}>
                       <thead>
@@ -3214,6 +2906,344 @@ export default function MonthlyAttendancePage() {
 
                     </table>
                   </div>
+  );
+
+  const fullViewEmployee = useMemo(
+    () =>
+      attendanceByEmployee.find(
+        (e) => String(e.employeeId) === String(fullViewEmployeeId),
+      ) || null,
+    [attendanceByEmployee, fullViewEmployeeId],
+  );
+
+  const metricModalTitle =
+    metricModal === "employees"
+      ? "Employees"
+      : metricModal === "workingDays"
+        ? "Working days"
+        : metricModal === "expanded"
+          ? "Expanded attendance"
+          : metricModal === "departments"
+            ? "Departments"
+            : "";
+
+  return (
+    <OptionalAdminShell>
+      <div className={styles.page}>
+        <header className={styles.topBar}>
+          <div className={styles.topLeft}>
+            <p className={styles.eyebrow}>
+              <span className={styles.eyebrowDot} aria-hidden />
+              Interact Attendance
+            </p>
+            <h1 className={styles.heroTitle}>
+              Monthly attendance
+              {monthInfo.label ? ` — ${monthInfo.label}` : ""}
+            </h1>
+            <p className={styles.heroSub}>
+              Review clock-in/out, shift punches, status, and deductions for the selected month.
+            </p>
+            {showingImported ? (
+              <p className={styles.importBanner}>
+                Showing imported Excel data for {monthInfo.label} (sheet values as-is)
+              </p>
+            ) : null}
+          </div>
+          <div className={styles.topRight}>
+            <label className={styles.monthChip}>
+              <span>Month</span>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                aria-label="Attendance month"
+              />
+            </label>
+            <button type="button" className={styles.secondaryBtn} onClick={fetchAttendance}>
+              {loading ? "…" : "Refresh"}
+            </button>
+          </div>
+        </header>
+
+        <div className={styles.metricStrip}>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricAccent} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("employees")}
+            title="View employee list"
+          >
+            <div className={styles.metricLabel}>Employees</div>
+            <div className={styles.metricValue}>{attendanceByEmployee.length}</div>
+          </button>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("workingDays")}
+            title="View working days"
+          >
+            <div className={styles.metricLabel}>Working days</div>
+            <div className={styles.metricValue}>{workingDaysCount}</div>
+          </button>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("expanded")}
+            title="View expanded employees"
+          >
+            <div className={styles.metricLabel}>Expanded</div>
+            <div className={styles.metricValue}>{expandedCount}</div>
+          </button>
+          <button
+            type="button"
+            className={`${styles.metric} ${styles.metricClickable}`}
+            onClick={() => setMetricModal("departments")}
+            title="View departments"
+          >
+            <div className={styles.metricLabel}>Departments</div>
+            <div className={styles.metricValue}>{departmentMetricCount}</div>
+          </button>
+        </div>
+
+        <div className={styles.panel}>
+          <div className={styles.panelHead}>
+            <div className={styles.panelHeadLeft}>
+              <h2 className={styles.panelTitle}>Filters &amp; exports</h2>
+              <p className={styles.panelHint}>
+                Search by name, filter department, then Export Attendance or Export Deduction Summary
+              </p>
+            </div>
+            <button
+              type="button"
+              className={styles.secondaryBtn}
+              onClick={() => {
+                setSearchName("");
+                setSelectedDepartment("");
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
+          <div className={styles.panelBody}>
+            <div className={styles.filters}>
+              <label className={styles.field}>
+                <span className={styles.label}>Search</span>
+                <input
+                  type="text"
+                  placeholder="Name, pseudo or ID…"
+                  value={searchName}
+                  onChange={(e) => setSearchName(e.target.value)}
+                  className={styles.input}
+                />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.label}>Department</span>
+                <select
+                  value={selectedDepartment}
+                  onChange={(e) => setSelectedDepartment(e.target.value)}
+                  className={styles.select}
+                >
+                  <option value="">All Departments</option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.name || dept.department_name}>
+                      {dept.name || dept.department_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className={styles.actions}>
+                <button type="button" onClick={fetchAttendance} className={styles.primaryBtn}>
+                  Search
+                </button>
+                <button type="button" onClick={downloadExcel} className={styles.secondaryBtn}>
+                  <FaFileExcel /> Export Attendance
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadDeductionSummary}
+                  className={styles.secondaryBtn}
+                  title={
+                    selectedDeductionCount > 0
+                      ? `Export Deduction Summary for ${selectedDeductionCount} selected`
+                      : "Export Deduction Summary for all visible employees"
+                  }
+                >
+                  <FaFileExcel />{" "}
+                  {selectedDeductionCount > 0
+                    ? `Export Deduction Summary (${selectedDeductionCount})`
+                    : "Export Deduction Summary"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className={styles.loading}>Loading attendance records…</div>
+        ) : (
+          <div className={styles.list}>
+            {attendanceByEmployee.length === 0 ? (
+              <div className={styles.empty}>No attendance records found</div>
+            ) : (
+              <>
+              <div className={styles.selectBar}>
+                <label className={styles.selectAllLabel}>
+                  <input
+                    type="checkbox"
+                    checked={allDeductionSelected}
+                    onChange={(e) =>
+                      setAllDeductionSelected(attendanceIds, e.target.checked)
+                    }
+                    className={styles.cardCheck}
+                  />
+                  <span>
+                    {allDeductionSelected
+                      ? "Deselect all cards"
+                      : "Select all cards"}
+                  </span>
+                </label>
+                {selectedDeductionCount > 0 ? (
+                  <button
+                    type="button"
+                    className={styles.ghostBtn}
+                    onClick={() => setSelectedDeductionIds({})}
+                  >
+                    Clear ({selectedDeductionCount})
+                  </button>
+                ) : (
+                  <span className={styles.selectHint}>
+                    Select cards, then Export Deduction Summary
+                  </span>
+                )}
+              </div>
+              {attendanceByEmployee.map((employee) => {
+                const isExpanded = Boolean(expandedEmployeeIds[employee.employeeId]);
+                const isDeductionSelected = Boolean(
+                  selectedDeductionIds[String(employee.employeeId)],
+                );
+                const revealPunches = shouldRevealTPunches(
+                  employee.departmentName,
+                  selectedDepartment,
+                  deferredSearchName,
+                );
+                return (
+                <div
+                  key={employee.employeeId}
+                  className={`${styles.empCard}${isExpanded ? ` ${styles.empCardExpanded}` : ""}${isDeductionSelected ? ` ${styles.empCardSelected}` : ""}${exportMenuEmployeeId === String(employee.employeeId) ? ` ${styles.empCardMenuOpen}` : ""}`}
+                >
+                  <div
+                    className={styles.empCardHead}
+                    style={{ marginBottom: isExpanded ? 8 : 0 }}
+                  >
+                    <div className={styles.empCardLeft}>
+                      <label className={styles.cardCheckWrap} title="Select for deduction export">
+                        <input
+                          type="checkbox"
+                          checked={isDeductionSelected}
+                          onChange={() => toggleDeductionSelected(employee.employeeId)}
+                          className={styles.cardCheck}
+                        />
+                      </label>
+                      <div>
+                        <EmployeeTableNameCell
+                          name={employee.employeeName}
+                          employeeId={employee.employeeId}
+                          photo={getPhoto(employee.employeeId)}
+                          onOpen={() =>
+                            openFromRow({
+                              employee_id: employee.employeeId,
+                              employee_name: employee.employeeName,
+                              pseudonym: employee.pseudonym,
+                              department_name: employee.departmentName,
+                            })
+                          }
+                        />
+                        <div className={styles.empMeta}>
+                          {employee.pseudonym} · {employee.departmentName}
+                        </div>
+                      </div>
+                    </div>
+                    <div className={styles.empActions}>
+                      <button
+                        type="button"
+                        title="Open full view — view and edit status"
+                        className={styles.ghostBtn}
+                        onClick={() => {
+                          const id = String(employee.employeeId);
+                          setExpandedEmployeeIds((prev) => ({ ...prev, [id]: true }));
+                          setFullViewEmployeeId(id);
+                        }}
+                      >
+                        Full view
+                      </button>
+                      <div className={styles.empId}>Emp. ID {employee.employeeId}</div>
+                      <button
+                        type="button"
+                        title={isExpanded ? "Hide month table" : "Show month table"}
+                        className={`${styles.ghostBtn} ${isExpanded ? styles.ghostBtnActive : ""}`}
+                        onClick={() => toggleEmployeeExpanded(employee.employeeId)}
+                      >
+                        {isExpanded ? "Hide attendance" : "View attendance"}
+                      </button>
+                      <button
+                        type="button"
+                        title="View deduction summary (same as export)"
+                        className={styles.ghostBtn}
+                        disabled={deductionPreviewLoadingId === String(employee.employeeId)}
+                        onClick={() => void openDeductionSummaryPreview(employee)}
+                      >
+                        {deductionPreviewLoadingId === String(employee.employeeId)
+                          ? "…"
+                          : "View deduction"}
+                      </button>
+                      <div className={styles.exportMenuWrap} data-export-menu>
+                        <button
+                          type="button"
+                          title="Export Attendance or Deduction Summary"
+                          className={styles.ghostBtn}
+                          aria-expanded={
+                            exportMenuEmployeeId === String(employee.employeeId)
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const id = String(employee.employeeId);
+                            setExportMenuEmployeeId((prev) => (prev === id ? "" : id));
+                          }}
+                        >
+                          <FaFileExcel /> Export ▾
+                        </button>
+                        {exportMenuEmployeeId === String(employee.employeeId) ? (
+                          <div className={styles.exportMenu} role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className={styles.exportMenuItem}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExportMenuEmployeeId("");
+                                void downloadEmployeeExcel(employee);
+                              }}
+                            >
+                              Attendance
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className={styles.exportMenuItem}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExportMenuEmployeeId("");
+                                void downloadEmployeeDeductionSummary(employee);
+                              }}
+                            >
+                              Deduction Summary
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                  {isExpanded ? (
+                    renderEmployeeMonthTable(employee, revealPunches)
                   ) : (
                     <p className={styles.hint}>
                       Click <strong>View attendance</strong> to load this employee&apos;s month table.
@@ -3257,6 +3287,60 @@ export default function MonthlyAttendancePage() {
           })();
         }}
       />
+
+      {typeof document !== "undefined" && fullViewEmployee
+        ? createPortal(
+            <div
+              className={styles.modalOverlay}
+              data-hrm-modal-overlay
+              onClick={() => setFullViewEmployeeId("")}
+            >
+              <div
+                className={`${styles.modalCard} ${styles.modalCardWide}`}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="fullview-modal-title"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className={styles.modalHead}>
+                  <h3 id="fullview-modal-title" className={styles.modalTitle}>
+                    {fullViewEmployee.employeeName}
+                  </h3>
+                  <p className={styles.modalSub}>
+                    Emp. ID {fullViewEmployee.employeeId}
+                    {fullViewEmployee.pseudonym ? ` · ${fullViewEmployee.pseudonym}` : ""}
+                    {fullViewEmployee.departmentName
+                      ? ` · ${fullViewEmployee.departmentName}`
+                      : ""}
+                    {monthInfo.label ? ` · ${monthInfo.label}` : ""}
+                    {" — view and edit status"}
+                  </p>
+                </div>
+                <div className={styles.modalBody}>
+                  {renderEmployeeMonthTable(
+                    fullViewEmployee,
+                    shouldRevealTPunches(
+                      fullViewEmployee.departmentName,
+                      selectedDepartment,
+                      deferredSearchName,
+                    ),
+                  )}
+                </div>
+                <div className={styles.modalActions}>
+                  <button
+                    type="button"
+                    className={styles.secondaryBtn}
+                    onClick={() => setFullViewEmployeeId("")}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
       {typeof document !== "undefined" && metricModal
         ? createPortal(
             <div

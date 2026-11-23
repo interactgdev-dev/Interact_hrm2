@@ -669,6 +669,21 @@
   overflow: hidden;
 }
 
+/* Employee month attendance full view — wide enough for status edit table */
+.modalCardWide {
+  width: min(1280px, 100%);
+  max-height: min(92vh, 900px);
+}
+
+.modalCardWide .modalBody {
+  padding: 10px 12px 14px;
+}
+
+.modalCardWide .tableWrap {
+  max-height: min(68vh, 640px);
+  overflow: auto;
+}
+
 .modalHead {
   padding: 18px 20px 12px;
   border-bottom: 1px solid var(--ig-line);
