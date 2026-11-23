@@ -30,10 +30,29 @@ import {
 } from "@/lib/leave-balance";
 import { resolveEmployeeDisplayName } from "@/lib/dept-heads";
 
+/** Same ids as admin portal login (auth page / employee-shell). */
+const ADMIN_LOGIN_IDS = new Set(["admin@interact.com", "interactadmin", "admin"]);
+
 async function assertLeaveApprover(
   actorId: string | null,
   leaveEmployeeId: string | number | null | undefined,
+  opts?: { adminActor?: boolean; loginId?: string | null },
 ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
+  // Pure Admin portal (no linked employeeId) may still approve / reject any leave.
+  if (opts?.adminActor) {
+    const lid = String(opts.loginId || "")
+      .trim()
+      .toLowerCase();
+    if (ADMIN_LOGIN_IDS.has(lid)) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      error: "Admin session required to act without employee actor",
+      status: 403,
+    };
+  }
+
   if (!actorId || !/^\d+$/.test(actorId)) {
     return {
       ok: false,
@@ -372,6 +391,8 @@ export async function PATCH(req: NextRequest) {
     const { id, admin_remark, actor } = body;
     let action = String(body.action || "").toLowerCase();
     const legacyStatus = body.status ? String(body.status).toLowerCase() : "";
+    const adminActor = Boolean(body.adminActor || body.admin_actor);
+    const loginId = String(body.loginId || body.login_id || "").trim();
 
     if (!id) {
       return NextResponse.json({ success: false, error: "Invalid data" });
@@ -391,8 +412,12 @@ export async function PATCH(req: NextRequest) {
     }
 
     const twoStep = await isTwoStepEnabled();
-    const actorId = actor != null ? String(actor) : null;
-    const actorName = actorId ? await resolveEmployeeDisplayName(actorId) : null;
+    const actorId = actor != null && String(actor).trim() !== "" ? String(actor).trim() : null;
+    const actorName = actorId
+      ? await resolveEmployeeDisplayName(actorId)
+      : adminActor
+        ? loginId || "Admin"
+        : null;
 
     async function mirrorTicket(status: "approved" | "rejected") {
       try {
@@ -408,7 +433,10 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === "reject" || action.startsWith("approve")) {
-      const gate = await assertLeaveApprover(actorId, leave.employee_id);
+      const gate = await assertLeaveApprover(actorId, leave.employee_id, {
+        adminActor,
+        loginId,
+      });
       if (!gate.ok) {
         return NextResponse.json(
           { success: false, error: gate.error },

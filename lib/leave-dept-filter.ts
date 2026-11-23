@@ -1,10 +1,7 @@
 /**
- * Leave page department filter helpers.
- * Exact name match, plus org chip match (DM ↔ Digital Marketing) —
- * never cross chips (DM must not match IT / Medical Billing).
+ * Leave page department filter — strict exact department name only.
+ * Do NOT fold Marketing → IT (org chart chips); selecting Marketing must hide IT rows.
  */
-
-import { orgDeptChipLabel } from "@/app/admin/roles-permissions/system-control-data";
 
 export function normLeaveDept(name: unknown): string {
   return String(name || "")
@@ -28,11 +25,18 @@ export function leaveDeptMatches(
     .trim();
   if (!rowRaw || rowRaw === "-") return false;
 
+  // Exact name only (case/whitespace insensitive). Marketing ≠ IT.
   if (normLeaveDept(rowRaw) === normLeaveDept(filterRaw)) return true;
 
-  const filterChip = normLeaveDept(orgDeptChipLabel(filterRaw) || "");
-  const rowChip = normLeaveDept(orgDeptChipLabel(rowRaw) || "");
-  if (filterChip && rowChip && filterChip === rowChip) return true;
+  // DM aliases only — never fold Marketing into IT.
+  const f = normLeaveDept(filterRaw);
+  const r = normLeaveDept(rowRaw);
+  const isDm = (n: string) =>
+    n === "dm" ||
+    n === "digital marketing" ||
+    n.startsWith("dm ") ||
+    n.includes("digital marketing");
+  if (isDm(f) && isDm(r)) return true;
 
   return false;
 }

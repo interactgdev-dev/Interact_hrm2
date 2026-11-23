@@ -120,7 +120,11 @@ export default function LeaveRequestsPanel({
   };
   const canApproveLeaveRow = (leave: any | null) => {
     if (!canActOnLeave(leave)) return false;
-    return overallLeaveStatus(leave) === "pending";
+    const status = overallLeaveStatus(leave);
+    if (status === "pending") return true;
+    // Admin/HR may re-approve a rejected leave (Edit → Approve).
+    if (status === "rejected" && isHrOrAdmin) return true;
+    return false;
   };
   const [leaves, setLeaves] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -369,19 +373,31 @@ export default function LeaveRequestsPanel({
   ) => {
     try {
       let actor: string | undefined;
+      let loginId = "";
       try {
         const eid = String(localStorage.getItem("employeeId") || "").trim();
         if (/^\d+$/.test(eid)) actor = eid;
+        loginId = String(localStorage.getItem("loginId") || "").trim();
       } catch {
         /* ignore */
       }
+      const asAdmin = !actor && isAdminBrowserSession();
+      if (!actor && !asAdmin) {
+        toastError("Please sign in again — actor required for leave action");
+        return;
+      }
       const res = await fetch("/api/leaves", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(actor ? { "x-hrm-employee-id": actor, "x-employee-id": actor } : {}),
+        },
         body: JSON.stringify({
           id,
           action,
-          actor,
+          actor: actor || undefined,
+          adminActor: asAdmin || undefined,
+          loginId: asAdmin ? loginId || undefined : undefined,
           admin_remark: action === "reject" ? rejectRemark : undefined,
         }),
       });

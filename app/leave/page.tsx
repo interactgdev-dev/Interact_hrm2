@@ -22,6 +22,7 @@ import {
   isTeamLeadOrgRole,
 } from "@/lib/org-role";
 import { displayLeaveReason } from "@/lib/leave-reason-display";
+import { isAdminBrowserSession } from "@/lib/access-control/employee-shell";
 
 type LeaveSortKey =
   | "employee_id"
@@ -296,19 +297,31 @@ export default function LeavePage() {
   ) => {
     try {
       let actor: string | undefined;
+      let loginId = "";
       try {
         const eid = String(localStorage.getItem("employeeId") || "").trim();
         if (/^\d+$/.test(eid)) actor = eid;
+        loginId = String(localStorage.getItem("loginId") || "").trim();
       } catch {
         /* ignore */
       }
+      const asAdmin = !actor && isAdminBrowserSession();
+      if (!actor && !asAdmin) {
+        toastError("Please sign in again — actor required for leave action");
+        return;
+      }
       const res = await fetch("/api/leaves", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(actor ? { "x-hrm-employee-id": actor, "x-employee-id": actor } : {}),
+        },
         body: JSON.stringify({
           id,
           action,
-          actor,
+          actor: actor || undefined,
+          adminActor: asAdmin || undefined,
+          loginId: asAdmin ? loginId || undefined : undefined,
           admin_remark: action === "reject" ? rejectRemark : undefined,
         }),
       });
