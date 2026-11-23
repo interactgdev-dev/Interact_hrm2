@@ -313,7 +313,7 @@ export async function setEmployeeReportsTo(
   }
 }
 
-/** Employee ids that report directly to this manager/CEO. */
+/** Employee ids that report directly to this manager/CEO (hierarchy + team_members). */
 export async function listDirectReportIds(
   managerEmployeeId: string | number,
 ): Promise<string[]> {
@@ -322,11 +322,26 @@ export async function listDirectReportIds(
   const conn = await pool.getConnection();
   try {
     await ensureHierarchyTables(conn);
+    const ids = new Set<string>();
     const [rows] = await conn.execute(
       `SELECT employee_id FROM ${HIERARCHY_TABLE} WHERE reports_to_employee_id = ?`,
       [mid],
     );
-    return (rows as { employee_id: number }[]).map((r) => String(r.employee_id));
+    for (const r of rows as { employee_id: number }[]) {
+      ids.add(String(r.employee_id));
+    }
+    try {
+      const [teamRows] = await conn.execute(
+        `SELECT member_employee_id FROM ${TEAM_MEMBERS_TABLE} WHERE team_lead_employee_id = ?`,
+        [mid],
+      );
+      for (const r of teamRows as { member_employee_id: number }[]) {
+        ids.add(String(r.member_employee_id));
+      }
+    } catch {
+      /* team table may be empty / missing */
+    }
+    return [...ids];
   } catch {
     return [];
   } finally {

@@ -28,7 +28,8 @@
 }
 
 .sidebarDock:hover,
-.sidebarDockOpen {
+.sidebarDockOpen,
+.sidebarDockLocked {
   width: 260px;
   overflow: visible;
 }
@@ -58,7 +59,8 @@
 }
 
 .sidebarDock:hover .sidebarRail::after,
-.sidebarDockOpen .sidebarRail::after {
+.sidebarDockOpen .sidebarRail::after,
+.sidebarDockLocked .sidebarRail::after {
   opacity: 1;
   width: 4px;
 }
@@ -113,6 +115,7 @@
 }
 
 .sidebarBrand {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -125,6 +128,37 @@
   box-sizing: border-box;
   text-align: center;
   flex-shrink: 0;
+}
+
+.sidebarLockBtn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.65);
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0;
+  z-index: 2;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.sidebarLockBtn:hover {
+  color: #e2e8f0;
+  border-color: rgba(45, 212, 191, 0.45);
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.sidebarLockBtnOn {
+  color: #2dd4bf;
+  border-color: rgba(45, 212, 191, 0.55);
+  background: rgba(13, 148, 136, 0.18);
 }
 
 .sidebarGlobe {

@@ -4,8 +4,10 @@ import { useRouter, usePathname } from "next/navigation";
 import styles from "./layout-dashboard.module.css";
 import "./globals.css";
 import "./dashboard/nexatech-theme.module.css";
-import { FaTachometerAlt, FaUserShield, FaCalendarAlt, FaClock, FaUserPlus, FaIdBadge, FaListAlt, FaClipboardList, FaBuilding, FaCog, FaUser, FaChartBar, FaKey, FaCalendarCheck, FaEdit, FaCoffee, FaFileAlt, FaWallet, FaChartLine, FaCreditCard, FaHandshake, FaNotesMedical, FaExchangeAlt, FaTicketAlt, FaFolderOpen, FaDesktop, FaImages } from "react-icons/fa";
+import { FaTachometerAlt, FaUserShield, FaCalendarAlt, FaClock, FaUserPlus, FaIdBadge, FaListAlt, FaClipboardList, FaBuilding, FaCog, FaUser, FaChartBar, FaKey, FaCalendarCheck, FaEdit, FaCoffee, FaFileAlt, FaWallet, FaChartLine, FaCreditCard, FaHandshake, FaNotesMedical, FaExchangeAlt, FaTicketAlt, FaFolderOpen, FaDesktop, FaImages, FaLock, FaUnlock } from "react-icons/fa";
 import { FiChevronDown, FiChevronRight } from "react-icons/fi";
+
+const SIDEBAR_LOCK_KEY = "hrm-admin-sidebar-locked";
 import { EmployeeAvatar } from "./components/EmployeeAvatar";
 import { AdminProfileMenu } from "./components/AdminProfileMenu";
 import { ShellImageUpload } from "./components/ShellImageUpload";
@@ -159,6 +161,7 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 	const [payrollDropdownOpen, setPayrollDropdownOpen] = React.useState(false);
 	const [sidebarOpen, setSidebarOpen] = React.useState(false);
 	const [navPeek, setNavPeek] = React.useState(false);
+	const [sidebarLocked, setSidebarLocked] = React.useState(false);
 	const [isDesktopNav, setIsDesktopNav] = React.useState(true);
 	const [companyLogo, setCompanyLogo] = React.useState<string | null>(null);
 	const [adminAvatar, setAdminAvatar] = React.useState<string | null>(null);
@@ -169,8 +172,17 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 	const isTimePage = pathname === "/time";
 	// Only omit admin chrome when this page is nested under the employee layout route.
 	const embedInEmployeeShell = Boolean(pathname?.startsWith("/employee-dashboard"));
-	const sidebarVisible = isDesktopNav ? navPeek : sidebarOpen;
-	const contentPushed = isDesktopNav && navPeek;
+	const sidebarVisible = isDesktopNav ? sidebarLocked || navPeek : sidebarOpen;
+	const contentPushed = isDesktopNav && (sidebarLocked || navPeek);
+
+	React.useEffect(() => {
+		if (typeof window === "undefined") return;
+		try {
+			setSidebarLocked(window.localStorage.getItem(SIDEBAR_LOCK_KEY) === "1");
+		} catch {
+			/* ignore */
+		}
+	}, []);
 
 	React.useEffect(() => {
 		if (typeof window === "undefined") return;
@@ -183,8 +195,21 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 
 	React.useEffect(() => {
 		setSidebarOpen(false);
-		setNavPeek(false);
-	}, [pathname]);
+		if (!sidebarLocked) setNavPeek(false);
+	}, [pathname, sidebarLocked]);
+
+	const toggleSidebarLock = React.useCallback(() => {
+		setSidebarLocked((prev) => {
+			const next = !prev;
+			try {
+				window.localStorage.setItem(SIDEBAR_LOCK_KEY, next ? "1" : "0");
+			} catch {
+				/* ignore */
+			}
+			if (next) setNavPeek(true);
+			return next;
+		});
+	}, []);
 
 	// Prefetch common admin routes after first paint — same pattern as employee dashboard.
 	React.useEffect(() => {
@@ -342,19 +367,29 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 				)}
 				{/* Desktop: left-edge hover dock — slide in/out + content width reflow */}
 				<div
-					className={`${styles.sidebarDock}${sidebarVisible ? ` ${styles.sidebarDockOpen}` : ""}`}
+					className={`${styles.sidebarDock}${sidebarVisible ? ` ${styles.sidebarDockOpen}` : ""}${sidebarLocked && isDesktopNav ? ` ${styles.sidebarDockLocked}` : ""}`}
 					onMouseEnter={() => {
-						if (isDesktopNav) setNavPeek(true);
+						if (isDesktopNav && !sidebarLocked) setNavPeek(true);
 					}}
 					onMouseLeave={() => {
-						if (isDesktopNav) setNavPeek(false);
+						if (isDesktopNav && !sidebarLocked) setNavPeek(false);
 					}}
 				>
-					<div className={styles.sidebarRail} aria-hidden title="Hover to open menu" />
+					<div className={styles.sidebarRail} aria-hidden title={sidebarLocked ? "Sidebar locked open" : "Hover to open menu"} />
 					<aside
 						className={`${styles.sidebar}${sidebarVisible ? ` ${styles.sidebarSlideIn}` : ""}${sidebarOpen && !isDesktopNav ? ` ${styles.sidebarOpen}` : ""}`}
 					>
 					<div className={styles.sidebarHeader}>
+						<button
+							type="button"
+							className={`${styles.sidebarLockBtn}${sidebarLocked ? ` ${styles.sidebarLockBtnOn}` : ""}`}
+							onClick={toggleSidebarLock}
+							title={sidebarLocked ? "Unlock sidebar (slide in/out)" : "Lock sidebar open"}
+							aria-pressed={sidebarLocked}
+							aria-label={sidebarLocked ? "Unlock sidebar" : "Lock sidebar open"}
+						>
+							{sidebarLocked ? <FaLock aria-hidden /> : <FaUnlock aria-hidden />}
+						</button>
 						<InteractGlobeLogo className={styles.sidebarGlobe} />
 						<div className={styles.sidebarBrandText}>
 							<span className={styles.sidebarBrandName}>INTERACT</span>

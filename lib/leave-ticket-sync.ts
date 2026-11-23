@@ -36,6 +36,22 @@ async function findLeaveIdForTicket(
   ticketId: number
 ): Promise<number | null> {
   try {
+    const marker = `[ticket:${ticketId}]`;
+    // Match ONLY by ticket marker. Never reuse another leave for the same dates —
+    // that collapsed duplicate requests into one row so TLs only saw the first
+    // (Admin/HR still saw both tickets in Ticket Inbox).
+    const [byMarker] = await query(
+      `SELECT id, reason FROM employee_leaves
+       WHERE employee_id = ? AND reason LIKE ?
+       ORDER BY id DESC LIMIT 5`,
+      [employeeId, `%${marker}%`]
+    );
+    const marked = Array.isArray(byMarker) ? byMarker : [];
+    for (const r of marked as { id: number; reason?: string }[]) {
+      if (String(r.reason || "").includes(marker)) return Number(r.id);
+    }
+
+    // Legacy rows (pre-marker): only adopt when dates match AND no ticket tag yet.
     const [rows] = await query(
       `SELECT id, reason FROM employee_leaves
        WHERE employee_id = ? AND start_date = ? AND end_date = ?
@@ -43,11 +59,10 @@ async function findLeaveIdForTicket(
       [employeeId, startDate, endDate]
     );
     const list = Array.isArray(rows) ? rows : [];
-    const marker = `[ticket:${ticketId}]`;
-    for (const r of list as { id: number; reason?: string }[]) {
-      if (String(r.reason || "").includes(marker)) return Number(r.id);
-    }
-    if (list.length === 1) return Number((list[0] as { id: number }).id);
+    const untagged = (list as { id: number; reason?: string }[]).filter(
+      (r) => !/\[ticket:\d+\]/.test(String(r.reason || ""))
+    );
+    if (untagged.length === 1) return Number(untagged[0].id);
     return null;
   } catch {
     return null;

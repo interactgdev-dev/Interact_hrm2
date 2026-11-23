@@ -29,7 +29,11 @@ import {
   FaFileAlt,
   FaEdit,
   FaKey,
+  FaLock,
+  FaUnlock,
 } from "react-icons/fa";
+
+const EMP_SIDEBAR_LOCK_KEY = "hrm-emp-sidebar-locked";
 import styles from "../layout-dashboard.module.css";
 import empStyles from "./emp-shell.module.css";
 import { fetchShellBranding } from "../shell-branding-api";
@@ -553,8 +557,18 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
 
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [navPeek, setNavPeek] = React.useState(false);
+  const [sidebarLocked, setSidebarLocked] = React.useState(false);
   const [isDesktopNav, setIsDesktopNav] = React.useState(true);
   const [employeeAvatar, setEmployeeAvatar] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      setSidebarLocked(window.localStorage.getItem(EMP_SIDEBAR_LOCK_KEY) === "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -565,8 +579,21 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  const sidebarVisible = isDesktopNav ? navPeek : sidebarOpen;
-  const contentPushed = isDesktopNav && navPeek;
+  const sidebarVisible = isDesktopNav ? sidebarLocked || navPeek : sidebarOpen;
+  const contentPushed = isDesktopNav && (sidebarLocked || navPeek);
+
+  const toggleSidebarLock = React.useCallback(() => {
+    setSidebarLocked((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(EMP_SIDEBAR_LOCK_KEY, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      if (next) setNavPeek(true);
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     if (!employeeId) return;
@@ -599,7 +626,8 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
 
   React.useEffect(() => {
     setSidebarOpen(false);
-  }, [pathname]);
+    if (!sidebarLocked) setNavPeek(false);
+  }, [pathname, sidebarLocked]);
 
   const initials = (employeeName || "E")
     .split(" ")
@@ -626,21 +654,31 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       ) : null}
 
       <div
-        className={`${empStyles.sidebarDock} ${sidebarVisible ? empStyles.sidebarDockOpen : ""}`}
+        className={`${empStyles.sidebarDock} ${sidebarVisible ? empStyles.sidebarDockOpen : ""} ${sidebarLocked && isDesktopNav ? empStyles.sidebarDockLocked : ""}`}
         onMouseEnter={() => {
-          if (isDesktopNav) setNavPeek(true);
+          if (isDesktopNav && !sidebarLocked) setNavPeek(true);
         }}
         onMouseLeave={() => {
-          if (isDesktopNav) setNavPeek(false);
+          if (isDesktopNav && !sidebarLocked) setNavPeek(false);
         }}
       >
-        <div className={empStyles.sidebarRail} aria-hidden title="Hover to open menu" />
+        <div className={empStyles.sidebarRail} aria-hidden title={sidebarLocked ? "Sidebar locked open" : "Hover to open menu"} />
         <aside
           className={`${styles.sidebar} ${empStyles.sidebarFull} ${empStyles.sidebarPdf} ${empStyles.sidebarSlide} ${
             sidebarVisible ? empStyles.sidebarSlideIn : ""
           } ${sidebarOpen && !isDesktopNav ? styles.sidebarOpen : ""}`}
         >
           <div className={empStyles.sidebarBrand}>
+            <button
+              type="button"
+              className={`${empStyles.sidebarLockBtn}${sidebarLocked ? ` ${empStyles.sidebarLockBtnOn}` : ""}`}
+              onClick={toggleSidebarLock}
+              title={sidebarLocked ? "Unlock sidebar (slide in/out)" : "Lock sidebar open"}
+              aria-pressed={sidebarLocked}
+              aria-label={sidebarLocked ? "Unlock sidebar" : "Lock sidebar open"}
+            >
+              {sidebarLocked ? <FaLock aria-hidden /> : <FaUnlock aria-hidden />}
+            </button>
             <InteractGlobeLogo className={empStyles.sidebarGlobe} />
             <div className={empStyles.sidebarBrandText}>
               <span className={empStyles.sidebarBrandName}>INTERACT</span>
