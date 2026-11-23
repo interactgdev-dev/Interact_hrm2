@@ -1090,6 +1090,23 @@ export default function MonthlyAttendancePage() {
     return v ? normalizeAttendanceStatus(v) : null;
   }
 
+  /** Day effective manual status: first session override, else day-level. */
+  function effectiveDayOverride(
+    employeeId: string,
+    dateKey: string,
+    dayRecords?: Array<{ id?: number | null }>,
+  ): string | null {
+    if (Array.isArray(dayRecords)) {
+      for (const rec of dayRecords) {
+        const attId = normalizeOverrideAttendanceId(rec?.id);
+        if (attId <= 0) continue;
+        const session = overrideStatusFor(employeeId, dateKey, attId);
+        if (session) return session;
+      }
+    }
+    return overrideStatusFor(employeeId, dateKey);
+  }
+
   async function saveManualStatus(
     employeeId: string,
     dateKey: string,
@@ -1399,9 +1416,25 @@ export default function MonthlyAttendancePage() {
           dayDeduction = parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
         }
       } else {
-        // Has records, use meta deduction
-        if (meta?.deduction) {
-          dayDeduction = parseInt(meta.deduction) || 0;
+        // Prefer live effective status (session/day M) so Total Deduction matches row %.
+        const effective =
+          effectiveDayOverride(employee.employeeId, day.dateKey, dayRecords) ||
+          meta?.statusLabel ||
+          "";
+        if (effective) {
+          const tardyN =
+            normalizeAttendanceStatus(effective) === "Tardy"
+              ? meta?.runningLate ?? 0
+              : 0;
+          dayDeduction =
+            parseInt(
+              String(
+                deductionForAttendanceStatus(effective, tardyN),
+              ).replace(/%/g, ""),
+              10,
+            ) || 0;
+        } else if (meta?.deduction) {
+          dayDeduction = parseInt(String(meta.deduction).replace(/%/g, ""), 10) || 0;
         }
       }
       totalDeduction += dayDeduction;
@@ -1409,6 +1442,7 @@ export default function MonthlyAttendancePage() {
     return totalDeduction;
   }
 
+  /** Employee tardy note only (CT / Traffic…) — never HR manual reason. */
   function tardyNoteForCell(
     employeeId: string,
     dateKey: string,
@@ -1416,16 +1450,6 @@ export default function MonthlyAttendancePage() {
     attendanceId?: number | null,
     dayRecords?: Array<{ id?: number | null }>
   ): string {
-    if (attendanceId != null && Number(attendanceId) > 0) {
-      const sessionReason = String(
-        statusOverrideNotesByAttendanceId[String(attendanceId)] || "",
-      ).trim();
-      if (sessionReason) return sessionReason;
-    } else {
-      const manualReason = String(statusOverrideNotes[String(employeeId)]?.[dateKey] || "").trim();
-      if (manualReason) return manualReason;
-    }
-
     const isTardy = normalizeAttendanceStatus(statusLabel) === "Tardy";
     if (!isTardy) return "";
 
@@ -1446,6 +1470,22 @@ export default function MonthlyAttendancePage() {
     }
     const saved = tardyNotes[employeeId]?.[dateKey];
     return saved || "-";
+  }
+
+  /** Admin/HR reason from manual status change (M). */
+  function hrNoteForCell(
+    employeeId: string,
+    dateKey: string,
+    attendanceId?: number | null,
+  ): string {
+    if (attendanceId != null && Number(attendanceId) > 0) {
+      return String(
+        statusOverrideNotesByAttendanceId[String(attendanceId)] || "",
+      ).trim();
+    }
+    return String(
+      statusOverrideNotes[String(employeeId)]?.[dateKey] || "",
+    ).trim();
   }
 
   function isWorkingDay(dateKey: string) {
@@ -1585,8 +1625,12 @@ export default function MonthlyAttendancePage() {
             day.assignedWH,
             day.overtime,
             tardyDisplay,
-            statusCellText(statusLabel, meta?.lateMinutes),
+            statusCellText(
+              statusLabel,
+              normalizeAttendanceStatus(statusLabel) === "Tardy" ? meta?.lateMinutes : null,
+            ),
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel),
+            hrNoteForCell(employee.employeeId, day.dateKey),
             deduction,
           ],
           status: statusLabel,
@@ -1599,12 +1643,12 @@ export default function MonthlyAttendancePage() {
           : String(calculateTotalDeduction(employee));
       dataRows.push(
         {
-          cells: ["", "", "", "", "", "", "", "", "", "", "Total Deduction:", "", `${totalDeduction}%`],
+          cells: ["", "", "", "", "", "", "", "", "", "", "Total Deduction:", "", "", `${totalDeduction}%`],
           status: "",
           isSummary: true,
         },
         {
-          cells: ["", "", "", "", "", "", "", "", "", "", "Extra Hours:", "", getEmployeeTotalOvertime(employee)],
+          cells: ["", "", "", "", "", "", "", "", "", "", "Extra Hours:", "", "", getEmployeeTotalOvertime(employee)],
           status: "",
           isSummary: true,
         },
@@ -1621,6 +1665,7 @@ export default function MonthlyAttendancePage() {
             "",
             "",
             "Late Exceed:",
+            "",
             "",
             getEmployeeTotalExcessLate(employee),
           ],
@@ -1640,6 +1685,7 @@ export default function MonthlyAttendancePage() {
             "",
             "",
             "Total Working Days:",
+            "",
             "",
             footer?.workingDays ?? `${getTotalWorkingDays(monthInfo)}`,
           ],
@@ -1682,9 +1728,10 @@ export default function MonthlyAttendancePage() {
             "---",
             "---",
             "---",
-            meta?.runningLate ?? "",
+            normalizeAttendanceStatus(statusLabel) === "Tardy" ? (meta?.runningLate ?? "") : "",
             statusLabel,
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, undefined, dayRecords),
+            hrNoteForCell(employee.employeeId, day.dateKey),
             deduction,
           ],
           status: statusLabel,
@@ -1734,11 +1781,19 @@ export default function MonthlyAttendancePage() {
             record ? excelTotalHoursForExport(record) : "---",
             record ? excelAssignedWHForExport(record) : "---",
             record ? excelOvertimeForExport(record) : "---",
-            meta?.runningLate ?? "",
+            normalizeAttendanceStatus(statusLabel) === "Tardy" ? (meta?.runningLate ?? "") : "",
             sessionIndex === 0
-              ? statusCellText(statusLabel, meta?.lateMinutes)
+              ? statusCellText(
+                  statusLabel,
+                  normalizeAttendanceStatus(statusLabel) === "Tardy" ? meta?.lateMinutes : null,
+                )
               : statusLabel,
             tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, record?.id, dayRecords),
+            hrNoteForCell(
+              employee.employeeId,
+              day.dateKey,
+              record?.id != null ? Number(record.id) : null,
+            ),
             deduction,
           ],
           status: statusLabel,
@@ -1749,12 +1804,12 @@ export default function MonthlyAttendancePage() {
     const totalDeduction = calculateTotalDeduction(employee);
     dataRows.push(
       {
-        cells: ["", "", "", "", "", "", "", "", "", "", "Total Deduction:", "", `${totalDeduction}%`],
+        cells: ["", "", "", "", "", "", "", "", "", "", "Total Deduction:", "", "", `${totalDeduction}%`],
         status: "",
         isSummary: true,
       },
       {
-        cells: ["", "", "", "", "", "", "", "", "", "", "Extra Hours:", "", getEmployeeTotalOvertime(employee)],
+        cells: ["", "", "", "", "", "", "", "", "", "", "Extra Hours:", "", "", getEmployeeTotalOvertime(employee)],
         status: "",
         isSummary: true,
       },
@@ -1771,6 +1826,7 @@ export default function MonthlyAttendancePage() {
           "",
           "",
           "Late Exceed:",
+          "",
           "",
           getEmployeeTotalExcessLate(employee),
         ],
@@ -1790,6 +1846,7 @@ export default function MonthlyAttendancePage() {
           "",
           "",
           "Total Working Days:",
+          "",
           "",
           `${getTotalWorkingDays(monthInfo)}`,
         ],
@@ -1948,13 +2005,19 @@ export default function MonthlyAttendancePage() {
           ? formatHoursMins(record.total_hours)
           : "--",
       status: formatDeductionSummaryStatus(normalizeAttendanceStatus(statusLabel)),
-      tardyCount,
+      tardyCount:
+        normalizeAttendanceStatus(statusLabel) === "Tardy" ? tardyCount : "",
       tardyNote: tardyNoteForCell(
         employee.employeeId,
         dateKey,
         statusLabel,
         record?.id,
         dayRecords,
+      ),
+      hrNote: hrNoteForCell(
+        employee.employeeId,
+        dateKey,
+        record?.id != null ? Number(record.id) : null,
       ),
       deduction,
     });
@@ -2216,7 +2279,12 @@ export default function MonthlyAttendancePage() {
         });
 
         const autoStatusLabel = normalizeAttendanceStatus(dayStatus.statusLabel);
-        const override = overrideStatusFor(employee.employeeId, dateKey);
+        // Session-level M overrides must drive count/deduction (not only day-level).
+        const override = effectiveDayOverride(
+          employee.employeeId,
+          dateKey,
+          dayRecords,
+        );
         const isManual = Boolean(override);
         const statusLabel = override || autoStatusLabel;
         const statusColor = uiStatusTextColor(statusLabel);
@@ -2239,7 +2307,9 @@ export default function MonthlyAttendancePage() {
         } else if (statusLabel === STATUS_FIRST_HALF_DAY || statusLabel === STATUS_SECOND_HALF_DAY) {
           deduction = "50%";
         } else {
-          deduction = deductionForAttendanceStatus(statusLabel, tardyDisplay);
+          // On Time / Leave / Off — never keep a stale tardy count on this day.
+          tardyDisplay = "";
+          deduction = deductionForAttendanceStatus(statusLabel, 0);
         }
 
         employee.dateMeta[dateKey] = {
@@ -2249,7 +2319,7 @@ export default function MonthlyAttendancePage() {
           statusColor,
           deduction,
           isManual,
-          // Absent / Half Day → 0; Tardy → minutes after 1h relaxation only
+          // Manual On Time must clear Late label; only Tardy (etc.) bill late minutes.
           lateMinutes: billableLateForDay(
             statusLabel,
             dayStatus.lateMinutes || 0,
@@ -2616,6 +2686,7 @@ export default function MonthlyAttendancePage() {
                           <th>Tardy Count</th>
                           <th>Status</th>
                           <th style={{ whiteSpace: "normal", minWidth: 120, maxWidth: 200 }}>Note</th>
+                          <th style={{ whiteSpace: "normal", minWidth: 120, maxWidth: 200 }}>HR note</th>
                           <th>Deduction</th>
                         </tr>
                       </thead>
@@ -2667,13 +2738,17 @@ export default function MonthlyAttendancePage() {
                                     employeeId: employee.employeeId,
                                     dateKey: day.dateKey,
                                     displayStatus: rowStatus,
-                                    lateMinutes: meta?.lateMinutes,
+                                    lateMinutes:
+                                      normalizeAttendanceStatus(rowStatus) === "Tardy"
+                                        ? meta?.lateMinutes
+                                        : null,
                                     isManual:
                                       Boolean(meta?.isManual) ||
                                       Boolean(overrideStatusFor(employee.employeeId, day.dateKey)),
                                   })}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>{tardyNoteForCell(employee.employeeId, day.dateKey, rowStatus)}</td>
+                                <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>{hrNoteForCell(employee.employeeId, day.dateKey)}</td>
                                 <td>{rowDeduction}</td>
                               </tr>
                             );
@@ -2707,7 +2782,12 @@ export default function MonthlyAttendancePage() {
                             );
                             const statusLabel = emptyOverride || emptyAuto.statusLabel;
                             const deduction = emptyOverride
-                              ? deductionForAttendanceStatus(emptyOverride, meta?.runningLate)
+                              ? deductionForAttendanceStatus(
+                                  emptyOverride,
+                                  normalizeAttendanceStatus(emptyOverride) === "Tardy"
+                                    ? meta?.runningLate
+                                    : 0,
+                                )
                               : emptyAuto.deduction;
                             return (
                               <tr key={`${employee.employeeId}-${day.dateKey}-empty`}>
@@ -2720,18 +2800,27 @@ export default function MonthlyAttendancePage() {
                                 <td>---</td>
                                 <td style={{ display: "none" }}>---</td>
                                 <td>---</td>
-                                <td>{meta?.runningLate ? meta.runningLate : ""}</td>
+                                <td>
+                                  {normalizeAttendanceStatus(statusLabel) === "Tardy" &&
+                                  meta?.runningLate
+                                    ? meta.runningLate
+                                    : ""}
+                                </td>
                                 <td style={{ color: uiStatusTextColor(statusLabel), fontWeight: 600 }}>
                                   {renderEditableStatusCell({
                                     employeeId: employee.employeeId,
                                     dateKey: day.dateKey,
                                     displayStatus: statusLabel,
-                                    lateMinutes: meta?.lateMinutes,
+                                    lateMinutes:
+                                      normalizeAttendanceStatus(statusLabel) === "Tardy"
+                                        ? meta?.lateMinutes
+                                        : null,
                                     isManual: Boolean(emptyOverride),
                                     disabled: statusLabel === "---",
                                   })}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>{tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, undefined, dayRecords)}</td>
+                                <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>{hrNoteForCell(employee.employeeId, day.dateKey)}</td>
                                 <td>{deduction}</td>
                               </tr>
                             );
@@ -2784,12 +2873,16 @@ export default function MonthlyAttendancePage() {
                             const rowDeduction = effectiveOverride
                               ? deductionForAttendanceStatus(
                                   effectiveOverride,
-                                  meta?.runningLate,
+                                  normalizeAttendanceStatus(effectiveOverride) === "Tardy"
+                                    ? meta?.runningLate
+                                    : 0,
                                 )
                               : leaveAttDay
                                 ? leaveAttDay.deduction
                                 : meta?.deduction || emptyFallback.deduction;
                             const statusIsManual = Boolean(effectiveOverride);
+                            const rowIsTardy =
+                              normalizeAttendanceStatus(rowStatus) === "Tardy";
                             return (
                               <tr
                                 key={`${employee.employeeId}-${day.dateKey}-session-${index}`}
@@ -2834,7 +2927,9 @@ export default function MonthlyAttendancePage() {
                                 <td>
                                   {record ? formatDurationHM(record.overtime) : "---"}
                                 </td>
-                                <td>{meta?.runningLate ? meta.runningLate : ""}</td>
+                                <td>
+                                  {rowIsTardy && meta?.runningLate ? meta.runningLate : ""}
+                                </td>
                                 <td
                                   style={{
                                     color: uiStatusTextColor(rowStatus),
@@ -2845,7 +2940,8 @@ export default function MonthlyAttendancePage() {
                                     employeeId: employee.employeeId,
                                     dateKey: day.dateKey,
                                     displayStatus: rowStatus,
-                                    lateMinutes: index === 0 ? meta?.lateMinutes : null,
+                                    lateMinutes:
+                                      index === 0 && rowIsTardy ? meta?.lateMinutes : null,
                                     isManual: statusIsManual,
                                     attendanceId: attId > 0 ? attId : null,
                                   })}
@@ -2859,6 +2955,13 @@ export default function MonthlyAttendancePage() {
                                     dayRecords
                                   )}
                                 </td>
+                                <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>
+                                  {hrNoteForCell(
+                                    employee.employeeId,
+                                    day.dateKey,
+                                    attId > 0 ? attId : null,
+                                  )}
+                                </td>
                                 <td>{rowDeduction}</td>
                               </tr>
                             );
@@ -2867,7 +2970,7 @@ export default function MonthlyAttendancePage() {
                       </tbody>
                       <tfoot>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC", borderTop: "2px solid #E2E8F0" }}>
-                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
+                          <td colSpan={13} style={{ textAlign: "right", paddingRight: 16 }}>
                             Total Deduction:
                           </td>
                           <td>
@@ -2877,7 +2980,7 @@ export default function MonthlyAttendancePage() {
                           </td>
                         </tr>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
-                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
+                          <td colSpan={13} style={{ textAlign: "right", paddingRight: 16 }}>
                             Extra Hours:
                           </td>
                           <td>
@@ -2887,13 +2990,13 @@ export default function MonthlyAttendancePage() {
                           </td>
                         </tr>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
-                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
+                          <td colSpan={13} style={{ textAlign: "right", paddingRight: 16 }}>
                             Late Exceed:
                           </td>
                           <td>{getEmployeeTotalExcessLate(employee)}</td>
                         </tr>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
-                          <td colSpan={12} style={{ textAlign: "right", paddingRight: 16 }}>
+                          <td colSpan={13} style={{ textAlign: "right", paddingRight: 16 }}>
                             Total Working Days:
                           </td>
                           <td>
@@ -3561,6 +3664,7 @@ export default function MonthlyAttendancePage() {
                                       : row.tardyCount}
                                   </td>
                                   <td>{row.tardyNote || ""}</td>
+                                  <td>{row.hrNote || ""}</td>
                                   <td className={styles.deductionCell}>{row.deduction}</td>
                                 </tr>
                               );
@@ -3568,7 +3672,7 @@ export default function MonthlyAttendancePage() {
                           </tbody>
                           <tfoot>
                             <tr>
-                              <td colSpan={8} />
+                              <td colSpan={9} />
                               <td className={styles.deductionCell}>Total</td>
                               <td className={styles.deductionCell}>
                                 {deductionPreview.block.totalDeduction}%

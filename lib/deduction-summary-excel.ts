@@ -12,6 +12,7 @@ export const DEDUCTION_SUMMARY_HEADERS = [
   "Status",
   "Tardy Count",
   "Note",
+  "HR note",
   "Deduction",
 ] as const;
 
@@ -52,7 +53,7 @@ const TARDY_ROW_FILL: ExcelJS.Fill = {
   fgColor: { argb: "FFFFFF00" },
 };
 
-const COLUMN_WIDTHS = [14, 14, 14, 14, 14, 18, 18, 12, 28, 12];
+const COLUMN_WIDTHS = [14, 14, 14, 14, 14, 18, 18, 12, 28, 28, 12];
 
 export type DeductionSummaryDayRow = {
   date: string;
@@ -64,6 +65,7 @@ export type DeductionSummaryDayRow = {
   status: string;
   tardyCount: number | string;
   tardyNote: string;
+  hrNote: string;
   deduction: string;
 };
 
@@ -141,6 +143,7 @@ function appendEmployeeBlock(
       status,
       row.tardyCount === 0 || row.tardyCount === "" ? "" : row.tardyCount,
       row.tardyNote || "",
+      row.hrNote || "",
       row.deduction,
     ]);
     const tardyRow = isTardyStatus(status);
