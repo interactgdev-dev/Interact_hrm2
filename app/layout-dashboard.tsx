@@ -163,6 +163,7 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 	const [navPeek, setNavPeek] = React.useState(false);
 	const [sidebarLocked, setSidebarLocked] = React.useState(false);
 	const [isDesktopNav, setIsDesktopNav] = React.useState(true);
+	const sidebarDockRef = React.useRef<HTMLDivElement | null>(null);
 	const [companyLogo, setCompanyLogo] = React.useState<string | null>(null);
 	const [adminAvatar, setAdminAvatar] = React.useState<string | null>(null);
 	const navGroups = sidebarLinks;
@@ -196,7 +197,9 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 	React.useEffect(() => {
 		setSidebarOpen(false);
 		if (!sidebarLocked) setNavPeek(false);
-	}, [pathname, sidebarLocked]);
+		// pathname only — do not clear peek on unlock (that snaps closed under the cursor)
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [pathname]);
 
 	const toggleSidebarLock = React.useCallback(() => {
 		setSidebarLocked((prev) => {
@@ -206,7 +209,20 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 			} catch {
 				/* ignore */
 			}
-			if (next) setNavPeek(true);
+			if (next) {
+				setNavPeek(true);
+			} else {
+				// Unlock while pointer is still over the dock: keep peek so slide-out
+				// waits for mouseleave (no jerk). Blur so :focus-within does not pin open.
+				const overDock = Boolean(sidebarDockRef.current?.matches(":hover"));
+				setNavPeek(overDock);
+				requestAnimationFrame(() => {
+					const active = document.activeElement as HTMLElement | null;
+					if (active && sidebarDockRef.current?.contains(active)) {
+						active.blur();
+					}
+				});
+			}
 			return next;
 		});
 	}, []);
@@ -367,6 +383,7 @@ export default function LayoutDashboard({ children }: { children: React.ReactNod
 				)}
 				{/* Desktop: left-edge hover dock — slide in/out + content width reflow */}
 				<div
+					ref={sidebarDockRef}
 					className={`${styles.sidebarDock}${sidebarVisible ? ` ${styles.sidebarDockOpen}` : ""}${sidebarLocked && isDesktopNav ? ` ${styles.sidebarDockLocked}` : ""}`}
 					onMouseEnter={() => {
 						if (isDesktopNav && !sidebarLocked) setNavPeek(true);

@@ -560,6 +560,7 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   const [sidebarLocked, setSidebarLocked] = React.useState(false);
   const [isDesktopNav, setIsDesktopNav] = React.useState(true);
   const [employeeAvatar, setEmployeeAvatar] = React.useState<string | null>(null);
+  const sidebarDockRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -590,7 +591,18 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       } catch {
         /* ignore */
       }
-      if (next) setNavPeek(true);
+      if (next) {
+        setNavPeek(true);
+      } else {
+        const overDock = Boolean(sidebarDockRef.current?.matches(":hover"));
+        setNavPeek(overDock);
+        requestAnimationFrame(() => {
+          const active = document.activeElement as HTMLElement | null;
+          if (active && sidebarDockRef.current?.contains(active)) {
+            active.blur();
+          }
+        });
+      }
       return next;
     });
   }, []);
@@ -627,7 +639,9 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
   React.useEffect(() => {
     setSidebarOpen(false);
     if (!sidebarLocked) setNavPeek(false);
-  }, [pathname, sidebarLocked]);
+    // pathname only — unlock must not snap-close under the cursor
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   const initials = (employeeName || "E")
     .split(" ")
@@ -654,6 +668,7 @@ export default function EmployeeDashboardLayout({ children }: { children: React.
       ) : null}
 
       <div
+        ref={sidebarDockRef}
         className={`${empStyles.sidebarDock} ${sidebarVisible ? empStyles.sidebarDockOpen : ""} ${sidebarLocked && isDesktopNav ? empStyles.sidebarDockLocked : ""}`}
         onMouseEnter={() => {
           if (isDesktopNav && !sidebarLocked) setNavPeek(true);

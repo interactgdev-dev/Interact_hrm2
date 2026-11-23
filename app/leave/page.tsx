@@ -370,9 +370,9 @@ export default function LeavePage() {
     return sortConfig.direction === "asc" ? <FaSortUp /> : <FaSortDown />;
   };
 
-  /** Newest request first — prefer submitted time, then id. */
+  /** Newest request first — submitted time only (ignore approve/update bumps). */
   const leaveRequestMs = (l: any) => {
-    for (const c of [l?.requested_at, l?.created_at, l?.updated_at]) {
+    for (const c of [l?.requested_at, l?.created_at]) {
       const raw = String(c || "").trim();
       if (!raw) continue;
       const ms = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T"));

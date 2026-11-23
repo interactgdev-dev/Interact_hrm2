@@ -252,15 +252,15 @@ export async function GET(req: NextRequest) {
 
     sql += " ORDER BY id DESC";
     const [rows] = (await query(sql, params)) as any;
+    /** Newest leave request first — use submit time / id, not approve updated_at. */
     const leaveRecency = (l: any) => {
-      let best = 0;
-      for (const c of [l?.updated_at, l?.step2_at, l?.step1_at, l?.requested_at]) {
+      for (const c of [l?.requested_at, l?.created_at]) {
         const raw = String(c || "").trim();
         if (!raw) continue;
         const ms = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T"));
-        if (Number.isFinite(ms) && ms > best) best = ms;
+        if (Number.isFinite(ms) && ms > 0) return ms;
       }
-      return best || Number(l?.id) || 0;
+      return Number(l?.id) || 0;
     };
 
     const rawLeaves = Array.isArray(rows) ? rows : [];
