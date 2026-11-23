@@ -88,14 +88,26 @@ function parseLeaveDays(value: string): number {
   return Math.round(n * 2) / 2;
 }
 
+/** Remaining balance shown/edited — never below 0 or above policy allowance. */
+function clampLeaveBalance(value: number, allowance: number): number {
+  const max = Number.isFinite(allowance) && allowance > 0 ? allowance : 0;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(Math.min(max, Math.max(0, n)) * 2) / 2;
+}
+
 function formatLeaveDays(value: number): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return "0";
-  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+  const clamped = Math.max(0, n);
+  return Number.isInteger(clamped) ? String(clamped) : clamped.toFixed(1);
 }
 
 function formatLeaveDelta(next: number, current: number): string {
-  const delta = Math.round((next - current) * 2) / 2;
+  // Ignore corrupt negative "current" from clone-inflated used (show delta vs 0+).
+  const cur = Math.max(0, Number(current) || 0);
+  const nxt = Math.max(0, Number(next) || 0);
+  const delta = Math.round((nxt - cur) * 2) / 2;
   if (delta === 0) return "";
   const abs = formatLeaveDays(Math.abs(delta));
   return delta > 0 ? `+${abs} leaves added` : `-${abs} leaves removed`;
@@ -374,14 +386,28 @@ function ManageLeavesPageInner() {
   function handleEdit(employee: Employee) {
     if (!canEditBalances) return;
     setEditingEmployee(employee);
+    const annualMax = Number(employee.annual_allowance) || 20;
+    const bereaveMax = Number(employee.bereavement_allowance) || 3;
+    const matMax = Number(employee.maternity_allowance) || 90;
+    const patMax = Number(employee.paternity_allowance) || 5;
     setFormData({
-      annual_current_balance: formatLeaveDays(employee.annual_current_balance),
-      bereavement_current_balance: formatLeaveDays(employee.bereavement_current_balance),
+      annual_current_balance: formatLeaveDays(
+        clampLeaveBalance(employee.annual_current_balance, annualMax),
+      ),
+      bereavement_current_balance: formatLeaveDays(
+        clampLeaveBalance(employee.bereavement_current_balance, bereaveMax),
+      ),
       maternity_current_balance: formatLeaveDays(
-        employee.maternity_current_balance ?? employee.maternity_allowance ?? 90,
+        clampLeaveBalance(
+          employee.maternity_current_balance ?? employee.maternity_allowance ?? 90,
+          matMax,
+        ),
       ),
       paternity_current_balance: formatLeaveDays(
-        employee.paternity_current_balance ?? employee.paternity_allowance ?? 5,
+        clampLeaveBalance(
+          employee.paternity_current_balance ?? employee.paternity_allowance ?? 5,
+          patMax,
+        ),
       ),
     });
     setShowModal(true);
@@ -410,10 +436,22 @@ function ManageLeavesPageInner() {
           employee_id: editingEmployee.id,
           viewerId: viewerId || undefined,
           portal: portal || undefined,
-          annual_current_balance: parseLeaveDays(formData.annual_current_balance),
-          bereavement_current_balance: parseLeaveDays(formData.bereavement_current_balance),
-          maternity_current_balance: parseLeaveDays(formData.maternity_current_balance),
-          paternity_current_balance: parseLeaveDays(formData.paternity_current_balance),
+          annual_current_balance: clampLeaveBalance(
+            parseLeaveDays(formData.annual_current_balance),
+            Number(editingEmployee.annual_allowance) || 20,
+          ),
+          bereavement_current_balance: clampLeaveBalance(
+            parseLeaveDays(formData.bereavement_current_balance),
+            Number(editingEmployee.bereavement_allowance) || 3,
+          ),
+          maternity_current_balance: clampLeaveBalance(
+            parseLeaveDays(formData.maternity_current_balance),
+            Number(editingEmployee.maternity_allowance) || 90,
+          ),
+          paternity_current_balance: clampLeaveBalance(
+            parseLeaveDays(formData.paternity_current_balance),
+            Number(editingEmployee.paternity_allowance) || 5,
+          ),
         })
       });
 

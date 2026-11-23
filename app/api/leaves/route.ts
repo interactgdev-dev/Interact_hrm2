@@ -263,7 +263,11 @@ export async function GET(req: NextRequest) {
       return Number(l?.id) || 0;
     };
 
-    const rawLeaves = Array.isArray(rows) ? rows : [];
+    // Collapse sync clones (same [ticket:N] repeated 100+ times) before listing.
+    const { dedupeLeavesByTicketMarker } = await import("@/lib/leave-row-dedupe");
+    const rawLeaves = dedupeLeavesByTicketMarker(
+      Array.isArray(rows) ? rows : [],
+    );
     const actorIds = [
       ...new Set(
         rawLeaves

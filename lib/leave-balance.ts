@@ -119,7 +119,7 @@ export async function getEmployeeLeaveBalance(
     );
 
     let leavesQuery =
-      "SELECT leave_category, total_days, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
+      "SELECT id, leave_category, total_days, start_date, updated_at, reason, status FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";
     const leaveId = resolvedEmployeeId ?? employee_id;
     const leaveParams: any[] = [leaveId, String(leaveId)];
     const todayYmd = getDateStringInTimeZone(new Date());
@@ -129,7 +129,11 @@ export async function getEmployeeLeaveBalance(
     }
     leavesQuery += " AND DATE(COALESCE(updated_at, start_date)) <= ?";
     leaveParams.push(todayYmd);
-    const [leaves]: any = await conn.execute(leavesQuery, leaveParams);
+    const [leavesRaw]: any = await conn.execute(leavesQuery, leaveParams);
+    const { dedupeLeavesByTicketMarker } = await import("@/lib/leave-row-dedupe");
+    const leaves = dedupeLeavesByTicketMarker(
+      Array.isArray(leavesRaw) ? leavesRaw : [],
+    );
 
     const usedLeave: Record<string, number> = {};
     let totalUsedDays = 0;
@@ -145,14 +149,24 @@ export async function getEmployeeLeaveBalance(
     const paternityUsedDays = usedLeave.paternity || 0;
     const annualUsedDays =
       totalUsedDays - bereavementUsedDays - maternityUsedDays - paternityUsedDays;
-    const annualBalance =
-      annualAllowance - annualUsedDays + annualBalanceAdjustment;
-    const bereavementBalance =
-      bereavementAllowance - bereavementUsedDays + bereavementBalanceAdjustment;
-    const maternityBalance =
-      maternityAllowance - maternityUsedDays + maternityBalanceAdjustment;
-    const paternityBalance =
-      paternityAllowance - paternityUsedDays + paternityBalanceAdjustment;
+    const clampBal = (raw: number, max: number) =>
+      Math.min(max, Math.max(0, raw));
+    const annualBalance = clampBal(
+      annualAllowance - annualUsedDays + annualBalanceAdjustment,
+      annualAllowance,
+    );
+    const bereavementBalance = clampBal(
+      bereavementAllowance - bereavementUsedDays + bereavementBalanceAdjustment,
+      bereavementAllowance,
+    );
+    const maternityBalance = clampBal(
+      maternityAllowance - maternityUsedDays + maternityBalanceAdjustment,
+      maternityAllowance,
+    );
+    const paternityBalance = clampBal(
+      paternityAllowance - paternityUsedDays + paternityBalanceAdjustment,
+      paternityAllowance,
+    );
 
     return {
       success: true,
@@ -161,14 +175,12 @@ export async function getEmployeeLeaveBalance(
       employment_status: effectiveStatus,
       gender: genderRaw,
       leaveCycleStart,
-      annualBalance: Math.max(0, annualBalance),
+      annualBalance,
       annualAllowance,
-      bereavementBalance: Math.max(0, bereavementBalance),
-      maternityBalance:
-        genderNorm === "female" ? Math.max(0, maternityBalance) : 0,
+      bereavementBalance,
+      maternityBalance: genderNorm === "female" ? maternityBalance : 0,
       maternityAllowance: genderNorm === "female" ? maternityAllowance : 0,
-      paternityBalance:
-        genderNorm === "male" ? Math.max(0, paternityBalance) : 0,
+      paternityBalance: genderNorm === "male" ? paternityBalance : 0,
       paternityAllowance: genderNorm === "male" ? paternityAllowance : 0,
       annualBalanceAdjustment,
       bereavementBalanceAdjustment,

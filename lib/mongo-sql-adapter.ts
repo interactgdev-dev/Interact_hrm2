@@ -469,7 +469,12 @@ function buildFilterFromWhere(
     if (m) {
       const ref = fieldRef(m[1]);
       const pattern = String(take());
-      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".");
+      // Use [\s\S] not `.` — leave reasons often contain newlines; `.` does not
+      // cross them, so LIKE '%[ticket:N]%' failed and sync kept INSERTing clones.
+      const escaped = pattern
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/%/g, "[\\s\\S]*")
+        .replace(/_/g, "[\\s\\S]");
       return { [ref.field]: { $regex: `^${escaped}$`, $options: "i" } };
     }
 

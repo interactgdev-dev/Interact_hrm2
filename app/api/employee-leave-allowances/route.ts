@@ -171,14 +171,19 @@ export async function GET(req: NextRequest) {
       }
 
       const [leaves]: any = await conn.execute(
-        `SELECT id, employee_id, leave_category, total_days, start_date, updated_at
+        `SELECT id, employee_id, leave_category, total_days, start_date, updated_at, reason, status
          FROM employee_leaves
          WHERE status = 'approved'
            AND (employee_id IN (${placeholders})
              OR CAST(employee_id AS CHAR) IN (${employeeIds.map(() => "?").join(",")}))`,
         [...employeeIds, ...employeeIds.map(String)],
       );
-      leaveRows = Array.isArray(leaves) ? leaves : [];
+      const { dedupeLeavesByTicketMarker } = await import(
+        "@/lib/leave-row-dedupe"
+      );
+      leaveRows = dedupeLeavesByTicketMarker(
+        Array.isArray(leaves) ? leaves : [],
+      );
     }
 
     const usedByEmployee = new Map<number, UsedBucket>();
@@ -195,15 +200,7 @@ export async function GET(req: NextRequest) {
     });
 
     const todayYmd = getDateStringInTimeZone(new Date());
-    const seenLeaveIds = new Set<string>();
     leaveRows.forEach((leave: any) => {
-      const leaveKey =
-        leave?.id != null
-          ? `id:${leave.id}`
-          : `r:${leave.employee_id}|${leave.start_date}|${leave.leave_category}|${leave.total_days}`;
-      if (seenLeaveIds.has(leaveKey)) return;
-      seenLeaveIds.add(leaveKey);
-
       const empId = Number(leave.employee_id);
       const current = usedByEmployee.get(empId);
       if (!current) return;
@@ -242,12 +239,32 @@ export async function GET(req: NextRequest) {
       const paternityAllowance = PATERNITY_ALLOWANCE;
       const genderNorm = normalizeEmployeeGender(emp.gender);
 
-      const annualCurrent = roundLeaveDays(
+      // Clamp remaining to [0, allowance] — clone-inflated "used" must not show −25/20.
+      const clampBal = (raw: number, max: number) =>
+        roundLeaveDays(Math.min(max, Math.max(0, raw)));
+
+      const annualCurrent = clampBal(
         annualAllowance - used.annual_used + annualAdjustment,
+        annualAllowance,
       );
-      const bereavementCurrent = roundLeaveDays(
+      const bereavementCurrent = clampBal(
         bereavementAllowance - used.bereavement_used + bereavementAdjustment,
+        bereavementAllowance,
       );
+      const maternityCurrent =
+        genderNorm === "female"
+          ? clampBal(
+              maternityAllowance - used.maternity_used + maternityAdjustment,
+              maternityAllowance,
+            )
+          : 0;
+      const paternityCurrent =
+        genderNorm === "male"
+          ? clampBal(
+              paternityAllowance - used.paternity_used + paternityAdjustment,
+              paternityAllowance,
+            )
+          : 0;
 
       return {
         ...emp,
@@ -261,18 +278,10 @@ export async function GET(req: NextRequest) {
           Math.max(0, bereavementAllowance - bereavementCurrent),
         ),
         maternity_used: roundLeaveDays(
-          Math.max(
-            0,
-            maternityAllowance -
-              (maternityAllowance - used.maternity_used + maternityAdjustment),
-          ),
+          Math.max(0, maternityAllowance - maternityCurrent),
         ),
         paternity_used: roundLeaveDays(
-          Math.max(
-            0,
-            paternityAllowance -
-              (paternityAllowance - used.paternity_used + paternityAdjustment),
-          ),
+          Math.max(0, paternityAllowance - paternityCurrent),
         ),
         annual_balance_adjustment: annualAdjustment,
         bereavement_balance_adjustment: bereavementAdjustment,
@@ -281,18 +290,8 @@ export async function GET(req: NextRequest) {
         leave_cycle_start: cycleStart,
         annual_current_balance: annualCurrent,
         bereavement_current_balance: bereavementCurrent,
-        maternity_current_balance:
-          genderNorm === "female"
-            ? roundLeaveDays(
-                maternityAllowance - used.maternity_used + maternityAdjustment,
-              )
-            : 0,
-        paternity_current_balance:
-          genderNorm === "male"
-            ? roundLeaveDays(
-                paternityAllowance - used.paternity_used + paternityAdjustment,
-              )
-            : 0,
+        maternity_current_balance: maternityCurrent,
+        paternity_current_balance: paternityCurrent,
       };
     });
 
@@ -423,18 +422,29 @@ export async function POST(req: NextRequest) {
     }
     const genderNorm = normalizeEmployeeGender(emp.gender);
     const cycleStart = getLeaveCycleStartYmd(emp.joined_date || null);
-    const annualTarget = parseLeaveDays(annual_current_balance);
-    const bereavementTarget = parseLeaveDays(bereavement_current_balance);
-    const maternityTarget = parseLeaveDays(maternity_current_balance);
-    const paternityTarget = parseLeaveDays(paternity_current_balance);
     const annualAllowance = annualAllowanceForStatus(emp.employment_status);
     const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
     const maternityAllowance = MATERNITY_ALLOWANCE;
     const paternityAllowance = PATERNITY_ALLOWANCE;
+    const clampTarget = (raw: unknown, max: number) =>
+      Math.min(max, Math.max(0, parseLeaveDays(raw)));
+    const annualTarget = clampTarget(annual_current_balance, annualAllowance);
+    const bereavementTarget = clampTarget(
+      bereavement_current_balance,
+      bereavementAllowance,
+    );
+    const maternityTarget = clampTarget(
+      maternity_current_balance,
+      maternityAllowance,
+    );
+    const paternityTarget = clampTarget(
+      paternity_current_balance,
+      paternityAllowance,
+    );
 
     const eid = Number(employee_id);
     const [leaveRows]: any = await conn.execute(
-      `SELECT id, leave_category, total_days, start_date, updated_at
+      `SELECT id, leave_category, total_days, start_date, updated_at, reason, status
        FROM employee_leaves
        WHERE status = 'approved'
          AND (employee_id = ? OR CAST(employee_id AS CHAR) = ?)`,
@@ -448,15 +458,12 @@ export async function POST(req: NextRequest) {
       paternity_used: 0,
     };
     const todayYmd = getDateStringInTimeZone(new Date());
-    const seenLeaveIds = new Set<string>();
-    (Array.isArray(leaveRows) ? leaveRows : []).forEach((leave: any) => {
-      const leaveKey =
-        leave?.id != null
-          ? `id:${leave.id}`
-          : `r:${leave.start_date}|${leave.leave_category}|${leave.total_days}`;
-      if (seenLeaveIds.has(leaveKey)) return;
-      seenLeaveIds.add(leaveKey);
-
+    const { dedupeLeavesByTicketMarker } = await import(
+      "@/lib/leave-row-dedupe"
+    );
+    dedupeLeavesByTicketMarker(
+      Array.isArray(leaveRows) ? leaveRows : [],
+    ).forEach((leave: any) => {
       const leaveYmd =
         leaveDateToYmd(leave?.updated_at) || leaveDateToYmd(leave?.start_date);
       if (cycleStart && leaveYmd && leaveYmd < cycleStart) return;
