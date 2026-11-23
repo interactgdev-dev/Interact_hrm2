@@ -19,6 +19,7 @@ import {
 } from "@/lib/access-control/me-client-cache";
 import { permissionSetHas } from "@/lib/access-control/permission-scope";
 import { isAdminBrowserSession } from "@/lib/access-control/employee-shell";
+import { leaveDeptMatches } from "@/lib/leave-dept-filter";
 
 type LeaveDashTab = "balances" | "requests" | "summary";
 
@@ -340,9 +341,11 @@ function ManageLeavesPageInner() {
         const enrichedEmployees = data.employees.map((emp: Employee) => ({
           ...emp,
           department_name:
-            emp.department_name ||
-            empDetailsMap.get(emp.id)?.department_name ||
-            "-",
+            String(
+              emp.department_name ||
+                empDetailsMap.get(emp.id)?.department_name ||
+                "",
+            ).trim() || "-",
           pseudonym: empDetailsMap.get(emp.id)?.pseudonym || "-",
         }));
         setEmployees(enrichedEmployees);
@@ -500,6 +503,40 @@ function ManageLeavesPageInner() {
     };
   };
 
+  /** Prefer departments that appear on employees so filter values always match rows. */
+  const balanceDepartmentOptions = useMemo(() => {
+    const fromEmployees = Array.from(
+      new Set(
+        employees
+          .map((e) => String(e.department_name || "").trim())
+          .filter((d) => d && d !== "-"),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+    if (fromEmployees.length) return fromEmployees;
+    return departments
+      .map((d) => String(d.name || d.department_name || "").trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  }, [employees, departments]);
+
+  const balancesFiltersActive = Boolean(
+    searchName.trim() ||
+      selectedDepartment ||
+      employmentStatusFilter ||
+      lowBalanceOnly ||
+      fromDate ||
+      toDate,
+  );
+
+  const clearBalancesFilters = () => {
+    setSearchName("");
+    setSelectedDepartment("");
+    setEmploymentStatusFilter("");
+    setLowBalanceOnly(false);
+    setFromDate("");
+    setToDate("");
+  };
+
   const filteredEmployees = useMemo(() => {
     let rows = employees;
     const term = deferredSearchName.trim().toLowerCase();
@@ -512,9 +549,8 @@ function ManageLeavesPageInner() {
       });
     }
     if (selectedDepartment) {
-      rows = rows.filter(
-        (emp) =>
-          (emp.department_name || "").toLowerCase() === selectedDepartment.toLowerCase()
+      rows = rows.filter((emp) =>
+        leaveDeptMatches(emp.department_name, selectedDepartment),
       );
     }
     if (employmentStatusFilter) {
@@ -627,14 +663,11 @@ function ManageLeavesPageInner() {
                     aria-label="Filter by department"
                   >
                     <option value="">All departments</option>
-                    {departments.map((dept) => {
-                      const name = dept.name || dept.department_name || "";
-                      return (
-                        <option key={dept.id} value={name}>
-                          {name}
-                        </option>
-                      );
-                    })}
+                    {balanceDepartmentOptions.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className={leaveStyles.filterField}>
@@ -684,16 +717,13 @@ function ManageLeavesPageInner() {
                   />
                   Low balance only (&lt; 4 days)
                 </label>
-                {fromDate || toDate ? (
+                {balancesFiltersActive ? (
                   <button
                     type="button"
                     className={leaveStyles.clearFilters}
-                    onClick={() => {
-                      setFromDate("");
-                      setToDate("");
-                    }}
+                    onClick={clearBalancesFilters}
                   >
-                    Clear dates
+                    Clear filters
                   </button>
                 ) : null}
               </div>

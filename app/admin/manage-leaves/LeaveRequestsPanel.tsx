@@ -9,6 +9,7 @@ import {
 } from "../../../lib/timezone";
 import styles from "../../leave/leave.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
+import { leaveDeptMatches } from "@/lib/leave-dept-filter";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { leaveStatusLabel, overallLeaveStatus } from "@/lib/leave-approval";
 import { displayLeaveReason } from "@/lib/leave-reason-display";
@@ -189,27 +190,36 @@ export default function LeaveRequestsPanel({
       if (data.success) {
         const empRes = await fetch("/api/employee-list", { cache: "no-store" });
         const empData = await empRes.json();
-        const empMap = new Map<string, { employee_name: string; pseudonym: string; department_name: string }>();
+        // Key by id only — never alias employee_code onto the same map (code "114"
+        // colliding with id 114 assigned the wrong department to leave rows).
+        const empMap = new Map<
+          string,
+          { employee_name: string; pseudonym: string; department_name: string }
+        >();
+        const empByCode = new Map<
+          string,
+          { employee_name: string; pseudonym: string; department_name: string }
+        >();
         if (empData.success && Array.isArray(empData.employees)) {
           empData.employees.forEach((emp: any) => {
             const fullName = `${emp?.first_name || ""} ${emp?.last_name || ""}`.trim();
             const profile = {
               employee_name: fullName || "-",
               pseudonym: emp.pseudonym || "-",
-              department_name: emp.department_name || "-",
+              department_name: String(emp.department_name || "").trim() || "-",
             };
             if (emp?.id !== undefined && emp?.id !== null) {
               empMap.set(String(emp.id).trim(), profile);
             }
             if (emp?.employee_code) {
-              empMap.set(String(emp.employee_code).trim(), profile);
+              empByCode.set(String(emp.employee_code).trim(), profile);
             }
           });
         }
         const enrichedLeaves = (data.leaves || [])
           .map((l: any) => {
             const employeeKey = String(l?.employee_id ?? "").trim();
-            const emp = empMap.get(employeeKey);
+            const emp = empMap.get(employeeKey) || empByCode.get(employeeKey);
             return {
               ...l,
               employee_name: l?.employee_name || emp?.employee_name || "-",
@@ -334,13 +344,7 @@ export default function LeaveRequestsPanel({
     let total = 0;
     leavesWithMeta.forEach((l) => {
       if (!leaveOverlapsRange(l, fromDate, toDate)) return;
-      if (
-        departmentFilter &&
-        String(l.department_name || "").trim().toLowerCase() !==
-          departmentFilter.toLowerCase()
-      ) {
-        return;
-      }
+      if (!leaveDeptMatches(l.department_name, departmentFilter)) return;
       total += 1;
       const s = overallLeaveStatus(l);
       if (s === "approved") approved += 1;
@@ -445,13 +449,7 @@ export default function LeaveRequestsPanel({
       }
       if (duplicatesOnly && !l.is_duplicate) return false;
       if (!leaveOverlapsRange(l, fromDate, toDate)) return false;
-      if (
-        departmentFilter &&
-        String(l.department_name || "").trim().toLowerCase() !==
-          departmentFilter.toLowerCase()
-      ) {
-        return false;
-      }
+      if (!leaveDeptMatches(l.department_name, departmentFilter)) return false;
       if (q) {
         const name = String(l.employee_name || "").toLowerCase();
         const pseudo = String(l.pseudonym || "").toLowerCase();

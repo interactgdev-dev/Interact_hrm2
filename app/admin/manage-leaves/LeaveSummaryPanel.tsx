@@ -5,6 +5,7 @@ import leaveStyles from "../../leave/leave.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { overallLeaveStatus } from "@/lib/leave-approval";
+import { leaveDeptMatches } from "@/lib/leave-dept-filter";
 
 type SummaryRow = {
   id: number | string;
@@ -204,7 +205,7 @@ export default function LeaveSummaryPanel({
           id: emp.id,
           employeeName: `${emp.first_name || ""} ${emp.last_name || ""}`.trim(),
           pseudonym: emp.pseudonym || "-",
-          department: emp.department_name || "-",
+          department: String(emp.department_name || "").trim() || "-",
           total: empLeaves.length,
           approved: approved.length,
           rejected: rejected.length,
@@ -221,6 +222,19 @@ export default function LeaveSummaryPanel({
     setLoading(false);
   }
 
+  const summaryFiltersActive = Boolean(
+    search.trim() || departmentFilter || fromDate || toDate || showZeroActivity,
+  );
+
+  const clearSummaryFilters = () => {
+    setSearch("");
+    setDepartmentFilter("");
+    setShowZeroActivity(false);
+    const range = defaultMonthRange();
+    setFromDate(range.from);
+    setToDate(range.to);
+  };
+
   const visibleRows = useMemo(() => {
     const searchLower = search.toLowerCase();
     return leaveData.filter((row) => {
@@ -229,7 +243,7 @@ export default function LeaveSummaryPanel({
         row.employeeName.toLowerCase().includes(searchLower) ||
         String(row.id).includes(searchLower) ||
         (row.pseudonym || "").toLowerCase().includes(searchLower);
-      const matchesDept = !departmentFilter || row.department === departmentFilter;
+      const matchesDept = leaveDeptMatches(row.department, departmentFilter);
       if (!matchesSearch || !matchesDept) return false;
       if (!showZeroActivity && (Number(row.total) || 0) === 0) return false;
       return true;
@@ -342,6 +356,15 @@ export default function LeaveSummaryPanel({
           />
           Show zero-activity
         </label>
+        {summaryFiltersActive ? (
+          <button
+            type="button"
+            className={leaveStyles.clearFilters}
+            onClick={clearSummaryFilters}
+          >
+            Clear filters
+          </button>
+        ) : null}
       </div>
 
       <div className={`${leaveStyles.reqTableShell} ${leaveStyles.sumTableShell}`}>

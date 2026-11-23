@@ -764,9 +764,9 @@
 
 .statRow {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  /* Keep 4 columns during sidebar push — avoid up/down layout jump */
-  min-width: 0;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  /* Stable width during sidebar slide — no 4→2 column jump */
+  min-width: 820px;
   gap: 12px;
   margin-bottom: 14px;
 }

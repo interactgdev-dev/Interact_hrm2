@@ -241,9 +241,9 @@
   background: transparent !important;
   max-height: calc(100vh - var(--topbar-height));
   overflow-y: auto;
-  overflow-x: clip;
+  /* auto (not clip) — wide leave tables scroll like Attendance Summary instead of jerk-reflow */
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  /* auto — stable gutter was jumping leave page layout during sidebar slide */
   scrollbar-gutter: auto;
   margin-left: 0;
   /* Match sidebar slide — smooth content reflow (same easing as dock) */

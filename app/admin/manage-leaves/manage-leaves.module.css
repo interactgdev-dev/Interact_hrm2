@@ -5,6 +5,8 @@
 .pageWide {
   max-width: 100% !important;
   width: 100%;
+  /* Keep leave chrome from crushing mid sidebar-slide (Attendance Summary pattern) */
+  min-width: 1100px;
   box-sizing: border-box;
 }
 
