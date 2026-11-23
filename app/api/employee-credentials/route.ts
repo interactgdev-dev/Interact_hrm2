@@ -31,7 +31,22 @@ export async function GET(req: NextRequest) {
     `;
 
     const [rows] = (await query(sql)) as any;
-    let employees = Array.isArray(rows) ? rows : [];
+    // Multiple employee_jobs rows fan out duplicates (same id twice in the UI).
+    const byId = new Map<number, any>();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const id = Number(row?.id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const prev = byId.get(id);
+      if (!prev) {
+        byId.set(id, row);
+        continue;
+      }
+      // Prefer the row that already has a department name.
+      const prevDept = String(prev.department_name || "").trim();
+      const nextDept = String(row.department_name || "").trim();
+      if ((!prevDept || prevDept === "-") && nextDept) byId.set(id, row);
+    }
+    let employees = [...byId.values()];
 
     const viewerId = viewerIdFrom(req);
     if (viewerId) {

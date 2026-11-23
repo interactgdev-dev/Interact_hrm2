@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import OptionalAdminShell from "@/app/components/OptionalAdminShell";
 import styles from "../../break-summary/break-summary.module.css";
@@ -9,6 +9,7 @@ import { FaSave, FaTimes, FaEdit, FaKey, FaEnvelope, FaUser } from "react-icons/
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { toastError } from "@/lib/app-toast";
+import { leaveDeptMatches } from "@/lib/leave-dept-filter";
 
 interface Employee {
   id: number;
@@ -23,11 +24,40 @@ interface Employee {
   pseudonym?: string;
 }
 
+function normText(value: unknown): string {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function getFullName(emp: Employee): string {
+  return `${emp.first_name || ""} ${emp.last_name || ""}`.replace(/\s+/g, " ").trim();
+}
+
+function employeeMatchesSearch(emp: Employee, searchRaw: string): boolean {
+  const q = normText(searchRaw);
+  if (!q) return true;
+  const haystacks = [
+    getFullName(emp),
+    emp.first_name,
+    emp.last_name,
+    emp.username,
+    emp.email_work,
+    emp.email_other,
+    emp.pseudonym,
+    emp.department_name,
+    String(emp.id ?? ""),
+  ].map(normText);
+  return haystacks.some((h) => h.includes(q));
+}
+
 export default function EmployeeCredentialsPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [departmentFilter, setDepartmentFilter] = useState("");
   const [detailEmp, setDetailEmp] = useState<Employee | null>(null);
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState({
@@ -57,6 +87,8 @@ export default function EmployeeCredentialsPage() {
 
   const fetchEmployees = async () => {
     try {
+      setLoading(true);
+      setError("");
       const viewerId =
         typeof window !== "undefined"
           ? String(localStorage.getItem("employeeId") || "").trim()
@@ -67,44 +99,54 @@ export default function EmployeeCredentialsPage() {
         : {};
 
       const res = await fetch(`/api/employee-credentials${qs}`, {
+        cache: "no-store",
         headers: scopeHeaders,
       });
       const data = await res.json();
-      if (data.success) {
-        const empListRes = await fetch(`/api/employee-list${qs}`, {
-          headers: scopeHeaders,
-        });
-        const empListData = await empListRes.json();
-        const deptMap = new Map();
-        if (empListData.success) {
-          empListData.employees.forEach((emp: any) => {
-            deptMap.set(emp.id, emp.department_name || "-");
-          });
-        }
-
-        const attendanceRes = await fetch(
-          "/api/attendance?fromDate=2020-01-01&toDate=2099-12-31",
-        );
-        const attendanceData = await attendanceRes.json();
-        const pseudonymMap = new Map();
-        if (attendanceData.success && Array.isArray(attendanceData.attendance)) {
-          attendanceData.attendance.forEach((att: any) => {
-            const empId = parseInt(att.employee_id);
-            if (!pseudonymMap.has(empId)) {
-              pseudonymMap.set(empId, att.pseudonym || "-");
-            }
-          });
-        }
-
-        const enrichedEmployees = data.employees.map((emp: Employee) => ({
-          ...emp,
-          department_name: emp.department_name || deptMap.get(emp.id) || "-",
-          pseudonym: pseudonymMap.get(emp.id) || "-",
-        }));
-        setEmployees(enrichedEmployees);
-      } else {
+      if (!data.success) {
         setError(data.error || "Failed to fetch employees");
+        return;
       }
+
+      const empListRes = await fetch(`/api/employee-list${qs}`, {
+        cache: "no-store",
+        headers: scopeHeaders,
+      });
+      const empListData = await empListRes.json();
+      const metaMap = new Map<
+        number,
+        { department_name: string; pseudonym: string }
+      >();
+      const list = Array.isArray(empListData?.employees)
+        ? empListData.employees
+        : Array.isArray(empListData)
+          ? empListData
+          : [];
+      for (const row of list) {
+        const empId = Number(row.id);
+        if (!Number.isFinite(empId) || empId <= 0 || metaMap.has(empId)) continue;
+        metaMap.set(empId, {
+          department_name: String(row.department_name || "").trim() || "-",
+          pseudonym: String(row.pseudonym || "").trim() || "-",
+        });
+      }
+
+      const byId = new Map<number, Employee>();
+      for (const emp of data.employees as Employee[]) {
+        const id = Number(emp.id);
+        if (!Number.isFinite(id) || id <= 0 || byId.has(id)) continue;
+        const meta = metaMap.get(id);
+        byId.set(id, {
+          ...emp,
+          id,
+          department_name:
+            String(emp.department_name || "").trim() ||
+            meta?.department_name ||
+            "-",
+          pseudonym: meta?.pseudonym || "-",
+        });
+      }
+      setEmployees([...byId.values()].sort((a, b) => a.id - b.id));
     } catch {
       setError("Failed to fetch employees");
     } finally {
@@ -183,21 +225,21 @@ export default function EmployeeCredentialsPage() {
     }
   };
 
-  const getFullName = (emp: Employee) =>
-    `${emp.first_name || ""} ${emp.last_name || ""}`.trim();
+  const uniqueDepartments = useMemo(() => {
+    const depts = employees
+      .map((e) => String(e.department_name || "").replace(/\s+/g, " ").trim())
+      .filter((d) => d && d !== "-");
+    return Array.from(new Set(depts)).sort((a, b) => a.localeCompare(b));
+  }, [employees]);
 
-  const filteredEmployees = employees.filter(
-    (emp) =>
-      emp.first_name?.toLowerCase().includes(search.toLowerCase()) ||
-      emp.last_name?.toLowerCase().includes(search.toLowerCase()) ||
-      emp.username?.toLowerCase().includes(search.toLowerCase()) ||
-      emp.email_work?.toLowerCase().includes(search.toLowerCase()) ||
-      emp.email_other?.toLowerCase().includes(search.toLowerCase()) ||
-      emp.id?.toString().includes(search),
-  );
+  const filteredEmployees = useMemo(() => {
+    return employees.filter((emp) => {
+      if (!employeeMatchesSearch(emp, search)) return false;
+      return leaveDeptMatches(emp.department_name, departmentFilter);
+    });
+  }, [employees, search, departmentFilter]);
 
-  const detailEmail =
-    detailEmp?.email_work || detailEmp?.email_other || "";
+  const detailEmail = detailEmp?.email_work || detailEmp?.email_other || "";
 
   return (
     <OptionalAdminShell>
@@ -238,6 +280,19 @@ export default function EmployeeCredentialsPage() {
                 autoComplete="off"
               />
             </div>
+            <select
+              className={leaveStyles.toolbarSelect}
+              value={departmentFilter}
+              onChange={(e) => setDepartmentFilter(e.target.value)}
+              aria-label="Filter by department"
+            >
+              <option value="">All departments</option>
+              {uniqueDepartments.map((dept) => (
+                <option key={dept} value={dept}>
+                  {dept}
+                </option>
+              ))}
+            </select>
             <span className={styles.empListShowing}>
               Showing: {filteredEmployees.length}
             </span>
