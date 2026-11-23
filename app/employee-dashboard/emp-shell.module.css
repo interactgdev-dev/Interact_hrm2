@@ -86,8 +86,8 @@
   min-height: 100vh !important;
   max-height: 100vh !important;
   margin-left: 0;
-  /* Instant push — keeps hero/profile name out from under the sliding sidebar */
-  transition: none;
+  /* Match sidebar slide — smooth content reflow (same easing as dock) */
+  transition: margin-left 0.7s cubic-bezier(0.33, 0.1, 0.25, 1);
   overflow-x: clip;
 }
 

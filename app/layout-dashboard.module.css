@@ -245,8 +245,8 @@
   -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable;
   margin-left: 0;
-  /* Instant push — names/tables must not sit under the sliding sidebar */
-  transition: none;
+  /* Match sidebar slide — smooth content reflow (same easing as dock) */
+  transition: margin-left 0.7s cubic-bezier(0.33, 0.1, 0.25, 1);
 }
 
 .main {
