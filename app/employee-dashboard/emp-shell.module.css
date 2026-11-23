@@ -23,10 +23,14 @@
   width: 16px;
   z-index: 999;
   overflow: visible;
+  /* Expand hit-area instantly so labels are never left-clipped mid-slide */
+  transition: none;
 }
 
+.sidebarDock:hover,
 .sidebarDockOpen {
   width: 260px;
+  overflow: visible;
 }
 
 .sidebarRail {
@@ -80,7 +84,9 @@
   min-height: 100vh !important;
   max-height: 100vh !important;
   margin-left: 0;
-  transition: margin-left 0.7s cubic-bezier(0.33, 0.1, 0.25, 1);
+  /* Instant push — keeps hero/profile name out from under the sliding sidebar */
+  transition: none;
+  overflow-x: clip;
 }
 
 .contentPushed {
@@ -327,10 +333,17 @@
   letter-spacing: -0.03em;
   color: #0f172a;
   line-height: 1.2;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .heroNameAccent {
   color: #0d9488;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
 }
 
 .heroDate {
@@ -431,6 +444,17 @@
   font-size: 14px;
   font-weight: 600;
   color: #0f172a;
+  min-width: 0;
+  flex-shrink: 0;
+  max-width: min(100%, 420px);
+  overflow: visible;
+}
+
+.subPageProfile > span {
+  overflow: visible;
+  text-overflow: unset;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .attendanceDock {

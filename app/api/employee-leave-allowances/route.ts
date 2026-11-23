@@ -165,10 +165,31 @@ export async function GET(req: NextRequest) {
         bereavement_allowance: bereavementAllowance,
         maternity_allowance: genderNorm === "female" ? maternityAllowance : 0,
         paternity_allowance: genderNorm === "male" ? paternityAllowance : 0,
-        annual_used: used.annual_used,
-        bereavement_used: used.bereavement_used,
-        maternity_used: used.maternity_used,
-        paternity_used: used.paternity_used,
+        // Effective used = allowance − remaining (tickets + HR adjustments).
+        annual_used: roundLeaveDays(
+          Math.max(0, annualAllowance - (annualAllowance - used.annual_used + annualAdjustment)),
+        ),
+        bereavement_used: roundLeaveDays(
+          Math.max(
+            0,
+            bereavementAllowance -
+              (bereavementAllowance - used.bereavement_used + bereavementAdjustment),
+          ),
+        ),
+        maternity_used: roundLeaveDays(
+          Math.max(
+            0,
+            maternityAllowance -
+              (maternityAllowance - used.maternity_used + maternityAdjustment),
+          ),
+        ),
+        paternity_used: roundLeaveDays(
+          Math.max(
+            0,
+            paternityAllowance -
+              (paternityAllowance - used.paternity_used + paternityAdjustment),
+          ),
+        ),
         annual_balance_adjustment: annualAdjustment,
         bereavement_balance_adjustment: bereavementAdjustment,
         maternity_balance_adjustment: maternityAdjustment,

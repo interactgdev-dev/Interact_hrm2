@@ -442,31 +442,25 @@ function ManageLeavesPageInner() {
     const annualCurrent = Number.isFinite(Number(emp.annual_current_balance))
       ? Number(emp.annual_current_balance)
       : annualAllow;
-    const annualUsed = Number.isFinite(Number(emp.annual_used))
-      ? Number(emp.annual_used)
-      : Math.max(0, annualAllow - annualCurrent);
+    // Used = allowance − remaining (includes approved leaves + HR balance edits).
+    // Never trust stale ticket-only annual_used=0 after a manual balance update.
+    const annualUsed = Math.round(Math.max(0, annualAllow - annualCurrent) * 2) / 2;
     const berAllow = Number(emp.bereavement_allowance) || 3;
     const berCurrent = Number.isFinite(Number(emp.bereavement_current_balance))
       ? Number(emp.bereavement_current_balance)
       : berAllow;
-    const berUsed = Number.isFinite(Number(emp.bereavement_used))
-      ? Number(emp.bereavement_used)
-      : Math.max(0, berAllow - berCurrent);
+    const berUsed = Math.round(Math.max(0, berAllow - berCurrent) * 2) / 2;
     const gender = normalizeEmployeeGender(emp.gender);
     const matAllow = Number(emp.maternity_allowance) || 90;
     const matCurrent = Number.isFinite(Number(emp.maternity_current_balance))
       ? Number(emp.maternity_current_balance)
       : matAllow;
-    const matUsed = Number.isFinite(Number(emp.maternity_used))
-      ? Number(emp.maternity_used)
-      : Math.max(0, matAllow - matCurrent);
+    const matUsed = Math.round(Math.max(0, matAllow - matCurrent) * 2) / 2;
     const patAllow = Number(emp.paternity_allowance) || 5;
     const patCurrent = Number.isFinite(Number(emp.paternity_current_balance))
       ? Number(emp.paternity_current_balance)
       : patAllow;
-    const patUsed = Number.isFinite(Number(emp.paternity_used))
-      ? Number(emp.paternity_used)
-      : Math.max(0, patAllow - patCurrent);
+    const patUsed = Math.round(Math.max(0, patAllow - patCurrent) * 2) / 2;
     const available = Math.round(Math.max(0, annualCurrent) * 2) / 2;
     const annualPct =
       annualAllow > 0
