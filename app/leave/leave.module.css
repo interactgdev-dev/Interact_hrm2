@@ -135,11 +135,11 @@
   background: #fff;
 }
 
-/** Balances: shrink with sidebar — no clipped Action column */
+/** Balances: keep Employee names readable when sidebar pushes content */
 .balTable {
   table-layout: fixed;
   width: 100%;
-  min-width: 0;
+  min-width: 980px;
 }
 
 .balTable thead th,
@@ -153,16 +153,37 @@
   width: 52px;
 }
 
+.balTable th:nth-child(2),
+.balTable td:nth-child(2) {
+  width: 22%;
+  min-width: 200px;
+  overflow: visible;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
 .balTable th:last-child,
 .balTable td:last-child {
   width: 76px;
 }
 
 .balTable .personCell {
-  max-width: 100%;
+  max-width: none;
   width: 100%;
-  min-width: 0;
-  overflow: hidden;
+  min-width: 180px;
+  overflow: visible;
+}
+
+/* Full name visible on Balances — table scrolls instead of Muha… */
+.balTable .personCell :global(button),
+.balTable .personCell :global(span) {
+  overflow: visible !important;
+  text-overflow: unset !important;
+  max-width: none !important;
+}
+
+.balTable .personCell :global(span) {
+  white-space: nowrap;
 }
 
 .balTable .pseudoLine {
@@ -529,7 +550,7 @@
   flex-direction: column;
   gap: 0;
   min-width: 0;
-  max-width: 220px;
+  max-width: none;
 }
 
 .pseudoLine {

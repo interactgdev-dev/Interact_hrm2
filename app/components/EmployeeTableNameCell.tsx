@@ -26,7 +26,7 @@ export function EmployeeTableNameCell({ name, employeeId, photo, onOpen }: Props
       >
         <EmployeeAvatar name={name} initials={initials} photo={photo} size="sm" ring="purple" />
       </button>
-      <button type="button" className={styles.nameBtn} onClick={onOpen}>
+      <button type="button" className={styles.nameBtn} onClick={onOpen} title={name || undefined}>
         <span className={styles.name}>{name || "—"}</span>
       </button>
     </div>

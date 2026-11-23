@@ -241,11 +241,12 @@
   background: transparent !important;
   max-height: calc(100vh - var(--topbar-height));
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: clip;
   -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable;
   margin-left: 0;
-  transition: margin-left 0.7s cubic-bezier(0.33, 0.1, 0.25, 1);
+  /* Instant push — names/tables must not sit under the sliding sidebar */
+  transition: none;
 }
 
 .main {
