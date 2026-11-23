@@ -83,3 +83,38 @@ export function punchOnlyPinForId(employeeId: string): string | undefined {
 export function punchOnlyDisplayName(e: PunchOnlyEmployee): string {
   return `${e.firstName} ${e.lastName}`.trim();
 }
+
+/**
+ * True only when Emp ID is on the Admin punch-only roster AND the display name
+ * matches that roster person. Prevents reused IDs (e.g. Emp 160 Usman Ali Bhatti
+ * inactive vs roster Dawood Masih / pin 140015) from stealing punches or cards.
+ */
+export function punchOnlyRosterApplies(
+  employeeId: string | number | null | undefined,
+  employeeName?: string | null,
+): boolean {
+  const roster = punchOnlyById(String(employeeId || "").trim());
+  if (!roster) return false;
+  const name = String(employeeName || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (!name || name === "-" || name === "—") return true;
+  const first = roster.firstName.toLowerCase();
+  const full = punchOnlyDisplayName(roster).toLowerCase();
+  return name === full || name.includes(first);
+}
+
+/** HRM employee_list status — inactive / left staff must not get Monthly Attendance cards. */
+export function isHrmEmployeeInactive(status: string | null | undefined): boolean {
+  const s = String(status || "")
+    .trim()
+    .toLowerCase();
+  return (
+    s === "inactive" ||
+    s === "disabled" ||
+    s === "terminated" ||
+    s === "left" ||
+    s === "resigned"
+  );
+}

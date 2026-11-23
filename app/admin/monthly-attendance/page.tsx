@@ -144,26 +144,13 @@ type MonthlyAttendanceEmployeeRow = {
 
 import {
   PUNCH_ONLY_DEFAULT_SHIFT,
-  PUNCH_ONLY_EMPLOYEE_IDS,
   PUNCH_ONLY_EMPLOYEES,
+  isHrmEmployeeInactive,
   punchOnlyById,
   punchOnlyDisplayName,
   punchOnlyPinForId,
+  punchOnlyRosterApplies,
 } from "../../../lib/punch-only-employees";
-
-/**
- * Who may appear as a "punch-only" employee card with no HRM clock-in rows.
- * Admin dept / punch-only roster only. Normal staff cards still come from attendance.
- * (ZK T.Punch on Absent days is enabled separately via includeZkOnlyDays=true.)
- */
-function allowsPunchWithoutClockIn(
-  employeeId: string | number | null | undefined,
-  departmentName: string | null | undefined,
-): boolean {
-  const id = String(employeeId || "").trim();
-  if (id && PUNCH_ONLY_EMPLOYEE_IDS.has(id)) return true;
-  return isAdminStaffDepartment(departmentName);
-}
 
 /** Billable late is already after 1h relaxation — show/sum any minutes > 0. */
 const EXCESS_LATE_SHOW_AFTER_MINUTES = 0;
@@ -180,12 +167,6 @@ interface AttendanceRecord {
   total_hours: string;
   is_late: boolean;
   late_minutes: number | null;
-}
-
-interface CalendarDayOverride {
-  date: string;
-  status: "off" | "working";
-  note?: string | null;
 }
 
 function normalizeToDateKey(value: string) {
@@ -207,22 +188,14 @@ function addDaysToDateKey(dateKey: string, daysToAdd: number) {
   return `${utc.getUTCFullYear()}-${String(utc.getUTCMonth() + 1).padStart(2, "0")}-${String(utc.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** Coming days (after today Asia/Karachi) — no Absent/100% until the day arrives. */
-function isFutureAttendanceDay(dateKey: string) {
-  if (!dateKey) return false;
-  const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-  return dateKey > todayKey;
-}
-
-/** Empty working-day cell: Leave / future --- / past Absent. */
+/** Empty working-day cell: Leave / Absent 100%. Future days also Absent until clock-in. */
 function emptyWorkingDayStatus(
-  dateKey: string,
+  _dateKey: string,
   workingDay: boolean,
   leaveKind: ReturnType<typeof approvedLeaveOnDay>,
 ): { statusLabel: string; deduction: string } {
   if (!workingDay) return { statusLabel: "Off", deduction: "" };
   if (leaveKind) return attendanceFromApprovedLeaveDay(leaveKind);
-  if (isFutureAttendanceDay(dateKey)) return { statusLabel: "---", deduction: "0%" };
   return { statusLabel: "Absent", deduction: "100%" };
 }
 
@@ -230,7 +203,7 @@ function emptyWorkingDayStatus(
 const OVERTIME_MIN_SECONDS = 60 * 60;
 
 export default function MonthlyAttendancePage() {
-    // Month working days: Mon–Fri (or calendar "working"), minus calendar "off" only.
+    // Month working days: Mon–Fri only (calendar does not auto-Off).
     // Full-day leave does NOT reduce this — leave stays paid against the month base.
     function getTotalWorkingDays(monthInfo: any) {
       let count = 0;
@@ -382,7 +355,6 @@ export default function MonthlyAttendancePage() {
   const [selectedMonth, setSelectedMonth] = useState(
     todayStr.slice(0, 7)
   );
-  const [calendarOverrides, setCalendarOverrides] = useState<Record<string, CalendarDayOverride>>({});
   const [approvedLeavesMap, setApprovedLeavesMap] = useState<ApprovedLeavesMap>({});
   const [importedSnapshot, setImportedSnapshot] = useState<ImportedMonthlySnapshot | null>(null);
   const [tungstenCtx, setTungstenCtx] = useState<TungstenPunchContext | null>(null);
@@ -868,21 +840,6 @@ export default function MonthlyAttendancePage() {
     const lastDate = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, "0")}`;
     setFromDate(firstDate);
     setToDate(lastDate);
-  }, [selectedMonth]);
-
-  useEffect(() => {
-    if (!selectedMonth) return;
-    fetch(`/api/calendar?month=${selectedMonth}`, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (!data?.success) return;
-        const map: Record<string, CalendarDayOverride> = {};
-        (data.days || []).forEach((d: CalendarDayOverride) => {
-          map[d.date] = d;
-        });
-        setCalendarOverrides(map);
-      })
-      .catch((err) => console.error("calendar fetch", err));
   }, [selectedMonth]);
 
   function calculateTotalSeconds(clockIn: string | null, clockOut: string | null): number {
@@ -1491,10 +1448,12 @@ export default function MonthlyAttendancePage() {
     ).trim();
   }
 
+  /**
+   * Working day = Mon–Fri only. Calendar never auto-sets Off (Off is manual status only).
+   * Sat/Sun stay Off until an admin manually changes a day if needed.
+   */
   function isWorkingDay(dateKey: string) {
     if (!dateKey) return false;
-    const override = calendarOverrides[dateKey];
-    if (override) return override.status === "working";
     const [yearStr, monthStr, dayStr] = dateKey.split("-");
     const year = Number(yearStr);
     const monthIndex = Number(monthStr) - 1;
@@ -1524,9 +1483,12 @@ export default function MonthlyAttendancePage() {
     };
   }
 
-  function shiftResolverForEmployee(employeeId: string): EmployeeShiftResolver {
+  function shiftResolverForEmployee(
+    employeeId: string,
+    employeeName?: string | null,
+  ): EmployeeShiftResolver {
     const row = shiftAssignments.find((s) => s.employeeId === String(employeeId));
-    const punchOnly = PUNCH_ONLY_EMPLOYEE_IDS.has(String(employeeId));
+    const punchOnly = punchOnlyRosterApplies(employeeId, employeeName);
     if (!row) {
       if (!punchOnly) return () => null;
       return () => ({
@@ -1554,13 +1516,13 @@ export default function MonthlyAttendancePage() {
     if (employee.isImported) return [];
     if (!ctx || !fromDate || !toDate) return [];
     const empId = String(employee.employeeId);
-    if (PUNCH_ONLY_EMPLOYEE_IDS.has(empId)) {
+    if (punchOnlyRosterApplies(empId, employee.employeeName)) {
       return buildShiftPunchOnlySessions(
         employeeMatchKeys(employee),
         ctx,
         fromDate,
         toDate,
-        shiftResolverForEmployee(empId),
+        shiftResolverForEmployee(empId, employee.employeeName),
       );
     }
     const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
@@ -1578,7 +1540,7 @@ export default function MonthlyAttendancePage() {
       Date.now(),
       zkFrom,
       zkTo,
-      shiftResolverForEmployee(empId),
+      shiftResolverForEmployee(empId, employee.employeeName),
       true,
     );
   }
@@ -1913,7 +1875,7 @@ export default function MonthlyAttendancePage() {
   }
 
   function formatDeductionSummaryStatus(statusLabel: string): string {
-    if (statusLabel === "Leave") return "PTO By Company";
+    // Keep Leave label (blue / approved) — do not rename to "PTO By Company".
     return statusLabel;
   }
 
@@ -2079,12 +2041,13 @@ export default function MonthlyAttendancePage() {
             true,
             leaveKind,
           );
-          if (!shouldIncludeInDeductionSummary(statusLabel)) return;
+          const exportLabel = leaveKind ? "Leave" : statusLabel;
+          if (!shouldIncludeInDeductionSummary(exportLabel)) return;
           pushDeductionSummaryRow(
             rows,
             employee,
             day.dateKey,
-            statusLabel,
+            exportLabel,
             deduction,
             meta?.runningLate ?? "",
           );
@@ -2098,9 +2061,10 @@ export default function MonthlyAttendancePage() {
         );
         const leaveAtt = leaveKind ? attendanceFromApprovedLeaveDay(leaveKind) : null;
         const emptyFallback = emptyWorkingDayStatus(day.dateKey, true, leaveKind);
-        // ZK punches never invent "On Time" — status from HRM / leave / Absent only.
-        const exportStatus =
-          leaveAtt?.statusLabel || meta?.statusLabel || emptyFallback.statusLabel;
+        // Approved leave (full / half) → "Leave" in deduction summary (not PTO / half labels).
+        const exportStatus = leaveAtt
+          ? "Leave"
+          : meta?.statusLabel || emptyFallback.statusLabel;
         if (!shouldIncludeInDeductionSummary(exportStatus)) return;
         const deduction =
           leaveAtt?.deduction || meta?.deduction || emptyFallback.deduction;
@@ -2233,8 +2197,14 @@ export default function MonthlyAttendancePage() {
     attendance.forEach((record: any) => {
       if (!record.employee_id) return;
       const empId = String(record.employee_id);
-      // Admin Staff punch-only: Tungsten punches only — never apply 1st/2nd half / tardy rules
-      if (employeeIdKeys(empId).some((k) => PUNCH_ONLY_EMPLOYEE_IDS.has(k))) return;
+      // Admin Staff punch-only (name-matched roster): Tungsten only — no 1st/2nd half / tardy rules
+      if (
+        employeeIdKeys(empId).some((k) =>
+          punchOnlyRosterApplies(k, record.employee_name),
+        )
+      ) {
+        return;
+      }
       const bucket =
         lookupByEmployeeId(map, empId) ||
         (() => {
@@ -2362,29 +2332,41 @@ export default function MonthlyAttendancePage() {
     const hrmById = new Map(
       allHrmEmployees.map((e) => [e.employeeId, e] as const),
     );
-    const enriched = attendanceByEmployeeAll.map((row) => {
-      const hrm = hrmById.get(row.employeeId);
-      const rosterPin = punchOnlyPinForId(row.employeeId) || "";
-      return {
-        ...row,
-        employeeCode: row.employeeCode || hrm?.employeeCode || rosterPin || "",
-        departmentName:
-          row.departmentName && row.departmentName !== "-"
-            ? row.departmentName
-            : hrm?.departmentName || row.departmentName,
-        gender: row.gender || hrm?.gender || "",
-        pseudonym:
-          row.pseudonym && row.pseudonym !== "-"
-            ? row.pseudonym
-            : hrm?.pseudonym || row.pseudonym,
-      };
-    });
+    const enriched = attendanceByEmployeeAll
+      .map((row) => {
+        const hrm = hrmById.get(row.employeeId);
+        const rosterPin = punchOnlyPinForId(row.employeeId) || "";
+        return {
+          ...row,
+          employeeCode: row.employeeCode || hrm?.employeeCode || rosterPin || "",
+          departmentName:
+            row.departmentName && row.departmentName !== "-"
+              ? row.departmentName
+              : hrm?.departmentName || row.departmentName,
+          gender: row.gender || hrm?.gender || "",
+          pseudonym:
+            row.pseudonym && row.pseudonym !== "-"
+              ? row.pseudonym
+              : hrm?.pseudonym || row.pseudonym,
+        };
+      })
+      .filter((row) => {
+        const hrm = hrmById.get(row.employeeId);
+        if (!hrm) return true;
+        if (isHrmEmployeeInactive(hrm.status)) {
+          // Keep only when this ID is the real Admin punch-only roster person (name match).
+          return punchOnlyRosterApplies(row.employeeId, row.employeeName);
+        }
+        return true;
+      });
 
     const existing = new Set(enriched.map((e) => e.employeeId));
     const extra: MonthlyAttendanceEmployeeRow[] = [];
 
     for (const hrm of allHrmEmployees) {
       if (existing.has(hrm.employeeId)) continue;
+      // Inactive / left staff: never invent Monthly Attendance cards.
+      if (isHrmEmployeeInactive(hrm.status)) continue;
       if (
         selectedDepartment &&
         hrm.departmentName.toLowerCase() !== selectedDepartment.toLowerCase()
@@ -2404,24 +2386,22 @@ export default function MonthlyAttendancePage() {
           Object.keys(approvedLeavesMap[String(hrm.employeeId)] || {}).length > 0,
       );
 
-      // Punch-without-clock-in cards are Admin / punch-only only.
-      // Normal employees appear from HRM clock-in attendance rows, not ZK punches alone.
-      const canPunchOnlyCard = allowsPunchWithoutClockIn(
+      const isRosterPunchOnly = punchOnlyRosterApplies(
         hrm.employeeId,
-        hrm.departmentName,
+        hrm.employeeName,
       );
+      // Active + ZK punches → card (status stays Absent until HRM clock-in).
       const hasPunches =
-        canPunchOnlyCard &&
         Boolean(tungstenCtx) &&
         Boolean(fromDate) &&
         Boolean(toDate) &&
-        Boolean(hrm.employeeCode || punchOnlyPinForId(String(hrm.employeeId))) &&
         employeeHasZkPunchesInRange(
           tungstenCtx as TungstenPunchContext,
           {
             employeeName: hrm.employeeName,
             employeeCode:
-              hrm.employeeCode || punchOnlyPinForId(String(hrm.employeeId)) || "",
+              hrm.employeeCode ||
+              (isRosterPunchOnly ? punchOnlyPinForId(String(hrm.employeeId)) || "" : ""),
             employeeId: hrm.employeeId,
             pseudonym: hrm.pseudonym,
           },
@@ -2429,10 +2409,11 @@ export default function MonthlyAttendancePage() {
           toDate,
         );
 
-      const forcePunchOnlyCard = PUNCH_ONLY_EMPLOYEE_IDS.has(String(hrm.employeeId));
-      if (!hasPunches && !matchesSearch && !forcePunchOnlyCard && !hasApprovedLeave) continue;
+      if (!hasPunches && !matchesSearch && !isRosterPunchOnly && !hasApprovedLeave) {
+        continue;
+      }
 
-      const roster = punchOnlyById(String(hrm.employeeId));
+      const roster = isRosterPunchOnly ? punchOnlyById(String(hrm.employeeId)) : undefined;
       extra.push({
         employeeId: hrm.employeeId,
         employeeName: hrm.employeeName,
@@ -2445,18 +2426,34 @@ export default function MonthlyAttendancePage() {
       });
     }
 
-    // Restore punch-only cards even if HRM rows 153–156 were deleted from staging.
+    // Restore Admin punch-only cards (by roster name). Skips when a real matching
+    // roster person already has a card; unused IDs (e.g. 160 after inactive Usman
+    // filtered out) still get Dawood/etc. under the roster pin.
     for (const roster of PUNCH_ONLY_EMPLOYEES) {
-      if (existing.has(roster.id) || extra.some((e) => e.employeeId === roster.id)) continue;
+      const rosterName = punchOnlyDisplayName(roster);
+      const hasMatchingCard =
+        enriched.some((e) => punchOnlyRosterApplies(e.employeeId, e.employeeName) && e.employeeId === roster.id) ||
+        extra.some((e) => punchOnlyRosterApplies(e.employeeId, e.employeeName) && e.employeeId === roster.id);
+      if (hasMatchingCard) continue;
+      // Active HRM employee already using this id with attendance — do not duplicate.
+      if (enriched.some((e) => e.employeeId === roster.id)) continue;
       if (
         selectedDepartment &&
         roster.departmentName.toLowerCase() !== selectedDepartment.toLowerCase()
       ) {
         continue;
       }
+      for (let i = extra.length - 1; i >= 0; i--) {
+        if (
+          extra[i].employeeId === roster.id &&
+          !punchOnlyRosterApplies(extra[i].employeeId, extra[i].employeeName)
+        ) {
+          extra.splice(i, 1);
+        }
+      }
       extra.push({
         employeeId: roster.id,
-        employeeName: punchOnlyDisplayName(roster),
+        employeeName: rosterName,
         employeeCode: roster.pin,
         pseudonym: "-",
         departmentName: roster.departmentName,
@@ -2512,7 +2509,7 @@ export default function MonthlyAttendancePage() {
     attendanceByEmployeeAllMerged.forEach((emp) => {
       const empId = String(emp.employeeId);
       if (!tungstenCtx || !fromDate || !toDate) return;
-      if (PUNCH_ONLY_EMPLOYEE_IDS.has(empId)) {
+      if (punchOnlyRosterApplies(empId, emp.employeeName)) {
         out.set(
           String(emp.employeeId),
           buildShiftPunchOnlySessions(
@@ -2520,7 +2517,7 @@ export default function MonthlyAttendancePage() {
             tungstenCtx,
             fromDate,
             toDate,
-            shiftResolverForEmployee(empId),
+            shiftResolverForEmployee(empId, emp.employeeName),
           ),
         );
         return;
@@ -2528,7 +2525,7 @@ export default function MonthlyAttendancePage() {
       const allRecords = recordsByEmployeeId.get(empId) || [];
       out.set(
         String(emp.employeeId),
-        // All employees: invent ZK-only T.Punch rows; status stays HRM clock-in/out based.
+        // ZK-only T.Punch rows OK; status stays Absent until HRM clock-in exists.
         buildEmployeeReportSessions(
           employeeMatchKeys(emp),
           allRecords,
@@ -2537,7 +2534,7 @@ export default function MonthlyAttendancePage() {
           pairingNow,
           zkFrom,
           zkTo,
-          shiftResolverForEmployee(empId),
+          shiftResolverForEmployee(empId, emp.employeeName),
           true,
         ),
       );
@@ -2639,9 +2636,9 @@ export default function MonthlyAttendancePage() {
   const workingDayRows = useMemo(
     () =>
       (monthInfo.days || []).filter((day: { dateKey: string }) => isWorkingDay(day.dateKey)),
-    // monthInfo + calendar overrides drive isWorkingDay
+    // monthInfo drives isWorkingDay (Mon–Fri; calendar does not auto-Off)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [monthInfo, calendarOverrides, selectedMonth],
+    [monthInfo, selectedMonth],
   );
   const expandedEmployees = useMemo(
     () => attendanceByEmployee.filter((e) => expandedEmployeeIds[e.employeeId]),

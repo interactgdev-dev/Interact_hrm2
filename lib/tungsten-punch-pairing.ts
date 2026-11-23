@@ -44,6 +44,8 @@ export type HrmEmployeeRef = {
   departmentName: string;
   pseudonym: string;
   gender: string;
+  /** hrm_employees.status — active | inactive | … */
+  status: string;
 };
 
 /** Match Tungsten punches to an HRM employee by PIN (employee_code) and/or name. */
@@ -225,6 +227,7 @@ export function hrmEmployeesFromList(
     department_name?: string | null;
     pseudonym?: string | null;
     gender?: string | null;
+    status?: string | null;
   }[],
 ): HrmEmployeeRef[] {
   return employees
@@ -241,6 +244,7 @@ export function hrmEmployeesFromList(
         departmentName: String(e.department_name ?? "").trim() || "-",
         pseudonym: String(e.pseudonym ?? "").trim() || "-",
         gender: String(e.gender ?? "").trim(),
+        status: String(e.status ?? "").trim(),
       };
     })
     .filter((e): e is HrmEmployeeRef => e != null);
