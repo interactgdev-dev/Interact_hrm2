@@ -338,17 +338,29 @@ function ManageLeavesPageInner() {
           console.error("Error fetching employee list:", err);
         }
 
-        const enrichedEmployees = data.employees.map((emp: Employee) => ({
-          ...emp,
-          department_name:
+        const enrichedEmployees = data.employees.map((emp: Employee) => {
+          const id = Number(emp.id);
+          const fromList = empDetailsMap.get(id);
+          // Prefer directory department (employee-list) so Balances filter matches the column.
+          const department_name =
             String(
-              emp.department_name ||
-                empDetailsMap.get(emp.id)?.department_name ||
-                "",
-            ).trim() || "-",
-          pseudonym: empDetailsMap.get(emp.id)?.pseudonym || "-",
-        }));
-        setEmployees(enrichedEmployees);
+              fromList?.department_name || emp.department_name || "",
+            )
+              .replace(/\s+/g, " ")
+              .trim() || "-";
+          return {
+            ...emp,
+            id,
+            department_name,
+            pseudonym: fromList?.pseudonym || "-",
+          };
+        });
+        // Guard against duplicate id rows from join fan-out.
+        const byId = new Map<number, Employee>();
+        for (const emp of enrichedEmployees) {
+          if (!byId.has(emp.id)) byId.set(emp.id, emp);
+        }
+        setEmployees([...byId.values()]);
       } else {
         toastError("Failed to fetch employees: " + data.error);
       }
@@ -508,13 +520,17 @@ function ManageLeavesPageInner() {
     const fromEmployees = Array.from(
       new Set(
         employees
-          .map((e) => String(e.department_name || "").trim())
+          .map((e) => String(e.department_name || "").replace(/\s+/g, " ").trim())
           .filter((d) => d && d !== "-"),
       ),
     ).sort((a, b) => a.localeCompare(b));
     if (fromEmployees.length) return fromEmployees;
     return departments
-      .map((d) => String(d.name || d.department_name || "").trim())
+      .map((d) =>
+        String(d.name || d.department_name || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+      )
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b));
   }, [employees, departments]);
@@ -538,31 +554,30 @@ function ManageLeavesPageInner() {
   };
 
   const filteredEmployees = useMemo(() => {
-    let rows = employees;
+    const deptFilter = String(selectedDepartment || "").trim();
     const term = deferredSearchName.trim().toLowerCase();
-    if (term) {
-      rows = rows.filter((emp) => {
+    return employees.filter((emp) => {
+      if (deptFilter && !leaveDeptMatches(emp.department_name, deptFilter)) {
+        return false;
+      }
+      if (term) {
         const fullName = getFullName(emp).toLowerCase();
         const pseudo = (emp.pseudonym || "").toLowerCase();
         const id = String(emp.id || "");
-        return fullName.includes(term) || pseudo.includes(term) || id.includes(term);
-      });
-    }
-    if (selectedDepartment) {
-      rows = rows.filter((emp) =>
-        leaveDeptMatches(emp.department_name, selectedDepartment),
-      );
-    }
-    if (employmentStatusFilter) {
-      rows = rows.filter((emp) => employmentStatusKey(emp) === employmentStatusFilter);
-    }
-    if (lowBalanceOnly) {
-      rows = rows.filter((emp) => balanceFor(emp).available < 4);
-    }
-    if (monthActiveIds) {
-      rows = rows.filter((emp) => monthActiveIds.has(String(emp.id)));
-    }
-    return rows;
+        if (!fullName.includes(term) && !pseudo.includes(term) && !id.includes(term)) {
+          return false;
+        }
+      }
+      if (
+        employmentStatusFilter &&
+        employmentStatusKey(emp) !== employmentStatusFilter
+      ) {
+        return false;
+      }
+      if (lowBalanceOnly && balanceFor(emp).available >= 4) return false;
+      if (monthActiveIds && !monthActiveIds.has(String(emp.id))) return false;
+      return true;
+    });
   }, [
     employees,
     deferredSearchName,
@@ -659,7 +674,11 @@ function ManageLeavesPageInner() {
                     id="bal-filter-dept"
                     className={leaveStyles.toolbarSelect}
                     value={selectedDepartment}
-                    onChange={(e) => setSelectedDepartment(e.target.value)}
+                    onChange={(e) =>
+                      setSelectedDepartment(
+                        String(e.target.value || "").replace(/\s+/g, " ").trim(),
+                      )
+                    }
                     aria-label="Filter by department"
                   >
                     <option value="">All departments</option>
