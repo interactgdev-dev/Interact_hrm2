@@ -90,18 +90,38 @@ export function leaveDurationLabel(duration: LeaveDuration | null | undefined): 
   return "—";
 }
 
-/** Monthly Attendance status + pay deduction for an approved leave day. */
+/** Same blue as full-day Leave on Monthly Attendance. */
+export const APPROVED_LEAVE_STATUS_COLOR = "#3182CE";
+
+/**
+ * Monthly Attendance status + pay deduction for an approved leave day.
+ * Paid leave (full / 1st half / 2nd half): always 0% salary deduction;
+ * half-day keeps 1st/2nd label but uses Leave blue (not unpaid half-day red).
+ */
 export function attendanceFromApprovedLeaveDay(kind: ApprovedLeaveDayKind): {
   statusLabel: string;
   deduction: string;
+  statusColor: string;
 } {
   if (kind === "first_half") {
-    return { statusLabel: "1st-Half Day", deduction: "50%" };
+    return {
+      statusLabel: "1st-Half Day",
+      deduction: "0%",
+      statusColor: APPROVED_LEAVE_STATUS_COLOR,
+    };
   }
   if (kind === "second_half") {
-    return { statusLabel: "2nd-Half Day", deduction: "50%" };
+    return {
+      statusLabel: "2nd-Half Day",
+      deduction: "0%",
+      statusColor: APPROVED_LEAVE_STATUS_COLOR,
+    };
   }
-  return { statusLabel: "Leave", deduction: "0%" };
+  return {
+    statusLabel: "Leave",
+    deduction: "0%",
+    statusColor: APPROVED_LEAVE_STATUS_COLOR,
+  };
 }
 
 export function approvedLeaveKindFromRow(leave: {

@@ -1288,6 +1288,8 @@ export default function MonthlyAttendancePage() {
     isManual?: boolean;
     disabled?: boolean;
     attendanceId?: number | null;
+    /** Approved leave (incl. half day) uses Leave blue instead of unpaid half-day red. */
+    statusColorOverride?: string | null;
   }) {
     const {
       employeeId,
@@ -1297,6 +1299,7 @@ export default function MonthlyAttendancePage() {
       isManual,
       disabled,
       attendanceId,
+      statusColorOverride,
     } = opts;
     if (displayStatus === "---" || disabled) {
       return <span>---</span>;
@@ -1322,7 +1325,7 @@ export default function MonthlyAttendancePage() {
           }
           style={{
             fontWeight: 600,
-            color: uiStatusTextColor(current),
+            color: statusColorOverride || uiStatusTextColor(current),
             border: "1px solid #cbd5e1",
             borderRadius: 6,
             padding: "2px 6px",
@@ -2771,6 +2774,9 @@ export default function MonthlyAttendancePage() {
                               employee.employeeId,
                               day.dateKey,
                             );
+                            const leaveAttEmpty = leaveKind
+                              ? attendanceFromApprovedLeaveDay(leaveKind)
+                              : null;
                             const emptyAuto = emptyWorkingDayStatus(
                               day.dateKey,
                               workingDay,
@@ -2781,14 +2787,21 @@ export default function MonthlyAttendancePage() {
                               day.dateKey,
                             );
                             const statusLabel = emptyOverride || emptyAuto.statusLabel;
-                            const deduction = emptyOverride
-                              ? deductionForAttendanceStatus(
-                                  emptyOverride,
-                                  normalizeAttendanceStatus(emptyOverride) === "Tardy"
-                                    ? meta?.runningLate
-                                    : 0,
-                                )
-                              : emptyAuto.deduction;
+                            // Approved leave (incl. half day) always 0% — same as full-day Leave.
+                            const deduction = leaveAttEmpty
+                              ? leaveAttEmpty.deduction
+                              : emptyOverride
+                                ? deductionForAttendanceStatus(
+                                    emptyOverride,
+                                    normalizeAttendanceStatus(emptyOverride) === "Tardy"
+                                      ? meta?.runningLate
+                                      : 0,
+                                  )
+                                : emptyAuto.deduction;
+                            const emptyStatusColor =
+                              leaveAttEmpty && !emptyOverride
+                                ? leaveAttEmpty.statusColor
+                                : uiStatusTextColor(statusLabel);
                             return (
                               <tr key={`${employee.employeeId}-${day.dateKey}-empty`}>
                                 <td>{day.weekday}</td>
@@ -2806,7 +2819,7 @@ export default function MonthlyAttendancePage() {
                                     ? meta.runningLate
                                     : ""}
                                 </td>
-                                <td style={{ color: uiStatusTextColor(statusLabel), fontWeight: 600 }}>
+                                <td style={{ color: emptyStatusColor, fontWeight: 600 }}>
                                   {renderEditableStatusCell({
                                     employeeId: employee.employeeId,
                                     dateKey: day.dateKey,
@@ -2817,6 +2830,10 @@ export default function MonthlyAttendancePage() {
                                         : null,
                                     isManual: Boolean(emptyOverride),
                                     disabled: statusLabel === "---",
+                                    statusColorOverride:
+                                      leaveAttEmpty && !emptyOverride
+                                        ? leaveAttEmpty.statusColor
+                                        : null,
                                   })}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>{tardyNoteForCell(employee.employeeId, day.dateKey, statusLabel, undefined, dayRecords)}</td>
@@ -2870,16 +2887,21 @@ export default function MonthlyAttendancePage() {
                                 : null;
                             const effectiveOverride = sessionOverride || dayLevelOverride;
                             const rowStatus = effectiveOverride || dayAutoStatus;
-                            const rowDeduction = effectiveOverride
-                              ? deductionForAttendanceStatus(
-                                  effectiveOverride,
-                                  normalizeAttendanceStatus(effectiveOverride) === "Tardy"
-                                    ? meta?.runningLate
-                                    : 0,
-                                )
-                              : leaveAttDay
-                                ? leaveAttDay.deduction
+                            // Approved leave always 0% (full / 1st / 2nd half) — overrides punch half-day 50%.
+                            const rowDeduction = leaveAttDay
+                              ? leaveAttDay.deduction
+                              : effectiveOverride
+                                ? deductionForAttendanceStatus(
+                                    effectiveOverride,
+                                    normalizeAttendanceStatus(effectiveOverride) === "Tardy"
+                                      ? meta?.runningLate
+                                      : 0,
+                                  )
                                 : meta?.deduction || emptyFallback.deduction;
+                            const rowStatusColor =
+                              leaveAttDay && !effectiveOverride
+                                ? leaveAttDay.statusColor
+                                : uiStatusTextColor(rowStatus);
                             const statusIsManual = Boolean(effectiveOverride);
                             const rowIsTardy =
                               normalizeAttendanceStatus(rowStatus) === "Tardy";
@@ -2932,7 +2954,7 @@ export default function MonthlyAttendancePage() {
                                 </td>
                                 <td
                                   style={{
-                                    color: uiStatusTextColor(rowStatus),
+                                    color: rowStatusColor,
                                     fontWeight: 600,
                                   }}
                                 >
@@ -2944,6 +2966,10 @@ export default function MonthlyAttendancePage() {
                                       index === 0 && rowIsTardy ? meta?.lateMinutes : null,
                                     isManual: statusIsManual,
                                     attendanceId: attId > 0 ? attId : null,
+                                    statusColorOverride:
+                                      leaveAttDay && !effectiveOverride
+                                        ? leaveAttDay.statusColor
+                                        : null,
                                   })}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>
