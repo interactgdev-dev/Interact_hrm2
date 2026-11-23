@@ -401,9 +401,10 @@ export default function AdminTicketsPage({ inboxMode = "admin" }: TicketsPagePro
     const fd = ticket.form_data || {};
     if (!fd || Object.keys(fd).length === 0) {
       return ticket.description ? (
-        <p className={adminStyles.muted} style={{ marginBottom: 12 }}>
-          {ticket.description}
-        </p>
+        <div className={adminStyles.detailBlock} style={{ marginBottom: 12 }}>
+          <span className={adminStyles.detailLabel}>Message</span>
+          <p className={adminStyles.detailReason}>{ticket.description}</p>
+        </div>
       ) : null;
     }
 

@@ -1078,13 +1078,13 @@ function GenerateTicketPageInner() {
             {selectedTicket.ticket_type === "leave" ? (
               <div className={styles.modalThread}>
                 <span className={styles.historyBodyLabel}>Leave request status</span>
-                <p className={styles.historyBodyText}>
+                <p className={styles.ticketHintText}>
                   You can track this leave ticket status here. Chat is not available on leave
                   tickets.
                 </p>
                 {ticketDecidedByLabel(selectedTicket) ? (
                   <p
-                    className={styles.historyBodyText}
+                    className={styles.ticketHintText}
                     style={{
                       marginTop: 10,
                       fontWeight: 700,
@@ -1096,9 +1096,10 @@ function GenerateTicketPageInner() {
                   </p>
                 ) : null}
                 {selectedTicket.description ? (
-                  <p className={styles.historyBodyText} style={{ marginTop: 10 }}>
-                    {selectedTicket.description}
-                  </p>
+                  <div className={styles.ticketContextBox}>
+                    <span className={styles.ticketContextLabel}>Request details</span>
+                    <p className={styles.ticketContextText}>{selectedTicket.description}</p>
+                  </div>
                 ) : null}
               </div>
             ) : (
@@ -1106,7 +1107,7 @@ function GenerateTicketPageInner() {
                 <span className={styles.historyBodyLabel}>Conversation</span>
                 {ticketAcknowledgedByLabel(selectedTicket) ? (
                   <p
-                    className={styles.historyBodyText}
+                    className={styles.ticketHintText}
                     style={{ marginBottom: 10, fontWeight: 700, color: "#1d4ed8" }}
                   >
                     {ticketAcknowledgedByLabel(selectedTicket)}
@@ -1115,7 +1116,10 @@ function GenerateTicketPageInner() {
                 {selectedTicket.messages && selectedTicket.messages.length > 0 ? (
                   <TicketThread messages={selectedTicket.messages} />
                 ) : selectedTicket.description ? (
-                  <p className={styles.historyBodyText}>{selectedTicket.description}</p>
+                  <div className={styles.ticketContextBox}>
+                    <span className={styles.ticketContextLabel}>Message</span>
+                    <p className={styles.ticketContextText}>{selectedTicket.description}</p>
+                  </div>
                 ) : (
                   <p className={styles.empty}>No messages yet.</p>
                 )}
