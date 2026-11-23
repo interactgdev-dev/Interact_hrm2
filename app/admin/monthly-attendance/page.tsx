@@ -169,6 +169,12 @@ interface AttendanceRecord {
   late_minutes: number | null;
 }
 
+interface CalendarDayOverride {
+  date: string;
+  status: "off" | "working";
+  note?: string | null;
+}
+
 function normalizeToDateKey(value: string) {
   if (!value) return "";
   const dateOnlyMatch = /^\d{4}-\d{2}-\d{2}$/.exec(value);
@@ -203,7 +209,7 @@ function emptyWorkingDayStatus(
 const OVERTIME_MIN_SECONDS = 60 * 60;
 
 export default function MonthlyAttendancePage() {
-    // Month working days: Mon–Fri only (calendar does not auto-Off).
+    // Month working days: calendar Off/working overrides, else Mon–Fri.
     // Full-day leave does NOT reduce this — leave stays paid against the month base.
     function getTotalWorkingDays(monthInfo: any) {
       let count = 0;
@@ -355,6 +361,9 @@ export default function MonthlyAttendancePage() {
   const [selectedMonth, setSelectedMonth] = useState(
     todayStr.slice(0, 7)
   );
+  const [calendarOverrides, setCalendarOverrides] = useState<
+    Record<string, CalendarDayOverride>
+  >({});
   const [approvedLeavesMap, setApprovedLeavesMap] = useState<ApprovedLeavesMap>({});
   const [importedSnapshot, setImportedSnapshot] = useState<ImportedMonthlySnapshot | null>(null);
   const [tungstenCtx, setTungstenCtx] = useState<TungstenPunchContext | null>(null);
@@ -840,6 +849,22 @@ export default function MonthlyAttendancePage() {
     const lastDate = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, "0")}`;
     setFromDate(firstDate);
     setToDate(lastDate);
+  }, [selectedMonth]);
+
+  // Company calendar Off/Working → Monthly Attendance Off for all employees.
+  useEffect(() => {
+    if (!selectedMonth) return;
+    fetch(`/api/calendar?month=${selectedMonth}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data?.success) return;
+        const map: Record<string, CalendarDayOverride> = {};
+        (data.days || []).forEach((d: CalendarDayOverride) => {
+          if (d?.date) map[d.date] = d;
+        });
+        setCalendarOverrides(map);
+      })
+      .catch((err) => console.error("calendar fetch", err));
   }, [selectedMonth]);
 
   function calculateTotalSeconds(clockIn: string | null, clockOut: string | null): number {
@@ -1449,11 +1474,13 @@ export default function MonthlyAttendancePage() {
   }
 
   /**
-   * Working day = Mon–Fri only. Calendar never auto-sets Off (Off is manual status only).
-   * Sat/Sun stay Off until an admin manually changes a day if needed.
+   * Working day: company calendar override first (Off / Working),
+   * else Mon–Fri (Sat/Sun Off). Manual status override still wins in the UI.
    */
   function isWorkingDay(dateKey: string) {
     if (!dateKey) return false;
+    const override = calendarOverrides[dateKey];
+    if (override) return override.status === "working";
     const [yearStr, monthStr, dayStr] = dateKey.split("-");
     const year = Number(yearStr);
     const monthIndex = Number(monthStr) - 1;
@@ -2640,9 +2667,9 @@ export default function MonthlyAttendancePage() {
   const workingDayRows = useMemo(
     () =>
       (monthInfo.days || []).filter((day: { dateKey: string }) => isWorkingDay(day.dateKey)),
-    // monthInfo drives isWorkingDay (Mon–Fri; calendar does not auto-Off)
+    // monthInfo + calendar Off/Working drive isWorkingDay
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [monthInfo, selectedMonth],
+    [monthInfo, selectedMonth, calendarOverrides],
   );
   const expandedEmployees = useMemo(
     () => attendanceByEmployee.filter((e) => expandedEmployeeIds[e.employeeId]),
@@ -2861,14 +2888,16 @@ export default function MonthlyAttendancePage() {
                             employee.employeeId,
                             day.dateKey,
                           );
-                          // Status: leave → HRM meta → Absent/Off. Punches never change it.
+                          // Status: leave → calendar Off → HRM meta → Absent. Punches never invent status.
                           const dayAutoStatus = leaveAttDay
                             ? leaveAttDay.statusLabel
-                            : meta?.autoStatusLabel || meta?.statusLabel
-                              ? normalizeAttendanceStatus(
-                                  meta.autoStatusLabel || meta.statusLabel || "-",
-                                )
-                              : emptyFallback.statusLabel;
+                            : !workingDay
+                              ? "Off"
+                              : meta?.autoStatusLabel || meta?.statusLabel
+                                ? normalizeAttendanceStatus(
+                                    meta.autoStatusLabel || meta.statusLabel || "-",
+                                  )
+                                : emptyFallback.statusLabel;
                           const sessionsToShow = getDaySessionRows(
                             day.dateKey,
                             dayRecords,
@@ -2898,7 +2927,9 @@ export default function MonthlyAttendancePage() {
                                       ? meta?.runningLate
                                       : 0,
                                   )
-                                : meta?.deduction || emptyFallback.deduction;
+                                : !workingDay
+                                  ? ""
+                                  : meta?.deduction || emptyFallback.deduction;
                             const rowStatusColor =
                               leaveAttDay && !effectiveOverride
                                 ? leaveAttDay.statusColor
