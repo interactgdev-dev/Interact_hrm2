@@ -30,10 +30,17 @@ function statusRank(status: unknown): number {
   return 0;
 }
 
-/** Prefer approved → rejected → pending, then lowest id (original). */
+/**
+ * Prefer newest decision (updated_at), then approved → rejected → pending,
+ * then lowest id (original). Newest-first stops a stale approved clone from
+ * beating a later Admin/HR reject on the same ticket.
+ */
 export function pickCanonicalLeaveRow<T extends LeaveLikeRow>(rows: T[]): T | null {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   return [...rows].sort((a, b) => {
+    const ta = Date.parse(String(a.updated_at || "").replace(" ", "T")) || 0;
+    const tb = Date.parse(String(b.updated_at || "").replace(" ", "T")) || 0;
+    if (ta !== tb) return tb - ta;
     const sr = statusRank(b.status) - statusRank(a.status);
     if (sr !== 0) return sr;
     return (Number(a.id) || 0) - (Number(b.id) || 0);

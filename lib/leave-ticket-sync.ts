@@ -174,10 +174,24 @@ export async function syncLeaveRecordFromTicket(
         const curStatus = String(
           (Array.isArray(curRows) ? (curRows[0] as { status?: string })?.status : "") || ""
         ).toLowerCase();
+        // Never downgrade an already-decided leave when the linked ticket is still pending.
         if (
           leaveStatus === "pending" &&
           (curStatus === "approved" || curStatus === "rejected")
         ) {
+          return existingId;
+        }
+        // Leaves-page reject must win over a stale resolved ticket (reject-after-approve
+        // used to skip ticket mirror → backfill kept re-approving → Monthly still "Leave").
+        if (curStatus === "rejected" && leaveStatus === "approved") {
+          try {
+            await syncTicketFromLeaveDecision({
+              leaveReason: reason,
+              status: "rejected",
+            });
+          } catch {
+            /* non-fatal */
+          }
           return existingId;
         }
       } catch {
@@ -344,7 +358,9 @@ export function ticketIdFromLeaveReason(reason: unknown): number | null {
 
 /**
  * When leave is approved/rejected on Leaves page, mirror status onto the linked ticket
- * so Ticket Inbox stays in sync and shows Approved by.
+ * so Ticket Inbox / Monthly Attendance stay in sync.
+ * Must update even when ticket was already resolved/rejected (Admin reject-after-approve,
+ * or re-approve after reject) — otherwise backfill re-approves the leave from a stale ticket.
  */
 export async function syncTicketFromLeaveDecision(opts: {
   leaveReason: unknown;
@@ -364,14 +380,14 @@ export async function syncTicketFromLeaveDecision(opts: {
         `UPDATE ${EMPLOYEE_TICKETS_TABLE}
          SET status = ?, resolved_at = ?, updated_at = ?,
              approved_by = ?, approved_by_name = ?
-         WHERE id = ? AND status IN ('pending', 'in_progress')`,
+         WHERE id = ?`,
         [ticketStatus, nowIso, nowIso, actorId, actorName, ticketId]
       );
     } catch {
       await query(
         `UPDATE ${EMPLOYEE_TICKETS_TABLE}
          SET status = ?, resolved_at = ?, updated_at = ?
-         WHERE id = ? AND status IN ('pending', 'in_progress')`,
+         WHERE id = ?`,
         [ticketStatus, nowIso, nowIso, ticketId]
       );
     }

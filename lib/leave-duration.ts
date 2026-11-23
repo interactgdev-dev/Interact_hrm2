@@ -155,7 +155,11 @@ export function buildApprovedLeavesMap(
 ): ApprovedLeavesMap {
   const leavesMap: ApprovedLeavesMap = {};
   for (const leave of leaves) {
-    if (String(leave.status || "").toLowerCase() !== "approved") continue;
+    // Reject-after-approve must not keep painting Monthly Attendance as Leave.
+    const status = String(leave.status || "").toLowerCase();
+    const step2 = String(leave.step2_status || "").toLowerCase();
+    if (status === "rejected" || step2 === "rejected") continue;
+    if (status !== "approved") continue;
     const empId = String(leave.employee_id || "").trim();
     if (!empId) continue;
     const startDateKey = opts.normalizeDateKey(String(leave.start_date || ""));

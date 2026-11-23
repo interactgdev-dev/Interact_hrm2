@@ -794,23 +794,27 @@ export default function MonthlyAttendancePage() {
 
   // Fetch approved leaves for the month. Do NOT require attendance employee IDs —
   // punch-only / search-only rows still need Leave status from ticket approvals.
+  // Rejected (incl. reject-after-approve) must clear Leave → Absent/Off.
   const fetchApprovedLeaves = async (from: string, to: string) => {
     try {
       const params = new URLSearchParams();
       params.append("status", "approved");
       params.append("fromDate", from);
       params.append("toDate", to);
+      params.append("ts", String(Date.now()));
 
       const response = await fetch(`/api/leaves?${params.toString()}`, { cache: "no-store" });
       const data = await response.json();
 
-      if (data.success && data.leaves) {
+      if (data.success && Array.isArray(data.leaves)) {
         setApprovedLeavesMap(
           buildApprovedLeavesMap(data.leaves as Array<Record<string, unknown>>, {
             normalizeDateKey: normalizeToDateKey,
             addDays: addDaysToDateKey,
           }),
         );
+      } else {
+        setApprovedLeavesMap({});
       }
     } catch (err) {
       console.error("Error fetching approved leaves:", err);
