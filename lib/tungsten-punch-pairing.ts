@@ -48,12 +48,17 @@ export type HrmEmployeeRef = {
   status: string;
 };
 
-/** Match Tungsten punches to an HRM employee by PIN (employee_code) and/or name. */
+/**
+ * Match Tungsten punches to an HRM employee.
+ * Priority: PIN / employee_code / id → then name + department (+ pseudonym).
+ * Same legal name (e.g. two "Muhammad Bilal") must not share punches across depts.
+ */
 export type EmployeeMatchKeys = {
   employeeName: string;
   employeeCode?: string | null;
   employeeId?: string | null;
   pseudonym?: string | null;
+  departmentName?: string | null;
 };
 
 export type ShiftDayTiming = {
@@ -120,25 +125,78 @@ function namesLooselyMatch(a: string, b: string) {
   return false;
 }
 
+function normalizeDeptKey(value: string | null | undefined) {
+  return normalizeName(String(value || "")).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** HRM "Production I (HIT)" vs ZK "Production I" / "HIT" — must agree enough to disambiguate. */
+export function departmentsLooselyMatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const na = normalizeDeptKey(a);
+  const nb = normalizeDeptKey(b);
+  if (!na || !nb || na === "-" || nb === "-") return false;
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  const ta = na.split(" ").filter((t) => t.length >= 2);
+  const tb = nb.split(" ").filter((t) => t.length >= 2);
+  if (!ta.length || !tb.length) return false;
+  const shared = tb.filter((t) => ta.includes(t));
+  if (shared.some((t) => t.length >= 4)) return true;
+  return shared.length >= 2;
+}
+
+function countLegalNamePeers(
+  ctx: TungstenPunchContext | null | undefined,
+  legalName: string,
+): number {
+  if (!ctx?.hrmEmployees?.length) return 0;
+  let n = 0;
+  for (const e of ctx.hrmEmployees) {
+    if (namesLooselyMatch(e.employeeName, legalName)) n += 1;
+  }
+  return n;
+}
+
+/**
+ * Attach a ZK punch to an HRM employee only when identity is strong:
+ * 1) PIN === employee_code or PIN === employee id
+ * 2) PIN registered in HRM to this same employee id
+ * 3) Else name match ONLY with department agreement; never steal another employee's PIN
+ */
 export function punchMatchesEmployee(
   pin: string,
   zkResolvedName: string,
   hrmPinMatch: HrmCodeProfile | undefined,
   target: EmployeeMatchKeys,
   rawZkRowName?: string,
+  zkDepartment?: string,
+  ctx?: TungstenPunchContext | null,
 ): boolean {
   const empId = String(target.employeeId ?? "").trim();
   const code = String(target.employeeCode ?? "").trim();
-  // Strict PIN match only when HRM has a real device employee_code.
-  // (Staging often has empty codes after Mongo cutover — then name-match below.)
+  const targetDept = String(target.departmentName ?? "").trim();
+  const zkDept = String(zkDepartment || hrmPinMatch?.department || "").trim();
+
+  // PIN owned by this employee in HRM maps (strongest after explicit code).
+  if (hrmPinMatch?.employeeId && empId && hrmPinMatch.employeeId === empId) {
+    return true;
+  }
+
+  // Strict PIN / employee_code / id-as-pin.
   if (code) {
     if (pin && pin === code) return true;
     if (empId && pin && pin === empId) return true;
     return false;
   }
-
-  // No employee_code: allow pin === HRM id (some devices use id as PIN).
   if (empId && pin && pin === empId) return true;
+
+  // This device PIN belongs to a *different* HRM employee — never name-match onto target
+  // (fixes Muhammad Bilal Sean getting Anthony Gray's punches when Sean has empty code).
+  if (hrmPinMatch?.employeeId && empId && hrmPinMatch.employeeId !== empId) {
+    return false;
+  }
 
   const candidates = [
     hrmPinMatch?.employeeName || "",
@@ -146,19 +204,33 @@ export function punchMatchesEmployee(
     rawZkRowName || "",
   ].filter(Boolean);
 
+  let nameHit = false;
   for (const candidate of candidates) {
-    if (namesLooselyMatch(target.employeeName, candidate)) return true;
+    if (namesLooselyMatch(target.employeeName, candidate)) {
+      nameHit = true;
+      break;
+    }
+    const pseudo = String(target.pseudonym ?? "").trim();
+    if (pseudo && pseudo !== "-" && namesLooselyMatch(pseudo, candidate)) {
+      nameHit = true;
+      break;
+    }
+  }
+  if (!nameHit) return false;
+
+  const peers = countLegalNamePeers(ctx, target.employeeName);
+  const deptOk = departmentsLooselyMatch(targetDept, zkDept);
+
+  // Duplicate legal names (2+ Bilals): require department agreement.
+  if (peers > 1) {
+    return deptOk;
   }
 
-  if (
-    hrmPinMatch?.employeeId &&
-    empId &&
-    hrmPinMatch.employeeId === empId
-  ) {
-    return true;
+  // Unique name: still prefer dept when both sides have one; allow if ZK dept unknown.
+  if (targetDept && zkDept && targetDept !== "-" && zkDept !== "-") {
+    return deptOk;
   }
-
-  return false;
+  return true;
 }
 
 /**
@@ -196,7 +268,7 @@ export function employeeHasZkPunchesInRange(
     if (knownPins.size > 0) {
       if (!knownPins.has(pin)) continue;
     } else {
-      const { employeeName: zkName } = resolveZkIdentity(
+      const { employeeName: zkName, department: zkDept } = resolveZkIdentity(
         z,
         ctx.batchPinProfiles,
         ctx.dbPinProfiles,
@@ -204,7 +276,19 @@ export function employeeHasZkPunchesInRange(
       );
       const hrmMatch = resolveHrmPinMatch(ctx, pin);
       const rawName = rawZkNameFromRow(z);
-      if (!punchMatchesEmployee(pin, zkName, hrmMatch, target, rawName)) continue;
+      if (
+        !punchMatchesEmployee(
+          pin,
+          zkName,
+          hrmMatch,
+          target,
+          rawName,
+          zkDept,
+          ctx,
+        )
+      ) {
+        continue;
+      }
     }
 
     const rawVal = z.event_time ?? z.imported_at;
@@ -357,7 +441,7 @@ function appendTungstenRows(
     if (knownPins.size > 0) {
       if (!knownPins.has(pin)) continue;
     } else {
-      const { employeeName: zkName } = resolveZkIdentity(
+      const { employeeName: zkName, department: zkDept } = resolveZkIdentity(
         z,
         ctx.batchPinProfiles,
         ctx.dbPinProfiles,
@@ -365,7 +449,19 @@ function appendTungstenRows(
       );
       const hrmMatch = resolveHrmPinMatch(ctx, pin);
       const rawName = rawZkNameFromRow(z);
-      if (!punchMatchesEmployee(pin, zkName, hrmMatch, target, rawName)) continue;
+      if (
+        !punchMatchesEmployee(
+          pin,
+          zkName,
+          hrmMatch,
+          target,
+          rawName,
+          zkDept,
+          ctx,
+        )
+      ) {
+        continue;
+      }
     }
 
     const rawVal = z.event_time ?? z.imported_at;
@@ -858,7 +954,7 @@ function collectEmployeeTungstenEvents(
     if (knownPins.size > 0 || pinOnly) {
       if (!punchMatchesEmployeePinOnly(pin, target)) continue;
     } else {
-      const { employeeName: zkName } = resolveZkIdentity(
+      const { employeeName: zkName, department: zkDept } = resolveZkIdentity(
         z,
         ctx.batchPinProfiles,
         ctx.dbPinProfiles,
@@ -866,7 +962,19 @@ function collectEmployeeTungstenEvents(
       );
       const hrmMatch = resolveHrmPinMatch(ctx, pin);
       const rawName = rawZkNameFromRow(z);
-      if (!punchMatchesEmployee(pin, zkName, hrmMatch, target, rawName)) continue;
+      if (
+        !punchMatchesEmployee(
+          pin,
+          zkName,
+          hrmMatch,
+          target,
+          rawName,
+          zkDept,
+          ctx,
+        )
+      ) {
+        continue;
+      }
     }
 
     const punchMs = parseZkbioDateTimeMs(z);

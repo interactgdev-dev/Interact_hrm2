@@ -99,6 +99,7 @@ export function profileMapsFromApi(
 
 export function hrmMapFromEmployees(
   employees: {
+    id?: string | number;
     first_name?: string;
     last_name?: string;
     employee_code?: string | null;
@@ -111,9 +112,11 @@ export function hrmMapFromEmployees(
     if (!code) continue;
     const employeeName =
       nameFromParts(trimStr(e.first_name), trimStr(e.last_name)) || "—";
+    const idKey = e.id != null && e.id !== "" ? String(e.id) : undefined;
     map.set(code, {
       employeeName,
       department: trimStr(e.department_name) || "-",
+      employeeId: idKey,
     });
   }
   return map;

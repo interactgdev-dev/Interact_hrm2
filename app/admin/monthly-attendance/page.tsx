@@ -1469,6 +1469,7 @@ export default function MonthlyAttendancePage() {
     employeeName: string;
     employeeCode?: string;
     pseudonym?: string;
+    departmentName?: string;
   }) {
     const empId = String(employee.employeeId ?? "").trim();
     const hrm = hrmEmployeesList.find((e) => String(e.employeeId) === empId);
@@ -1479,7 +1480,9 @@ export default function MonthlyAttendancePage() {
         employee.employeeCode || hrm?.employeeCode || rosterPin || "",
       ).trim(),
       employeeId: empId,
-      pseudonym: employee.pseudonym,
+      pseudonym: employee.pseudonym || hrm?.pseudonym || "",
+      departmentName:
+        employee.departmentName || hrm?.departmentName || "",
     };
   }
 
@@ -2404,6 +2407,7 @@ export default function MonthlyAttendancePage() {
               (isRosterPunchOnly ? punchOnlyPinForId(String(hrm.employeeId)) || "" : ""),
             employeeId: hrm.employeeId,
             pseudonym: hrm.pseudonym,
+            departmentName: hrm.departmentName,
           },
           fromDate,
           toDate,
