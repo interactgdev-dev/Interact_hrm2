@@ -83,6 +83,12 @@ function defaultMonthRange() {
   };
 }
 
+/** Account status on hrm_employees — inactive rows stay off Summary. */
+function isActiveEmployeeStatus(status?: string | null) {
+  const s = String(status || "").toLowerCase().trim();
+  return s === "active" || s === "enabled";
+}
+
 type LeaveSummaryPanelProps = {
   /** Shared month from tabs row (YYYY-MM) — syncs From/To dates */
   externalMonth?: string;
@@ -140,7 +146,9 @@ export default function LeaveSummaryPanel({
       });
       const empData = await empRes.json();
       if (!empData.success) throw new Error(empData.error || "Failed to fetch employees");
-      const employees = empData.employees || [];
+      const employees = (empData.employees || []).filter((emp: any) =>
+        isActiveEmployeeStatus(emp?.status),
+      );
 
       const rangeFrom = fromDate || toDate;
       const rangeTo = toDate || fromDate;

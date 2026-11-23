@@ -138,11 +138,25 @@ function ManageLeavesPageInner() {
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [employmentStatusFilter, setEmploymentStatusFilter] = useState("");
   const [lowBalanceOnly, setLowBalanceOnly] = useState(false);
-  /** Top month filter (parallel to tabs) — drives activity date range */
-  const [globalMonth, setGlobalMonth] = useState("");
+  /** Top month filter (parallel to tabs) — drives activity date range; default = current month */
+  const [globalMonth, setGlobalMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   /** From–To date range filters employees with leave activity in range */
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(() => {
+    const now = new Date();
+    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    return `${key}-01`;
+  });
+  const [toDate, setToDate] = useState(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const mo = now.getMonth();
+    const key = `${y}-${String(mo + 1).padStart(2, "0")}`;
+    const lastDay = new Date(y, mo + 1, 0).getDate();
+    return `${key}-${String(lastDay).padStart(2, "0")}`;
+  });
   const [monthActiveIds, setMonthActiveIds] = useState<Set<string> | null>(null);
 
   const applyGlobalMonth = (monthKey: string) => {

@@ -75,6 +75,12 @@ function readViewerEmployeeId(): string {
   return "";
 }
 
+/** Account status on hrm_employees — inactive/disabled leave rows stay hidden. */
+function isActiveEmployeeStatus(status?: string | null) {
+  const s = String(status || "").toLowerCase().trim();
+  return s === "active" || s === "enabled";
+}
+
 type LeaveRequestsPanelProps = {
   initialCategory?: string;
   onCategoryConsumed?: () => void;
@@ -198,11 +204,21 @@ export default function LeaveRequestsPanel({
         // colliding with id 114 assigned the wrong department to leave rows).
         const empMap = new Map<
           string,
-          { employee_name: string; pseudonym: string; department_name: string }
+          {
+            employee_name: string;
+            pseudonym: string;
+            department_name: string;
+            active: boolean;
+          }
         >();
         const empByCode = new Map<
           string,
-          { employee_name: string; pseudonym: string; department_name: string }
+          {
+            employee_name: string;
+            pseudonym: string;
+            department_name: string;
+            active: boolean;
+          }
         >();
         if (empData.success && Array.isArray(empData.employees)) {
           empData.employees.forEach((emp: any) => {
@@ -211,6 +227,7 @@ export default function LeaveRequestsPanel({
               employee_name: fullName || "-",
               pseudonym: emp.pseudonym || "-",
               department_name: String(emp.department_name || "").trim() || "-",
+              active: isActiveEmployeeStatus(emp?.status),
             };
             if (emp?.id !== undefined && emp?.id !== null) {
               empMap.set(String(emp.id).trim(), profile);
@@ -229,11 +246,14 @@ export default function LeaveRequestsPanel({
               employee_name: l?.employee_name || emp?.employee_name || "-",
               pseudonym: emp?.pseudonym || "-",
               department_name: emp?.department_name || "-",
+              _employeeActive: Boolean(emp?.active),
             };
           })
-          .filter((l: any) =>
-            rowAllowedByScope(scope, l.employee_id, l.department_name),
-          );
+          .filter((l: any) => {
+            // Inactive / unknown accounts never appear on Requests.
+            if (!l._employeeActive) return false;
+            return rowAllowedByScope(scope, l.employee_id, l.department_name);
+          });
         setLeaves(enrichedLeaves);
       } else {
         setError(data.error || "Failed to fetch leaves");
