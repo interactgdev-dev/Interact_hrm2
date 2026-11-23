@@ -3,10 +3,7 @@
  */
 
 import { pool } from "@/lib/db";
-import {
-  getLeaveCycleStartYmd,
-  shouldApplyLeaveAdjustment,
-} from "@/lib/leave-cycle";
+import { getLeaveCycleStartYmd, leaveDateToYmd } from "@/lib/leave-cycle";
 import {
   BEREAVEMENT_ALLOWANCE,
   MATERNITY_ALLOWANCE,
@@ -14,6 +11,25 @@ import {
   normalizeEmployeeGender,
 } from "@/lib/leave-categories";
 import { getDateStringInTimeZone } from "@/lib/timezone";
+
+function pickLatestAllowanceRow(rows: any[]): any | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  let best = rows[0];
+  let bestMs = 0;
+  for (const row of rows) {
+    const ymd = leaveDateToYmd(row?.updated_at);
+    let ms = ymd ? Date.parse(`${ymd}T00:00:00Z`) : 0;
+    if (!Number.isFinite(ms) || ms <= 0) {
+      const idn = Number(row?.id);
+      ms = Number.isFinite(idn) ? idn : 0;
+    }
+    if (ms >= bestMs) {
+      bestMs = ms;
+      best = row;
+    }
+  }
+  return best;
+}
 
 export type LeaveBalanceResult = {
   success: true;
@@ -71,12 +87,16 @@ export async function getEmployeeLeaveBalance(
     const effectiveStatus: "Probation" | "Permanent" =
       empStatusRaw === "Probation" ? "Probation" : "Permanent";
 
+    const eid = resolvedEmployeeId;
     const [allowanceResult]: any = await conn.execute(
-      "SELECT * FROM employee_leave_allowances WHERE employee_id = ?",
-      [resolvedEmployeeId]
+      `SELECT * FROM employee_leave_allowances
+       WHERE employee_id = ? OR CAST(employee_id AS CHAR) = ?`,
+      [eid, String(eid ?? "")],
     );
-    const customAllowance =
-      allowanceResult && allowanceResult.length > 0 ? allowanceResult[0] : null;
+    // Mongo may lack UNIQUE on employee_id → multiple rows; use latest edit.
+    const customAllowance = pickLatestAllowanceRow(
+      Array.isArray(allowanceResult) ? allowanceResult : [],
+    );
 
     const annualAllowance = effectiveStatus === "Probation" ? 3 : 20;
     const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
@@ -84,22 +104,19 @@ export async function getEmployeeLeaveBalance(
     const paternityAllowance = PATERNITY_ALLOWANCE;
     const leaveCycleStart = getLeaveCycleStartYmd(job?.joined_date || null);
 
-    const isCurrentCycleAdjustment = shouldApplyLeaveAdjustment(
-      customAllowance?.updated_at,
-      leaveCycleStart
+    // Always apply latest stored HR adjustment (must match Balances page after refresh).
+    const annualBalanceAdjustment = Number(
+      customAllowance?.annual_balance_adjustment ?? 0,
     );
-    const annualBalanceAdjustment = isCurrentCycleAdjustment
-      ? Number(customAllowance?.annual_balance_adjustment ?? 0)
-      : 0;
-    const bereavementBalanceAdjustment = isCurrentCycleAdjustment
-      ? Number(customAllowance?.bereavement_balance_adjustment ?? 0)
-      : 0;
-    const maternityBalanceAdjustment = isCurrentCycleAdjustment
-      ? Number(customAllowance?.maternity_balance_adjustment ?? 0)
-      : 0;
-    const paternityBalanceAdjustment = isCurrentCycleAdjustment
-      ? Number(customAllowance?.paternity_balance_adjustment ?? 0)
-      : 0;
+    const bereavementBalanceAdjustment = Number(
+      customAllowance?.bereavement_balance_adjustment ?? 0,
+    );
+    const maternityBalanceAdjustment = Number(
+      customAllowance?.maternity_balance_adjustment ?? 0,
+    );
+    const paternityBalanceAdjustment = Number(
+      customAllowance?.paternity_balance_adjustment ?? 0,
+    );
 
     let leavesQuery =
       "SELECT leave_category, total_days, start_date, updated_at FROM employee_leaves WHERE (employee_id = ? OR CAST(employee_id AS CHAR) = ?) AND status = 'approved'";

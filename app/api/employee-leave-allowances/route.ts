@@ -3,7 +3,6 @@ import { pool } from "../../../lib/db";
 import {
   getLeaveCycleStartYmd,
   leaveDateToYmd,
-  shouldApplyLeaveAdjustment,
 } from "../../../lib/leave-cycle";
 import {
   BEREAVEMENT_ALLOWANCE,
@@ -11,6 +10,7 @@ import {
   PATERNITY_ALLOWANCE,
   normalizeEmployeeGender,
 } from "../../../lib/leave-categories";
+import { getDateStringInTimeZone } from "../../../lib/timezone";
 
 function parseLeaveDays(value: unknown): number {
   const n = Number(value);
@@ -29,7 +29,7 @@ function annualAllowanceForStatus(employmentStatus: unknown): number {
   return s.includes("probation") ? 3 : 20;
 }
 
-/** One row per employee — multiple jobs/allowance rows must not duplicate the list. */
+/** One row per employee — multiple jobs must not duplicate the list. */
 function dedupeEmployeesById<T extends { id?: unknown }>(rows: T[]): T[] {
   const seen = new Map<number, T>();
   for (const row of rows) {
@@ -38,6 +38,44 @@ function dedupeEmployeesById<T extends { id?: unknown }>(rows: T[]): T[] {
     if (!seen.has(id)) seen.set(id, row);
   }
   return [...seen.values()];
+}
+
+type AllowanceRow = {
+  id?: number | string;
+  employee_id?: number | string;
+  annual_balance_adjustment?: number;
+  bereavement_balance_adjustment?: number;
+  maternity_balance_adjustment?: number;
+  paternity_balance_adjustment?: number;
+  updated_at?: unknown;
+};
+
+function allowanceUpdatedMs(row: AllowanceRow): number {
+  const ymd = leaveDateToYmd(row?.updated_at);
+  if (ymd) {
+    const ms = Date.parse(`${ymd}T00:00:00Z`);
+    if (Number.isFinite(ms)) return ms;
+  }
+  const raw = row?.updated_at;
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw.getTime();
+  const n = Number(row?.id);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Latest allowance row per employee (Mongo may lack UNIQUE → many inserts). */
+function latestAllowanceByEmployee(
+  rows: AllowanceRow[],
+): Map<number, AllowanceRow> {
+  const map = new Map<number, AllowanceRow>();
+  for (const row of rows) {
+    const eid = Number(row?.employee_id);
+    if (!Number.isFinite(eid) || eid <= 0) continue;
+    const prev = map.get(eid);
+    if (!prev || allowanceUpdatedMs(row) >= allowanceUpdatedMs(prev)) {
+      map.set(eid, row);
+    }
+  }
+  return map;
 }
 
 type UsedBucket = {
@@ -67,6 +105,8 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get("viewerId") ||
       "";
 
+    // Do NOT join allowances here — Mongo often has duplicate ela rows (no UNIQUE),
+    // and LEFT JOIN + first-row dedupe kept a stale adjustment (Ayyaz −2.5 after edit).
     const [rows]: any = await conn.execute(`
       SELECT 
         e.id,
@@ -76,16 +116,10 @@ export async function GET(req: NextRequest) {
         e.employment_status,
         e.gender,
         j.joined_date,
-        d.name AS department_name,
-        COALESCE(ela.annual_balance_adjustment, 0) as annual_balance_adjustment,
-        COALESCE(ela.bereavement_balance_adjustment, 0) as bereavement_balance_adjustment,
-        COALESCE(ela.maternity_balance_adjustment, 0) as maternity_balance_adjustment,
-        COALESCE(ela.paternity_balance_adjustment, 0) as paternity_balance_adjustment,
-        ela.updated_at as allowance_updated_at
+        d.name AS department_name
       FROM hrm_employees e
       LEFT JOIN employee_jobs j ON e.id = j.employee_id
       LEFT JOIN departments d ON j.department_id = d.id
-      LEFT JOIN employee_leave_allowances ela ON e.id = ela.employee_id
       WHERE e.status IN ('enabled', 'active')
       ORDER BY e.id
     `);
@@ -113,12 +147,31 @@ export async function GET(req: NextRequest) {
     const employeeIds = scopedRows
       .map((r: any) => Number(r.id))
       .filter((id: number) => Number.isFinite(id) && id > 0);
+
+    let allowanceByEmp = new Map<number, AllowanceRow>();
     let leaveRows: any[] = [];
     if (employeeIds.length > 0) {
       const placeholders = employeeIds.map(() => "?").join(",");
-      // Match numeric + string employee_id (Mongo / mixed legacy rows).
+      try {
+        const [allowRows]: any = await conn.execute(
+          `SELECT id, employee_id,
+                  annual_balance_adjustment, bereavement_balance_adjustment,
+                  maternity_balance_adjustment, paternity_balance_adjustment,
+                  updated_at
+           FROM employee_leave_allowances
+           WHERE employee_id IN (${placeholders})
+              OR CAST(employee_id AS CHAR) IN (${employeeIds.map(() => "?").join(",")})`,
+          [...employeeIds, ...employeeIds.map(String)],
+        );
+        allowanceByEmp = latestAllowanceByEmployee(
+          Array.isArray(allowRows) ? allowRows : [],
+        );
+      } catch {
+        allowanceByEmp = new Map();
+      }
+
       const [leaves]: any = await conn.execute(
-        `SELECT employee_id, leave_category, total_days, start_date, updated_at
+        `SELECT id, employee_id, leave_category, total_days, start_date, updated_at
          FROM employee_leaves
          WHERE status = 'approved'
            AND (employee_id IN (${placeholders})
@@ -141,16 +194,25 @@ export async function GET(req: NextRequest) {
       cycleStartByEmployee.set(empId, getLeaveCycleStartYmd(emp.joined_date || null));
     });
 
+    const todayYmd = getDateStringInTimeZone(new Date());
+    const seenLeaveIds = new Set<string>();
     leaveRows.forEach((leave: any) => {
+      const leaveKey =
+        leave?.id != null
+          ? `id:${leave.id}`
+          : `r:${leave.employee_id}|${leave.start_date}|${leave.leave_category}|${leave.total_days}`;
+      if (seenLeaveIds.has(leaveKey)) return;
+      seenLeaveIds.add(leaveKey);
+
       const empId = Number(leave.employee_id);
       const current = usedByEmployee.get(empId);
       if (!current) return;
 
       const cycleStart = cycleStartByEmployee.get(empId) || null;
-      const startYmd = leaveDateToYmd(leave?.start_date);
-      if (cycleStart && startYmd && startYmd < cycleStart) {
-        return;
-      }
+      const leaveYmd =
+        leaveDateToYmd(leave?.updated_at) || leaveDateToYmd(leave?.start_date);
+      if (cycleStart && leaveYmd && leaveYmd < cycleStart) return;
+      if (leaveYmd && todayYmd && leaveYmd > todayYmd) return;
 
       const days = Number(leave.total_days || 0);
       if (!Number.isFinite(days) || days <= 0) return;
@@ -166,27 +228,26 @@ export async function GET(req: NextRequest) {
         paternity_used: 0,
       };
       const cycleStart = cycleStartByEmployee.get(empId) || null;
-      const applyAdj = shouldApplyLeaveAdjustment(
-        emp.allowance_updated_at,
-        cycleStart,
+      const ela = allowanceByEmp.get(empId);
+      // Always apply latest stored HR adjustment on Balances (edits must survive refresh).
+      const annualAdjustment = Number(ela?.annual_balance_adjustment || 0);
+      const bereavementAdjustment = Number(
+        ela?.bereavement_balance_adjustment || 0,
       );
-      const annualAdjustment = applyAdj
-        ? Number(emp.annual_balance_adjustment || 0)
-        : 0;
-      const bereavementAdjustment = applyAdj
-        ? Number(emp.bereavement_balance_adjustment || 0)
-        : 0;
-      const maternityAdjustment = applyAdj
-        ? Number(emp.maternity_balance_adjustment || 0)
-        : 0;
-      const paternityAdjustment = applyAdj
-        ? Number(emp.paternity_balance_adjustment || 0)
-        : 0;
+      const maternityAdjustment = Number(ela?.maternity_balance_adjustment || 0);
+      const paternityAdjustment = Number(ela?.paternity_balance_adjustment || 0);
       const annualAllowance = annualAllowanceForStatus(emp.employment_status);
       const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
       const maternityAllowance = MATERNITY_ALLOWANCE;
       const paternityAllowance = PATERNITY_ALLOWANCE;
       const genderNorm = normalizeEmployeeGender(emp.gender);
+
+      const annualCurrent = roundLeaveDays(
+        annualAllowance - used.annual_used + annualAdjustment,
+      );
+      const bereavementCurrent = roundLeaveDays(
+        bereavementAllowance - used.bereavement_used + bereavementAdjustment,
+      );
 
       return {
         ...emp,
@@ -195,16 +256,9 @@ export async function GET(req: NextRequest) {
         bereavement_allowance: bereavementAllowance,
         maternity_allowance: genderNorm === "female" ? maternityAllowance : 0,
         paternity_allowance: genderNorm === "male" ? paternityAllowance : 0,
-        // Effective used = allowance − remaining (tickets + HR adjustments).
-        annual_used: roundLeaveDays(
-          Math.max(0, annualAllowance - (annualAllowance - used.annual_used + annualAdjustment)),
-        ),
+        annual_used: roundLeaveDays(Math.max(0, annualAllowance - annualCurrent)),
         bereavement_used: roundLeaveDays(
-          Math.max(
-            0,
-            bereavementAllowance -
-              (bereavementAllowance - used.bereavement_used + bereavementAdjustment),
-          ),
+          Math.max(0, bereavementAllowance - bereavementCurrent),
         ),
         maternity_used: roundLeaveDays(
           Math.max(
@@ -225,12 +279,8 @@ export async function GET(req: NextRequest) {
         maternity_balance_adjustment: maternityAdjustment,
         paternity_balance_adjustment: paternityAdjustment,
         leave_cycle_start: cycleStart,
-        annual_current_balance: roundLeaveDays(
-          annualAllowance - used.annual_used + annualAdjustment,
-        ),
-        bereavement_current_balance: roundLeaveDays(
-          bereavementAllowance - used.bereavement_used + bereavementAdjustment,
-        ),
+        annual_current_balance: annualCurrent,
+        bereavement_current_balance: bereavementCurrent,
         maternity_current_balance:
           genderNorm === "female"
             ? roundLeaveDays(
@@ -384,7 +434,7 @@ export async function POST(req: NextRequest) {
 
     const eid = Number(employee_id);
     const [leaveRows]: any = await conn.execute(
-      `SELECT leave_category, total_days, start_date
+      `SELECT id, leave_category, total_days, start_date, updated_at
        FROM employee_leaves
        WHERE status = 'approved'
          AND (employee_id = ? OR CAST(employee_id AS CHAR) = ?)`,
@@ -397,9 +447,20 @@ export async function POST(req: NextRequest) {
       maternity_used: 0,
       paternity_used: 0,
     };
+    const todayYmd = getDateStringInTimeZone(new Date());
+    const seenLeaveIds = new Set<string>();
     (Array.isArray(leaveRows) ? leaveRows : []).forEach((leave: any) => {
-      const startYmd = leaveDateToYmd(leave?.start_date);
-      if (cycleStart && startYmd && startYmd < cycleStart) return;
+      const leaveKey =
+        leave?.id != null
+          ? `id:${leave.id}`
+          : `r:${leave.start_date}|${leave.leave_category}|${leave.total_days}`;
+      if (seenLeaveIds.has(leaveKey)) return;
+      seenLeaveIds.add(leaveKey);
+
+      const leaveYmd =
+        leaveDateToYmd(leave?.updated_at) || leaveDateToYmd(leave?.start_date);
+      if (cycleStart && leaveYmd && leaveYmd < cycleStart) return;
+      if (leaveYmd && todayYmd && leaveYmd > todayYmd) return;
       const days = Number(leave.total_days || 0);
       if (!Number.isFinite(days) || days <= 0) return;
       bumpUsed(used, leave.leave_category, days);
@@ -424,49 +485,79 @@ export async function POST(req: NextRequest) {
           )
         : 0;
 
-    // Real timestamp — Mongo adapter stores SQL NOW() as the literal string "NOW()",
-    // which made cycle checks drop adjustments after refresh (Ayyaz / DM balances).
+    // Real ISO timestamp — Mongo adapter stores SQL NOW() as literal "NOW()".
     const nowIso = new Date().toISOString().slice(0, 19).replace("T", " ");
 
-    await conn.execute(
-      `INSERT INTO employee_leave_allowances
-        (employee_id, annual_balance_adjustment, bereavement_balance_adjustment,
-         maternity_balance_adjustment, paternity_balance_adjustment,
-         annual_allowance, bereavement_allowance, maternity_allowance, paternity_allowance,
-         casual_allowance, sick_allowance, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 10, 15, ?)
-      ON DUPLICATE KEY UPDATE
-        annual_balance_adjustment = ?,
-        bereavement_balance_adjustment = ?,
-        maternity_balance_adjustment = ?,
-        paternity_balance_adjustment = ?,
-        annual_allowance = ?,
-        bereavement_allowance = ?,
-        maternity_allowance = ?,
-        paternity_allowance = ?,
-        updated_at = ?`,
-      [
-        eid,
-        annualAdjustment,
-        bereavementAdjustment,
-        maternityAdjustment,
-        paternityAdjustment,
-        annualAllowance,
-        bereavementAllowance,
-        maternityAllowance,
-        paternityAllowance,
-        nowIso,
-        annualAdjustment,
-        bereavementAdjustment,
-        maternityAdjustment,
-        paternityAdjustment,
-        annualAllowance,
-        bereavementAllowance,
-        maternityAllowance,
-        paternityAllowance,
-        nowIso,
-      ],
+    // Mongo often has no UNIQUE on employee_id, so ON DUPLICATE KEY never updates —
+    // each save inserts another row and GET used to keep the first (stale) one.
+    const [existingRows]: any = await conn.execute(
+      `SELECT id FROM employee_leave_allowances
+       WHERE employee_id = ? OR CAST(employee_id AS CHAR) = ?
+       ORDER BY id DESC`,
+      [eid, String(eid)],
     );
+    const existing = Array.isArray(existingRows) ? existingRows : [];
+    const keepId = existing[0]?.id;
+
+    if (keepId != null) {
+      await conn.execute(
+        `UPDATE employee_leave_allowances SET
+          annual_balance_adjustment = ?,
+          bereavement_balance_adjustment = ?,
+          maternity_balance_adjustment = ?,
+          paternity_balance_adjustment = ?,
+          annual_allowance = ?,
+          bereavement_allowance = ?,
+          maternity_allowance = ?,
+          paternity_allowance = ?,
+          updated_at = ?
+         WHERE id = ?`,
+        [
+          annualAdjustment,
+          bereavementAdjustment,
+          maternityAdjustment,
+          paternityAdjustment,
+          annualAllowance,
+          bereavementAllowance,
+          maternityAllowance,
+          paternityAllowance,
+          nowIso,
+          keepId,
+        ],
+      );
+      for (const extra of existing.slice(1)) {
+        if (extra?.id == null) continue;
+        try {
+          await conn.execute(
+            `DELETE FROM employee_leave_allowances WHERE id = ?`,
+            [extra.id],
+          );
+        } catch {
+          /* ignore cleanup failures */
+        }
+      }
+    } else {
+      await conn.execute(
+        `INSERT INTO employee_leave_allowances
+          (employee_id, annual_balance_adjustment, bereavement_balance_adjustment,
+           maternity_balance_adjustment, paternity_balance_adjustment,
+           annual_allowance, bereavement_allowance, maternity_allowance, paternity_allowance,
+           casual_allowance, sick_allowance, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 10, 15, ?)`,
+        [
+          eid,
+          annualAdjustment,
+          bereavementAdjustment,
+          maternityAdjustment,
+          paternityAdjustment,
+          annualAllowance,
+          bereavementAllowance,
+          maternityAllowance,
+          paternityAllowance,
+          nowIso,
+        ],
+      );
+    }
 
     return NextResponse.json({
       success: true,
