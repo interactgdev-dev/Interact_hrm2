@@ -29,7 +29,7 @@
 
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   margin: 0 0 10px;
@@ -37,6 +37,8 @@
   background: #f3f4f7;
   border: 1px solid #e4e7ec;
   border-radius: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .toolbarActions {
@@ -115,6 +117,8 @@
   overflow: hidden;
   width: 100%;
   max-width: 100%;
+  /* Same idea as Attendance Summary: scroll table, don't reflow layout on sidebar push */
+  min-width: 0;
 }
 
 .sumTableShell {
@@ -125,6 +129,7 @@
   overflow-x: auto;
   max-width: 100%;
   background: #fff;
+  -webkit-overflow-scrolling: touch;
 }
 
 .reqTable {
@@ -139,7 +144,7 @@
 .balTable {
   table-layout: fixed;
   width: 100%;
-  min-width: 980px;
+  min-width: 1100px;
 }
 
 .balTable thead th,
@@ -192,9 +197,14 @@
   text-overflow: ellipsis;
 }
 
-/** Requests: squeeze all columns into one viewport (no cut-off Action) */
+/**
+ * Requests: keep a stable table width (Attendance Summary pattern).
+ * Sidebar slide then scrolls horizontally instead of crushing Employee names
+ * or reflowing the page layout up/down.
+ */
 .reqTableFit {
-  min-width: 0;
+  min-width: 1200px;
+  width: 100%;
   table-layout: fixed;
 }
 
@@ -213,18 +223,23 @@
   white-space: nowrap;
 }
 
-.reqTableFit td:nth-child(2),
+.reqTableFit td:nth-child(2) {
+  overflow: visible;
+  white-space: nowrap;
+}
+
 .reqTableFit td:nth-child(8) {
   white-space: normal;
 }
 
 .reqTableFit th:nth-child(1),
 .reqTableFit td:nth-child(1) {
-  width: 3.5%;
+  width: 52px;
 }
 .reqTableFit th:nth-child(2),
 .reqTableFit td:nth-child(2) {
-  width: 13%;
+  width: 220px;
+  min-width: 220px;
 }
 .reqTableFit th:nth-child(3),
 .reqTableFit td:nth-child(3) {
@@ -256,7 +271,7 @@
 }
 .reqTableFit th:nth-child(10),
 .reqTableFit td:nth-child(10) {
-  width: 17.5%;
+  width: 140px;
 }
 
 .reqTableFit .personCell,
@@ -264,6 +279,20 @@
 .reqTableFit .reasonCell,
 .reqTableFit .reasonBtn {
   max-width: none;
+}
+
+/* Full employee name on Requests — never Muha… when sidebar opens */
+.reqTableFit .personCell {
+  min-width: 200px;
+  overflow: visible;
+}
+
+.reqTableFit .personCell :global(button),
+.reqTableFit .personCell :global(span) {
+  overflow: visible !important;
+  text-overflow: unset !important;
+  max-width: none !important;
+  white-space: nowrap;
 }
 
 .reqTableFit .reasonBtn {
@@ -336,7 +365,7 @@
 
 .sumTable {
   width: 100%;
-  min-width: 0;
+  min-width: 1100px;
   table-layout: fixed;
 }
 
@@ -659,7 +688,7 @@
 
 .filterBar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-end;
   gap: 12px;
   width: 100%;
@@ -669,6 +698,8 @@
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   box-sizing: border-box;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .filterField {
@@ -733,7 +764,9 @@
 
 .statRow {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* Keep 4 columns during sidebar push — avoid up/down layout jump */
+  min-width: 0;
   gap: 12px;
   margin-bottom: 14px;
 }

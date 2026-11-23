@@ -86,9 +86,11 @@
   min-height: 100vh !important;
   max-height: 100vh !important;
   margin-left: 0;
-  /* Match sidebar slide — smooth content reflow (same easing as dock) */
+  /* Match sidebar slide — same easing/duration as .sidebarSlide */
   transition: margin-left 0.7s cubic-bezier(0.33, 0.1, 0.25, 1);
   overflow-x: clip;
+  /* Avoid scrollbar gutter flicker that jumps leave layout up/down mid-slide */
+  scrollbar-gutter: auto;
 }
 
 .contentPushed {
