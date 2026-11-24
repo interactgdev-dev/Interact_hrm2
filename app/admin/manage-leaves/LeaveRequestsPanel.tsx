@@ -7,6 +7,7 @@ import {
   getTimeStringInTimeZone,
   SERVER_TIMEZONE,
 } from "../../../lib/timezone";
+import { parseTicketInstant } from "@/lib/ticket-time";
 import styles from "../../leave/leave.module.css";
 import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { leaveDeptMatches } from "@/lib/leave-dept-filter";
@@ -44,10 +45,13 @@ function formatDateRange(start: string, end: string) {
   return `${a}–${b}`;
 }
 
+/** Mongo sqlNow() stores UTC wall clock without Z — parse as UTC then show Asia/Karachi. */
 function formatDateTime(dateTimeString: string) {
   if (!dateTimeString) return "";
-  const dateKey = getDateStringInTimeZone(dateTimeString, SERVER_TIMEZONE);
-  const timeStr = getTimeStringInTimeZone(dateTimeString, SERVER_TIMEZONE);
+  const instant = parseTicketInstant(dateTimeString);
+  if (!instant) return "";
+  const dateKey = getDateStringInTimeZone(instant, SERVER_TIMEZONE);
+  const timeStr = getTimeStringInTimeZone(instant, SERVER_TIMEZONE);
   const [year, month, day] = dateKey.split("-");
   return `${day}/${month}/${year} ${timeStr}`;
 }

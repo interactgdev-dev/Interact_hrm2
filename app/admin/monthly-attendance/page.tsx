@@ -1431,7 +1431,11 @@ export default function MonthlyAttendancePage() {
     return totalDeduction;
   }
 
-  /** Employee tardy note only (CT / Traffic…) — never HR manual reason. */
+  /**
+   * Employee tardy note only (CT / Traffic…) — never HR manual reason.
+   * Keep showing a saved employee note even after HR overrides status away from Tardy
+   * (HR note lives in statusOverrideNotes separately and must not wipe this).
+   */
   function tardyNoteForCell(
     employeeId: string,
     dateKey: string,
@@ -1439,26 +1443,30 @@ export default function MonthlyAttendancePage() {
     attendanceId?: number | null,
     dayRecords?: Array<{ id?: number | null }>
   ): string {
-    const isTardy = normalizeAttendanceStatus(statusLabel) === "Tardy";
-    if (!isTardy) return "";
-
+    let saved = "";
     if (attendanceId != null) {
-      const bySession = tardyNotesByAttendanceId[String(attendanceId)];
-      if (bySession) return bySession;
-      const legacy = tardyNotes[employeeId]?.[dateKey];
-      if (legacy) return legacy;
-      return "-";
-    }
-
-    if (dayRecords?.length) {
+      saved =
+        tardyNotesByAttendanceId[String(attendanceId)] ||
+        tardyNotes[employeeId]?.[dateKey] ||
+        "";
+    } else if (dayRecords?.length) {
       for (const rec of dayRecords) {
         if (rec?.id == null) continue;
         const bySession = tardyNotesByAttendanceId[String(rec.id)];
-        if (bySession) return bySession;
+        if (bySession) {
+          saved = bySession;
+          break;
+        }
       }
+      if (!saved) saved = tardyNotes[employeeId]?.[dateKey] || "";
+    } else {
+      saved = tardyNotes[employeeId]?.[dateKey] || "";
     }
-    const saved = tardyNotes[employeeId]?.[dateKey];
-    return saved || "-";
+
+    if (saved) return saved;
+
+    const isTardy = normalizeAttendanceStatus(statusLabel) === "Tardy";
+    return isTardy ? "-" : "";
   }
 
   /** Admin/HR reason from manual status change (M). */
