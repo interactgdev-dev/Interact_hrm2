@@ -825,10 +825,14 @@ function ManageLeavesPageInner() {
                           filteredEmployees.map((emp) => {
                             const statusKey = employmentStatusKey(emp);
                             const bal = balanceFor(emp);
-                            const dojYmd = leaveDateToYmd(emp.joined_date);
-                            const cycleLabel = formatLeaveCycleRangeLabel(
-                              emp.joined_date || null,
-                            );
+                            // DOJ + leave-year cycle only for Confirmed/Permanent (not Probation).
+                            const showDojCycle = statusKey === "Confirmed";
+                            const dojYmd = showDojCycle
+                              ? leaveDateToYmd(emp.joined_date)
+                              : null;
+                            const cycleLabel = showDojCycle
+                              ? formatLeaveCycleRangeLabel(emp.joined_date || null)
+                              : null;
                             const availClass =
                               bal.available < 0
                                 ? styles.availNeg
@@ -877,12 +881,13 @@ function ManageLeavesPageInner() {
                                     >
                                       {statusKey}
                                     </span>
-                                    {dojYmd ? (
+                                    {showDojCycle && dojYmd ? (
                                       <div className={styles.dojLine}>DOJ {dojYmd}</div>
-                                    ) : (
+                                    ) : null}
+                                    {showDojCycle && !dojYmd ? (
                                       <div className={styles.dojLineMuted}>DOJ —</div>
-                                    )}
-                                    {cycleLabel ? (
+                                    ) : null}
+                                    {showDojCycle && cycleLabel ? (
                                       <div className={styles.cycleLine}>{cycleLabel}</div>
                                     ) : null}
                                   </div>
