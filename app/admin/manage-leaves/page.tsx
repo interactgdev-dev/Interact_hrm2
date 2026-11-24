@@ -516,36 +516,26 @@ function ManageLeavesPageInner() {
     const annualCurrent = Number.isFinite(Number(emp.annual_current_balance))
       ? Number(emp.annual_current_balance)
       : annualAllow;
-    // Prefer API used; fallback = allowance − remaining (works for over-limit too).
-    const annualUsedRaw = Number(emp.annual_used);
-    const annualUsed = Number.isFinite(annualUsedRaw)
-      ? Math.round(Math.max(0, annualUsedRaw) * 2) / 2
-      : Math.round(Math.max(0, annualAllow - annualCurrent) * 2) / 2;
+    // Effective used = allowance − remaining (covers approved leaves + HR edits).
+    // Over-limit example: remaining -9.5 → used 29.5 → strip label 29.5/20.
+    const annualUsed =
+      Math.round(Math.max(0, annualAllow - annualCurrent) * 2) / 2;
     const berAllow = Number(emp.bereavement_allowance) || 3;
     const berCurrent = Number.isFinite(Number(emp.bereavement_current_balance))
       ? Number(emp.bereavement_current_balance)
       : berAllow;
-    const berUsedRaw = Number(emp.bereavement_used);
-    const berUsed = Number.isFinite(berUsedRaw)
-      ? Math.round(Math.max(0, berUsedRaw) * 2) / 2
-      : Math.round(Math.max(0, berAllow - berCurrent) * 2) / 2;
+    const berUsed = Math.round(Math.max(0, berAllow - berCurrent) * 2) / 2;
     const gender = normalizeEmployeeGender(emp.gender);
     const matAllow = Number(emp.maternity_allowance) || 90;
     const matCurrent = Number.isFinite(Number(emp.maternity_current_balance))
       ? Number(emp.maternity_current_balance)
       : matAllow;
-    const matUsedRaw = Number(emp.maternity_used);
-    const matUsed = Number.isFinite(matUsedRaw)
-      ? Math.round(Math.max(0, matUsedRaw) * 2) / 2
-      : Math.round(Math.max(0, matAllow - matCurrent) * 2) / 2;
+    const matUsed = Math.round(Math.max(0, matAllow - matCurrent) * 2) / 2;
     const patAllow = Number(emp.paternity_allowance) || 5;
     const patCurrent = Number.isFinite(Number(emp.paternity_current_balance))
       ? Number(emp.paternity_current_balance)
       : patAllow;
-    const patUsedRaw = Number(emp.paternity_used);
-    const patUsed = Number.isFinite(patUsedRaw)
-      ? Math.round(Math.max(0, patUsedRaw) * 2) / 2
-      : Math.round(Math.max(0, patAllow - patCurrent) * 2) / 2;
+    const patUsed = Math.round(Math.max(0, patAllow - patCurrent) * 2) / 2;
     // Signed remaining — negative when over annual limit.
     const available = Math.round(annualCurrent * 2) / 2;
     const annualOver = annualCurrent < 0 || annualUsed > annualAllow;

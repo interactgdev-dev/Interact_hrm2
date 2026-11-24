@@ -275,11 +275,19 @@ export async function GET(req: NextRequest) {
         bereavement_allowance: bereavementAllowance,
         maternity_allowance: genderNorm === "female" ? maternityAllowance : 0,
         paternity_allowance: genderNorm === "male" ? paternityAllowance : 0,
-        // Actual approved days used (can exceed allowance when over-limit).
-        annual_used: roundLeaveDays(Math.max(0, used.annual_used)),
-        bereavement_used: roundLeaveDays(Math.max(0, used.bereavement_used)),
-        maternity_used: roundLeaveDays(Math.max(0, used.maternity_used)),
-        paternity_used: roundLeaveDays(Math.max(0, used.paternity_used)),
+        // Effective used = allowance − remaining (over-limit: -9.5 → 29.5 used).
+        annual_used: roundLeaveDays(
+          Math.max(0, annualAllowance - annualCurrent),
+        ),
+        bereavement_used: roundLeaveDays(
+          Math.max(0, bereavementAllowance - bereavementCurrent),
+        ),
+        maternity_used: roundLeaveDays(
+          Math.max(0, maternityAllowance - maternityCurrent),
+        ),
+        paternity_used: roundLeaveDays(
+          Math.max(0, paternityAllowance - paternityCurrent),
+        ),
         annual_balance_adjustment: annualAdjustment,
         bereavement_balance_adjustment: bereavementAdjustment,
         maternity_balance_adjustment: maternityAdjustment,
