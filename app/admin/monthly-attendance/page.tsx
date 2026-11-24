@@ -1378,9 +1378,14 @@ export default function MonthlyAttendancePage() {
     if (override) {
       const isTardy = normalizeAttendanceStatus(override) === "Tardy";
       const tardyN = isTardy ? meta?.runningLate ?? 0 : 0;
+      // Prefer month meta (has correct running tardy # + %) so card / summary / total match.
+      const deduction =
+        meta?.isManual && meta?.deduction != null && String(meta.deduction) !== ""
+          ? String(meta.deduction)
+          : deductionForAttendanceStatus(override, tardyN);
       return {
         statusLabel: override,
-        deduction: deductionForAttendanceStatus(override, tardyN),
+        deduction,
         isManual: true,
       };
     }
@@ -2064,7 +2069,14 @@ export default function MonthlyAttendancePage() {
   ): DeductionSummaryEmployeeBlock {
     const rows: DeductionSummaryDayRow[] = [];
     if (!monthInfo.days) {
-      return { employeeName: employee.employeeName, rows, totalDeduction: 0 };
+      return {
+        employeeName: employee.employeeName,
+        rows,
+        totalDeduction: 0,
+        extraHours: "-",
+        lateExceed: "-",
+        workingDays: getTotalWorkingDays(monthInfo),
+      };
     }
 
     if (employee.isImported && employee.importedDays?.length) {
@@ -2170,6 +2182,11 @@ export default function MonthlyAttendancePage() {
       employeeName: excelEmployeeLabel(employee.employeeName, employee.pseudonym),
       rows,
       totalDeduction: calculateTotalDeduction(employee),
+      extraHours: getEmployeeTotalOvertime(employee),
+      lateExceed: getEmployeeTotalExcessLate(employee),
+      workingDays: employee.isImported && employee.importedFooter?.workingDays
+        ? employee.importedFooter.workingDays
+        : getTotalWorkingDays(monthInfo),
     };
   }
 
@@ -2266,6 +2283,104 @@ export default function MonthlyAttendancePage() {
     return { label, days };
   }, [selectedMonth]);
 
+  /**
+   * Build per-day status / tardy running count / deduction for the full month grid.
+   * Includes empty days with manual (M) Tardy so count + % match the card and summary.
+   */
+  function applyMonthTardyAndDeductionMeta(employee: MonthlyAttendanceEmployeeRow) {
+    let runningLate = 0;
+    const monthKeys = (monthInfo.days || []).map((d) => d.dateKey);
+    const paddingKeys = Object.keys(employee.byDate || {}).filter(
+      (k) => !monthKeys.includes(k),
+    );
+    const dateKeys = [...monthKeys, ...paddingKeys].sort();
+
+    dateKeys.forEach((dateKey) => {
+      const dayRecords = employee.byDate[dateKey] || [];
+      if (dayRecords.length) {
+        dayRecords.sort(compareAttendanceRows);
+      }
+
+      const inSelectedMonth =
+        (!fromDate || dateKey >= fromDate) && (!toDate || dateKey <= toDate);
+
+      let autoStatusLabel = "Absent";
+      let dayIsLate = false;
+      let dayLateMinutes = 0;
+      let record: any = null;
+
+      if (dayRecords.length > 0) {
+        const agg = aggregateDayPunches(dayRecords);
+        record = agg.record;
+        const dayStatus = classifyDayAttendance({
+          dateKey,
+          clockIn: agg.clockIn,
+          clockOut: agg.clockOut,
+          shiftStart: record?.shift_start_time ?? null,
+          shiftEnd: record?.shift_end_time ?? null,
+          gender: employee.gender,
+        });
+        autoStatusLabel = normalizeAttendanceStatus(dayStatus.statusLabel);
+        dayIsLate = Boolean(dayStatus.isLate);
+        dayLateMinutes = dayStatus.lateMinutes || 0;
+      } else {
+        const workingDay = isWorkingDay(dateKey);
+        const leaveKind = approvedLeaveOnDay(
+          approvedLeavesMap,
+          employee.employeeId,
+          dateKey,
+        );
+        autoStatusLabel = emptyWorkingDayStatus(
+          dateKey,
+          workingDay,
+          leaveKind,
+        ).statusLabel;
+      }
+
+      const override =
+        effectiveDayOverride(employee.employeeId, dateKey, dayRecords) ||
+        overrideStatusFor(employee.employeeId, dateKey);
+      const isManual = Boolean(override);
+      const statusLabel = normalizeAttendanceStatus(override || autoStatusLabel);
+      const statusColor = uiStatusTextColor(statusLabel);
+      let deduction = "";
+      let tardyDisplay: number | string = "";
+
+      // Manual Tardy always increments the month count (even with no clock-in / not auto-late).
+      if (statusLabel === "Tardy" && (isManual || dayIsLate)) {
+        if (inSelectedMonth) {
+          runningLate += 1;
+          tardyDisplay = runningLate;
+          deduction = deductionForAttendanceStatus(statusLabel, runningLate);
+        }
+      } else if (statusLabel === "Absent") {
+        deduction = "100%";
+      } else if (
+        statusLabel === STATUS_FIRST_HALF_DAY ||
+        statusLabel === STATUS_SECOND_HALF_DAY
+      ) {
+        deduction = "50%";
+      } else {
+        tardyDisplay = "";
+        deduction = deductionForAttendanceStatus(statusLabel, 0);
+      }
+
+      employee.dateMeta[dateKey] = {
+        runningLate: tardyDisplay,
+        statusLabel,
+        autoStatusLabel,
+        statusColor,
+        deduction,
+        isManual,
+        lateMinutes: billableLateForDay(
+          statusLabel,
+          dayLateMinutes,
+          record?.late_minutes != null ? Number(record.late_minutes) : null,
+        ),
+      };
+    });
+  }
+
   /** Heavy build — only when attendance/import/dept data changes (not on each search key). */
   const attendanceByEmployeeAll = useMemo((): MonthlyAttendanceEmployeeRow[] => {
     if (showingImported && importedSnapshot) {
@@ -2322,70 +2437,7 @@ export default function MonthlyAttendancePage() {
       Object.keys(employee.byDate).forEach((dateKey) => {
         employee.byDate[dateKey].sort(compareAttendanceRows);
       });
-
-      let runningLate = 0;
-      const dateKeys = Object.keys(employee.byDate).sort();
-      dateKeys.forEach((dateKey) => {
-        const dayRecords = employee.byDate[dateKey];
-        const { clockIn, clockOut, record } = aggregateDayPunches(dayRecords);
-        const dayStatus = classifyDayAttendance({
-          dateKey,
-          clockIn,
-          clockOut,
-          shiftStart: record?.shift_start_time ?? null,
-          shiftEnd: record?.shift_end_time ?? null,
-          gender: employee.gender,
-        });
-
-        const autoStatusLabel = normalizeAttendanceStatus(dayStatus.statusLabel);
-        // Session-level M overrides must drive count/deduction (not only day-level).
-        const override = effectiveDayOverride(
-          employee.employeeId,
-          dateKey,
-          dayRecords,
-        );
-        const isManual = Boolean(override);
-        const statusLabel = override || autoStatusLabel;
-        const statusColor = uiStatusTextColor(statusLabel);
-        let deduction = "";
-        let tardyDisplay: number | string = "";
-
-        // Fetch pads ±1 day for overnight/ZK pairing — do NOT count those padding
-        // days in monthly tardy running total (otherwise first visible tardy shows as 2).
-        const inSelectedMonth =
-          (!fromDate || dateKey >= fromDate) && (!toDate || dateKey <= toDate);
-
-        if (statusLabel === "Tardy" && (dayStatus.isLate || isManual)) {
-          if (inSelectedMonth) {
-            runningLate += 1;
-            tardyDisplay = runningLate;
-            deduction = deductionForAttendanceStatus(statusLabel, runningLate);
-          }
-        } else if (statusLabel === "Absent") {
-          deduction = "100%";
-        } else if (statusLabel === STATUS_FIRST_HALF_DAY || statusLabel === STATUS_SECOND_HALF_DAY) {
-          deduction = "50%";
-        } else {
-          // On Time / Leave / Off — never keep a stale tardy count on this day.
-          tardyDisplay = "";
-          deduction = deductionForAttendanceStatus(statusLabel, 0);
-        }
-
-        employee.dateMeta[dateKey] = {
-          runningLate: tardyDisplay,
-          statusLabel,
-          autoStatusLabel,
-          statusColor,
-          deduction,
-          isManual,
-          // Manual On Time must clear Late label; only Tardy (etc.) bill late minutes.
-          lateMinutes: billableLateForDay(
-            statusLabel,
-            dayStatus.lateMinutes || 0,
-            record?.late_minutes != null ? Number(record.late_minutes) : null,
-          ),
-        };
-      });
+      applyMonthTardyAndDeductionMeta(employee);
     });
 
     return [...seenEmployees]
@@ -2400,6 +2452,9 @@ export default function MonthlyAttendancePage() {
     toDate,
     statusOverrides,
     statusOverridesByAttendanceId,
+    monthInfo.days,
+    approvedLeavesMap,
+    calendarOverrides,
   ]);
 
   /** Enrich employee_code + include Tungsten-only employees (no HRM clock-in). */
@@ -2550,6 +2605,8 @@ export default function MonthlyAttendancePage() {
       });
     }
 
+    // ZK-only / leave-only cards still need tardy count from manual (M) status.
+    extra.forEach((e) => applyMonthTardyAndDeductionMeta(e));
     if (!extra.length) return enriched;
     return [...enriched, ...extra].sort((a, b) =>
       a.employeeName.localeCompare(b.employeeName),
@@ -2564,6 +2621,10 @@ export default function MonthlyAttendancePage() {
     toDate,
     deferredSearchName,
     approvedLeavesMap,
+    statusOverrides,
+    statusOverridesByAttendanceId,
+    monthInfo.days,
+    calendarOverrides,
   ]);
 
   /** Cheap name / pseudo / ID filter — deferred so typing does not block the input */
@@ -3776,10 +3837,37 @@ export default function MonthlyAttendancePage() {
                                 {deductionPreview.block.totalDeduction}%
                               </td>
                             </tr>
+                            <tr>
+                              <td colSpan={9} />
+                              <td>Extra Hours:</td>
+                              <td>{deductionPreview.block.extraHours ?? "-"}</td>
+                            </tr>
+                            <tr>
+                              <td colSpan={9} />
+                              <td>Late Exceed:</td>
+                              <td>{deductionPreview.block.lateExceed ?? "-"}</td>
+                            </tr>
+                            <tr>
+                              <td colSpan={9} />
+                              <td>Total Working Days:</td>
+                              <td>{deductionPreview.block.workingDays ?? "-"}</td>
+                            </tr>
                           </tfoot>
                         </table>
                       </div>
                     )}
+                    {deductionPreview.block.rows.length === 0 ? (
+                      <div className={styles.deductionFooterMetrics} style={{ marginTop: 12 }}>
+                        <div>Extra Hours: {deductionPreview.block.extraHours ?? "-"}</div>
+                        <div>Late Exceed: {deductionPreview.block.lateExceed ?? "-"}</div>
+                        <div>
+                          Total Working Days: {deductionPreview.block.workingDays ?? "-"}
+                        </div>
+                        <div>
+                          Total Deduction: {deductionPreview.block.totalDeduction}%
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className={styles.modalActions}>

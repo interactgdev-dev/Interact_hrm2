@@ -73,6 +73,10 @@ export type DeductionSummaryEmployeeBlock = {
   employeeName: string;
   rows: DeductionSummaryDayRow[];
   totalDeduction: number;
+  /** Same footer metrics as the Monthly Attendance employee card. */
+  extraHours?: string;
+  lateExceed?: string;
+  workingDays?: string | number;
 };
 
 function applyBlackBorder(cell: ExcelJS.Cell) {
@@ -178,6 +182,26 @@ function appendEmployeeBlock(
       cell.font = RED_BOLD_FONT;
     }
   });
+
+  const footerLines: [string, string][] = [
+    ["Extra Hours:", String(block.extraHours ?? "-")],
+    ["Late Exceed:", String(block.lateExceed ?? "-")],
+    ["Total Working Days:", String(block.workingDays ?? "-")],
+  ];
+  for (const [label, value] of footerLines) {
+    const footerRow = sheet.addRow([
+      ...Array(COL_COUNT - 2).fill(""),
+      label,
+      value,
+    ]);
+    footerRow.eachCell((cell, colNumber) => {
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      applyBlackBorder(cell);
+      if (colNumber === COL_COUNT - 1 || colNumber === COL_COUNT) {
+        cell.font = { bold: true, size: 11 };
+      }
+    });
+  }
 }
 
 function uniqueSheetName(base: string, used: Set<string>): string {
@@ -205,7 +229,16 @@ export async function downloadDeductionSummaryExcel(
 
   const exportBlocks = blocks.length
     ? blocks
-    : [{ employeeName: "No employees", rows: [], totalDeduction: 0 }];
+    : [
+        {
+          employeeName: "No employees",
+          rows: [],
+          totalDeduction: 0,
+          extraHours: "-",
+          lateExceed: "-",
+          workingDays: "-",
+        },
+      ];
 
   // One sheet tab per employee (pseudo name when assigned) — matches attendance export.
   exportBlocks.forEach((block) => {
