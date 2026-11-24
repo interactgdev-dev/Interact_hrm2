@@ -34,7 +34,7 @@ export const PUNCH_ONLY_EMPLOYEES: PunchOnlyEmployee[] = [
     pin: "140014",
     departmentName: "Admin",
   },
-  { id: "156", firstName: "Javaid", lastName: "Sunny", pin: "140010", departmentName: "Admin" },
+  // Javaid Sunny (156 / pin 140010) removed from Monthly Attendance punch-only cards.
   // Admin Staff punch-only (ZK pin 140015) — punches only, no 1st/2nd half attendance rules
   { id: "160", firstName: "Dawood", lastName: "Masih", pin: "140015", departmentName: "Admin" },
   // Admin Staff punch-only (ZK pin 159)
@@ -103,6 +103,15 @@ export function punchOnlyRosterApplies(
   const first = roster.firstName.toLowerCase();
   const full = punchOnlyDisplayName(roster).toLowerCase();
   return name === full || name.includes(first);
+}
+
+/** Never invent / show these IDs as Monthly Attendance cards (even if ZK punches exist). */
+export const HIDDEN_FROM_MONTHLY_ATTENDANCE_IDS = new Set(["156"]); // Javaid Sunny
+
+export function isHiddenFromMonthlyAttendance(
+  employeeId: string | number | null | undefined,
+): boolean {
+  return HIDDEN_FROM_MONTHLY_ATTENDANCE_IDS.has(String(employeeId || "").trim());
 }
 
 /** HRM employee_list status — inactive / left staff must not get Monthly Attendance cards. */

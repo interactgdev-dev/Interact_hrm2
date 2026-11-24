@@ -145,6 +145,7 @@ type MonthlyAttendanceEmployeeRow = {
 import {
   PUNCH_ONLY_DEFAULT_SHIFT,
   PUNCH_ONLY_EMPLOYEES,
+  isHiddenFromMonthlyAttendance,
   isHrmEmployeeInactive,
   punchOnlyById,
   punchOnlyDisplayName,
@@ -1759,15 +1760,30 @@ export default function MonthlyAttendancePage() {
       const meta = employee.dateMeta[day.dateKey];
       // Show ZK-only sessions too; status still from HRM / leave / Absent fallback.
       const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
+      const dayOverrideExport = overrideStatusFor(employee.employeeId, day.dateKey);
+      const offDayHideExport =
+        !isWorkingDay(day.dateKey) &&
+        (!dayOverrideExport || normalizeAttendanceStatus(dayOverrideExport) === "Off");
 
-      if (daySessions.length === 0 && dayRecords.length === 0) {
+      if (
+        offDayHideExport ||
+        (daySessions.length === 0 && dayRecords.length === 0)
+      ) {
         const resolved = dayStatusAndDeductionForEmployee(
           employee,
           day.dateKey,
           dayRecords,
         );
-        const statusLabel = resolved.statusLabel;
-        const deduction = resolved.deduction;
+        const statusLabel = offDayHideExport
+          ? resolved.isManual
+            ? resolved.statusLabel
+            : "Off"
+          : resolved.statusLabel;
+        const deduction = offDayHideExport
+          ? resolved.isManual
+            ? resolved.deduction
+            : ""
+          : resolved.deduction;
         dataRows.push({
           cells: [
             day.weekday,
@@ -2398,6 +2414,7 @@ export default function MonthlyAttendancePage() {
     attendance.forEach((record: any) => {
       if (!record.employee_id) return;
       const empId = String(record.employee_id);
+      if (isHiddenFromMonthlyAttendance(empId)) return;
       // Admin Staff punch-only (name-matched roster): Tungsten only — no 1st/2nd half / tardy rules
       if (
         employeeIdKeys(empId).some((k) =>
@@ -2492,6 +2509,7 @@ export default function MonthlyAttendancePage() {
         };
       })
       .filter((row) => {
+        if (isHiddenFromMonthlyAttendance(row.employeeId)) return false;
         const hrm = hrmById.get(row.employeeId);
         if (!hrm) return true;
         if (isHrmEmployeeInactive(hrm.status)) {
@@ -2506,6 +2524,7 @@ export default function MonthlyAttendancePage() {
 
     for (const hrm of allHrmEmployees) {
       if (existing.has(hrm.employeeId)) continue;
+      if (isHiddenFromMonthlyAttendance(hrm.employeeId)) continue;
       // Inactive / left staff: never invent Monthly Attendance cards.
       if (isHrmEmployeeInactive(hrm.status)) continue;
       if (
@@ -2728,6 +2747,7 @@ export default function MonthlyAttendancePage() {
     let totalMinutes = 0;
 
     (monthInfo.days || []).forEach((day: { dateKey: string }) => {
+      if (!isWorkingDay(day.dateKey)) return;
       const dayRecords = emp.byDate?.[day.dateKey] || [];
       const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
       const rows = getDaySessionRows(day.dateKey, dayRecords, daySessions);
@@ -2912,6 +2932,81 @@ export default function MonthlyAttendancePage() {
                           const daySessions = employeeSessions.filter(
                             (s) => s.sessionDate === day.dateKey,
                           );
+                          const dayLevelOverrideEarly = overrideStatusFor(
+                            employee.employeeId,
+                            day.dateKey,
+                          );
+                          // Sat/Sun / calendar Off: never show punches (overnight spill must not
+                          // appear as T.Punch In on an Off day). Manual non-Off override still shows.
+                          const offDayHidePunches =
+                            !workingDay &&
+                            (!dayLevelOverrideEarly ||
+                              normalizeAttendanceStatus(dayLevelOverrideEarly) === "Off");
+
+                          if (offDayHidePunches) {
+                            const leaveKindOff = approvedLeaveOnDay(
+                              approvedLeavesMap,
+                              employee.employeeId,
+                              day.dateKey,
+                            );
+                            const leaveAttOff = leaveKindOff
+                              ? attendanceFromApprovedLeaveDay(leaveKindOff)
+                              : null;
+                            const resolvedOff = dayStatusAndDeductionForEmployee(
+                              employee,
+                              day.dateKey,
+                              dayRecords,
+                            );
+                            const statusLabel = resolvedOff.isManual
+                              ? resolvedOff.statusLabel
+                              : leaveAttOff?.statusLabel || "Off";
+                            const deduction = resolvedOff.isManual
+                              ? resolvedOff.deduction
+                              : leaveAttOff?.deduction || "";
+                            const offColor =
+                              leaveAttOff && !resolvedOff.isManual
+                                ? leaveAttOff.statusColor
+                                : uiStatusTextColor(statusLabel);
+                            return (
+                              <tr key={`${employee.employeeId}-${day.dateKey}-off`}>
+                                <td>{day.weekday}</td>
+                                <td>{formatDateKey(day.dateKey)}</td>
+                                <td>---</td>
+                                <td>---</td>
+                                <td>---</td>
+                                <td>---</td>
+                                <td>---</td>
+                                <td style={{ display: "none" }}>---</td>
+                                <td>---</td>
+                                <td></td>
+                                <td style={{ color: offColor, fontWeight: 600 }}>
+                                  {renderEditableStatusCell({
+                                    employeeId: employee.employeeId,
+                                    dateKey: day.dateKey,
+                                    displayStatus: statusLabel,
+                                    isManual: resolvedOff.isManual,
+                                    statusColorOverride:
+                                      leaveAttOff && !resolvedOff.isManual
+                                        ? leaveAttOff.statusColor
+                                        : null,
+                                  })}
+                                </td>
+                                <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>
+                                  {tardyNoteForCell(
+                                    employee.employeeId,
+                                    day.dateKey,
+                                    statusLabel,
+                                    undefined,
+                                    dayRecords,
+                                  )}
+                                </td>
+                                <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>
+                                  {hrNoteForCell(employee.employeeId, day.dateKey)}
+                                </td>
+                                <td>{deduction}</td>
+                              </tr>
+                            );
+                          }
 
                           if (daySessions.length === 0 && dayRecords.length === 0) {
                             const leaveKind = approvedLeaveOnDay(
