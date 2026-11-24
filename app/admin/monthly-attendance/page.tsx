@@ -1352,81 +1352,127 @@ export default function MonthlyAttendancePage() {
     return getDateKey(record.clock_in || record.clock_out || "");
   }
 
+  /**
+   * Single source of truth for day status + deduction %.
+   * Manual (M) override always wins over approved leave and auto status so
+   * row %, Total Deduction, Excel, and Deduction Summary stay in sync.
+   */
+  function dayStatusAndDeductionForEmployee(
+    employee: any,
+    dateKey: string,
+    dayRecords?: Array<{ id?: number | null }>,
+  ): { statusLabel: string; deduction: string; isManual: boolean } {
+    const records = dayRecords ?? employee.byDate?.[dateKey] ?? [];
+    const meta = employee.dateMeta?.[dateKey];
+    const workingDay = isWorkingDay(dateKey);
+    const leaveKind = approvedLeaveOnDay(
+      approvedLeavesMap,
+      employee.employeeId,
+      dateKey,
+    );
+    const leaveAtt = leaveKind ? attendanceFromApprovedLeaveDay(leaveKind) : null;
+    const override =
+      effectiveDayOverride(employee.employeeId, dateKey, records) ||
+      overrideStatusFor(employee.employeeId, dateKey);
+
+    if (override) {
+      const isTardy = normalizeAttendanceStatus(override) === "Tardy";
+      const tardyN = isTardy ? meta?.runningLate ?? 0 : 0;
+      return {
+        statusLabel: override,
+        deduction: deductionForAttendanceStatus(override, tardyN),
+        isManual: true,
+      };
+    }
+
+    if (leaveAtt) {
+      return {
+        statusLabel: leaveAtt.statusLabel,
+        deduction: leaveAtt.deduction,
+        isManual: false,
+      };
+    }
+
+    if (meta?.statusLabel) {
+      const statusLabel = normalizeAttendanceStatus(meta.statusLabel);
+      return {
+        statusLabel,
+        deduction:
+          meta.deduction ||
+          deductionForAttendanceStatus(statusLabel, meta.runningLate ?? 0),
+        isManual: Boolean(meta.isManual),
+      };
+    }
+
+    const empty = emptyWorkingDayStatus(dateKey, workingDay, leaveKind);
+    return {
+      statusLabel: empty.statusLabel,
+      deduction: empty.deduction,
+      isManual: false,
+    };
+  }
+
+  function deductionPercentValue(deduction: string | null | undefined): number {
+    return parseInt(String(deduction || "").replace(/%/g, ""), 10) || 0;
+  }
+
   function calculateTotalDeduction(employee: any) {
     if (employee.isImported) {
       if (employee.importedDays?.length && importedEmployeeUsesFiveHourShift(employee.importedDays)) {
         let total = 0;
         (employee.importedDays as ImportedMonthlyDay[]).forEach((day) => {
+          const meta = employee.dateMeta?.[day.dateKey];
+          if (meta?.statusLabel) {
+            total += deductionPercentValue(
+              meta.deduction ||
+                deductionForAttendanceStatus(meta.statusLabel, meta.runningLate ?? 0),
+            );
+            return;
+          }
           const { deduction } = getImportedDayDisplayFields(day, { fiveHourShift: true });
-          if (deduction) total += parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
+          if (deduction) total += deductionPercentValue(deduction);
         });
         return total;
       }
+      // Prefer live per-day meta (includes manual overrides) over stale imported footer.
+      if (employee.importedDays?.length) {
+        let fromDays = 0;
+        let anyMeta = false;
+        (employee.importedDays as ImportedMonthlyDay[]).forEach((day) => {
+          const meta = employee.dateMeta?.[day.dateKey];
+          if (meta?.statusLabel || meta?.deduction != null) {
+            anyMeta = true;
+            fromDays += deductionPercentValue(
+              meta.deduction ||
+                deductionForAttendanceStatus(
+                  meta.statusLabel || "",
+                  meta.runningLate ?? 0,
+                ),
+            );
+            return;
+          }
+          const ded =
+            day.sheetDeduction ?? day.deduction ?? employee.dateMeta?.[day.dateKey]?.deduction;
+          fromDays += deductionPercentValue(ded);
+        });
+        if (anyMeta) return fromDays;
+      }
       const fromFooter = employee.importedFooter?.totalDeduction;
       if (fromFooter != null && String(fromFooter).trim() !== "") {
-        return parseInt(String(fromFooter).replace(/%/g, ""), 10) || 0;
+        return deductionPercentValue(String(fromFooter));
       }
       let total = 0;
       (employee.importedDays || []).forEach((day: ImportedMonthlyDay) => {
         const ded = day.sheetDeduction ?? day.deduction ?? employee.dateMeta?.[day.dateKey]?.deduction;
-        if (ded) total += parseInt(String(ded).replace(/%/g, ""), 10) || 0;
+        if (ded) total += deductionPercentValue(ded);
       });
       return total;
     }
 
     let totalDeduction = 0;
     monthInfo.days.forEach((day) => {
-      const dayRecords = employee.byDate[day.dateKey] || [];
-      const meta = employee.dateMeta[day.dateKey];
-      const workingDay = isWorkingDay(day.dateKey);
-      
-      let dayDeduction = 0;
-      const leaveKind = approvedLeaveOnDay(
-        approvedLeavesMap,
-        employee.employeeId,
-        day.dateKey,
-      );
-      if (leaveKind) {
-        dayDeduction =
-          parseInt(
-            String(attendanceFromApprovedLeaveDay(leaveKind).deduction).replace(/%/g, ""),
-            10,
-          ) || 0;
-      } else if (dayRecords.length === 0) {
-        const emptyOverride = overrideStatusFor(employee.employeeId, day.dateKey);
-        if (emptyOverride) {
-          dayDeduction =
-            parseInt(
-              String(deductionForAttendanceStatus(emptyOverride, 0)).replace(/%/g, ""),
-              10,
-            ) || 0;
-        } else {
-          const { deduction } = emptyWorkingDayStatus(day.dateKey, workingDay, null);
-          dayDeduction = parseInt(String(deduction).replace(/%/g, ""), 10) || 0;
-        }
-      } else {
-        // Prefer live effective status (session/day M) so Total Deduction matches row %.
-        const effective =
-          effectiveDayOverride(employee.employeeId, day.dateKey, dayRecords) ||
-          meta?.statusLabel ||
-          "";
-        if (effective) {
-          const tardyN =
-            normalizeAttendanceStatus(effective) === "Tardy"
-              ? meta?.runningLate ?? 0
-              : 0;
-          dayDeduction =
-            parseInt(
-              String(
-                deductionForAttendanceStatus(effective, tardyN),
-              ).replace(/%/g, ""),
-              10,
-            ) || 0;
-        } else if (meta?.deduction) {
-          dayDeduction = parseInt(String(meta.deduction).replace(/%/g, ""), 10) || 0;
-        }
-      }
-      totalDeduction += dayDeduction;
+      const { deduction } = dayStatusAndDeductionForEmployee(employee, day.dateKey);
+      totalDeduction += deductionPercentValue(deduction);
     });
     return totalDeduction;
   }
@@ -1644,10 +1690,7 @@ export default function MonthlyAttendancePage() {
         });
       });
       const footer = employee.importedFooter;
-      const totalDeduction =
-        footer?.totalDeduction != null && String(footer.totalDeduction).trim() !== ""
-          ? String(footer.totalDeduction).replace(/%$/, "")
-          : String(calculateTotalDeduction(employee));
+      const totalDeduction = String(calculateTotalDeduction(employee));
       dataRows.push(
         {
           cells: ["", "", "", "", "", "", "", "", "", "", "Total Deduction:", "", "", `${totalDeduction}%`],
@@ -1709,21 +1752,17 @@ export default function MonthlyAttendancePage() {
     monthInfo.days.forEach((day) => {
       const dayRecords = employee.byDate[day.dateKey] || [];
       const meta = employee.dateMeta[day.dateKey];
-      const workingDay = isWorkingDay(day.dateKey);
       // Show ZK-only sessions too; status still from HRM / leave / Absent fallback.
       const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
 
       if (daySessions.length === 0 && dayRecords.length === 0) {
-        const leaveKind = approvedLeaveOnDay(
-          approvedLeavesMap,
-          employee.employeeId,
+        const resolved = dayStatusAndDeductionForEmployee(
+          employee,
           day.dateKey,
+          dayRecords,
         );
-        const { statusLabel, deduction } = emptyWorkingDayStatus(
-          day.dateKey,
-          workingDay,
-          leaveKind,
-        );
+        const statusLabel = resolved.statusLabel;
+        const deduction = resolved.deduction;
         dataRows.push({
           cells: [
             day.weekday,
@@ -1747,36 +1786,22 @@ export default function MonthlyAttendancePage() {
       }
 
       const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
-
-      if (sessionsToExport.length === 0) {
-        // handled above when no sessions and no records
-      }
-
-      const leaveKindSession = approvedLeaveOnDay(
-        approvedLeavesMap,
-        employee.employeeId,
+      const dayResolved = dayStatusAndDeductionForEmployee(
+        employee,
         day.dateKey,
-      );
-      const leaveAttSession = leaveKindSession
-        ? attendanceFromApprovedLeaveDay(leaveKindSession)
-        : null;
-      // No HRM clock-in meta → Absent (or leave/off). Punches do not change status.
-      const emptySessionFallback = emptyWorkingDayStatus(
-        day.dateKey,
-        workingDay,
-        leaveKindSession,
+        dayRecords,
       );
 
       sessionsToExport.forEach(({ session, record }, sessionIndex) => {
+        const attId = normalizeOverrideAttendanceId(record?.id);
+        const sessionOverride =
+          attId > 0
+            ? overrideStatusFor(employee.employeeId, day.dateKey, attId)
+            : null;
         const statusLabel = normalizeAttendanceStatus(
-          leaveAttSession?.statusLabel ||
-            meta?.statusLabel ||
-            emptySessionFallback.statusLabel,
+          sessionOverride || dayResolved.statusLabel,
         );
-        const dayDeduction =
-          leaveAttSession?.deduction ||
-          meta?.deduction ||
-          emptySessionFallback.deduction;
+        const dayDeduction = dayResolved.deduction;
         // Same-day multi clock-in: deduction once (first row); later rows "---".
         const deduction =
           sessionIndex === 0 ? dayDeduction : dayDeduction ? "---" : "";
@@ -2074,47 +2099,55 @@ export default function MonthlyAttendancePage() {
         const dayRecords = employee.byDate[day.dateKey] || [];
         const meta = employee.dateMeta[day.dateKey];
         const daySessions = employeeSessions.filter((s) => s.sessionDate === day.dateKey);
-
-        if (dayRecords.length === 0 && daySessions.length === 0) {
-          const leaveKind = approvedLeaveOnDay(
-            approvedLeavesMap,
-            employee.employeeId,
-            day.dateKey,
-          );
-          const { statusLabel, deduction } = emptyWorkingDayStatus(
-            day.dateKey,
-            true,
-            leaveKind,
-          );
-          const exportLabel = leaveKind ? "Leave" : statusLabel;
-          if (!shouldIncludeInDeductionSummary(exportLabel)) return;
-          pushDeductionSummaryRow(
-            rows,
-            employee,
-            day.dateKey,
-            exportLabel,
-            deduction,
-            meta?.runningLate ?? "",
-          );
-          return;
-        }
-
+        const resolved = dayStatusAndDeductionForEmployee(
+          employee,
+          day.dateKey,
+          dayRecords,
+        );
+        // Approved leave (when not manually overridden) → "Leave" label in summary.
         const leaveKind = approvedLeaveOnDay(
           approvedLeavesMap,
           employee.employeeId,
           day.dateKey,
         );
-        const leaveAtt = leaveKind ? attendanceFromApprovedLeaveDay(leaveKind) : null;
-        const emptyFallback = emptyWorkingDayStatus(day.dateKey, true, leaveKind);
-        // Approved leave (full / half) → "Leave" in deduction summary (not PTO / half labels).
-        const exportStatus = leaveAtt
-          ? "Leave"
-          : meta?.statusLabel || emptyFallback.statusLabel;
+        const exportStatus =
+          resolved.isManual
+            ? resolved.statusLabel
+            : leaveKind
+              ? "Leave"
+              : resolved.statusLabel;
         if (!shouldIncludeInDeductionSummary(exportStatus)) return;
-        const deduction =
-          leaveAtt?.deduction || meta?.deduction || emptyFallback.deduction;
-        const tardyCount = meta?.runningLate ?? "";
+
+        const deduction = resolved.deduction;
+        const tardyCount =
+          normalizeAttendanceStatus(resolved.statusLabel) === "Tardy"
+            ? meta?.runningLate ?? ""
+            : "";
+
+        if (dayRecords.length === 0 && daySessions.length === 0) {
+          pushDeductionSummaryRow(
+            rows,
+            employee,
+            day.dateKey,
+            exportStatus,
+            deduction,
+            tardyCount,
+          );
+          return;
+        }
+
         const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
+        if (sessionsToExport.length === 0) {
+          pushDeductionSummaryRow(
+            rows,
+            employee,
+            day.dateKey,
+            exportStatus,
+            deduction,
+            tardyCount,
+          );
+          return;
+        }
 
         sessionsToExport.forEach(({ session, record }, sessionIndex) => {
           pushDeductionSummaryRow(
@@ -2828,29 +2861,15 @@ export default function MonthlyAttendancePage() {
                             const leaveAttEmpty = leaveKind
                               ? attendanceFromApprovedLeaveDay(leaveKind)
                               : null;
-                            const emptyAuto = emptyWorkingDayStatus(
+                            const resolvedEmpty = dayStatusAndDeductionForEmployee(
+                              employee,
                               day.dateKey,
-                              workingDay,
-                              leaveKind,
+                              dayRecords,
                             );
-                            const emptyOverride = overrideStatusFor(
-                              employee.employeeId,
-                              day.dateKey,
-                            );
-                            const statusLabel = emptyOverride || emptyAuto.statusLabel;
-                            // Approved leave (incl. half day) always 0% — same as full-day Leave.
-                            const deduction = leaveAttEmpty
-                              ? leaveAttEmpty.deduction
-                              : emptyOverride
-                                ? deductionForAttendanceStatus(
-                                    emptyOverride,
-                                    normalizeAttendanceStatus(emptyOverride) === "Tardy"
-                                      ? meta?.runningLate
-                                      : 0,
-                                  )
-                                : emptyAuto.deduction;
+                            const statusLabel = resolvedEmpty.statusLabel;
+                            const deduction = resolvedEmpty.deduction;
                             const emptyStatusColor =
-                              leaveAttEmpty && !emptyOverride
+                              leaveAttEmpty && !resolvedEmpty.isManual
                                 ? leaveAttEmpty.statusColor
                                 : uiStatusTextColor(statusLabel);
                             return (
@@ -2879,10 +2898,10 @@ export default function MonthlyAttendancePage() {
                                       normalizeAttendanceStatus(statusLabel) === "Tardy"
                                         ? meta?.lateMinutes
                                         : null,
-                                    isManual: Boolean(emptyOverride),
+                                    isManual: resolvedEmpty.isManual,
                                     disabled: statusLabel === "---",
                                     statusColorOverride:
-                                      leaveAttEmpty && !emptyOverride
+                                      leaveAttEmpty && !resolvedEmpty.isManual
                                         ? leaveAttEmpty.statusColor
                                         : null,
                                   })}
@@ -2910,6 +2929,11 @@ export default function MonthlyAttendancePage() {
                           const dayLevelOverride = overrideStatusFor(
                             employee.employeeId,
                             day.dateKey,
+                          );
+                          const dayResolved = dayStatusAndDeductionForEmployee(
+                            employee,
+                            day.dateKey,
+                            dayRecords,
                           );
                           // Status: leave → calendar Off → HRM meta → Absent. Punches never invent status.
                           const dayAutoStatus = leaveAttDay
@@ -2940,19 +2964,8 @@ export default function MonthlyAttendancePage() {
                                 : null;
                             const effectiveOverride = sessionOverride || dayLevelOverride;
                             const rowStatus = effectiveOverride || dayAutoStatus;
-                            // Day deduction is computed once; show % only on first same-day row.
-                            const dayDeductionValue = leaveAttDay
-                              ? leaveAttDay.deduction
-                              : effectiveOverride
-                                ? deductionForAttendanceStatus(
-                                    effectiveOverride,
-                                    normalizeAttendanceStatus(effectiveOverride) === "Tardy"
-                                      ? meta?.runningLate
-                                      : 0,
-                                  )
-                                : !workingDay
-                                  ? ""
-                                  : meta?.deduction || emptyFallback.deduction;
+                            // Shared resolver (manual M wins) — same % as Total Deduction / summary.
+                            const dayDeductionValue = dayResolved.deduction;
                             const rowDeduction =
                               index === 0
                                 ? dayDeductionValue
@@ -3061,9 +3074,7 @@ export default function MonthlyAttendancePage() {
                             Total Deduction:
                           </td>
                           <td>
-                            {employee.isImported && employee.importedFooter?.totalDeduction != null
-                              ? `${String(employee.importedFooter.totalDeduction).replace(/%$/, "")}%`
-                              : `${calculateTotalDeduction(employee)}%`}
+                            {`${calculateTotalDeduction(employee)}%`}
                           </td>
                         </tr>
                         <tr style={{ fontWeight: 700, backgroundColor: "#F7FAFC" }}>
