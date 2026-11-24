@@ -21,6 +21,13 @@ import {
   isTeamLeadOrgRole,
 } from "@/lib/org-role";
 import { isAdminBrowserSession } from "@/lib/access-control/employee-shell";
+import {
+  SortableTh,
+  nextSortState,
+  cmpText,
+  cmpNum,
+  type SortDir,
+} from "./SortableTh";
 
 function formatDate(dateString: string) {
   if (!dateString) return "";
@@ -147,7 +154,15 @@ export default function LeaveRequestsPanel({
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
+  const [sortKey, setSortKey] = useState("");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  const onSort = (column: string) => {
+    const next = nextSortState(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   useEffect(() => {
     const cat = String(initialCategory || "").trim().toLowerCase();
@@ -488,8 +503,40 @@ export default function LeaveRequestsPanel({
       return true;
     });
     return [...scoped].sort((a, b) => {
-      const diff = leaveRequestMs(b) - leaveRequestMs(a);
-      return diff !== 0 ? diff : (Number(b.id) || 0) - (Number(a.id) || 0);
+      if (!sortKey) {
+        const diff = leaveRequestMs(b) - leaveRequestMs(a);
+        return diff !== 0 ? diff : (Number(b.id) || 0) - (Number(a.id) || 0);
+      }
+      switch (sortKey) {
+        case "id":
+          return cmpNum(a.id, b.id, sortDir);
+        case "employee":
+          return cmpText(a.employee_name, b.employee_name, sortDir);
+        case "dept":
+          return cmpText(a.department_name, b.department_name, sortDir);
+        case "category":
+          return cmpText(a.leave_category, b.leave_category, sortDir);
+        case "dates":
+          return cmpText(leaveDayKey(a), leaveDayKey(b), sortDir);
+        case "days":
+          return cmpNum(a.total_days, b.total_days, sortDir);
+        case "status":
+          return cmpText(overallLeaveStatus(a), overallLeaveStatus(b), sortDir);
+        case "statusBy":
+          return cmpText(
+            a.status_by?.name || a.approved_by_name || "",
+            b.status_by?.name || b.approved_by_name || "",
+            sortDir,
+          );
+        case "reason":
+          return cmpText(
+            displayLeaveReason(a.reason),
+            displayLeaveReason(b.reason),
+            sortDir,
+          );
+        default:
+          return 0;
+      }
     });
   }, [
     leavesWithMeta,
@@ -500,6 +547,8 @@ export default function LeaveRequestsPanel({
     toDate,
     departmentFilter,
     searchText,
+    sortKey,
+    sortDir,
   ]);
 
   const hasActiveFilters = Boolean(
@@ -721,15 +770,15 @@ export default function LeaveRequestsPanel({
                 <table className={`${styles.reqTable} ${styles.reqTableFit}`}>
                   <thead>
                     <tr>
-                      <th>ID</th>
-                      <th>Employee</th>
-                      <th>Dept</th>
-                      <th>Category</th>
-                      <th>Dates</th>
-                      <th>Days</th>
-                      <th>Status</th>
-                      <th>Status by</th>
-                      <th>Reason</th>
+                      <SortableTh label="ID" column="id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Employee" column="employee" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Dept" column="dept" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Category" column="category" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Dates" column="dates" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Days" column="days" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Status by" column="statusBy" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                      <SortableTh label="Reason" column="reason" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                       <th>Action</th>
                     </tr>
                   </thead>

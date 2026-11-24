@@ -6,6 +6,13 @@ import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { overallLeaveStatus } from "@/lib/leave-approval";
 import { leaveDeptMatches } from "@/lib/leave-dept-filter";
+import {
+  SortableTh,
+  nextSortState,
+  cmpText,
+  cmpNum,
+  type SortDir,
+} from "./SortableTh";
 
 type SummaryRow = {
   id: number | string;
@@ -95,7 +102,15 @@ export default function LeaveSummaryPanel({
   const [leaveData, setLeaveData] = useState<SummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [sortKey, setSortKey] = useState("");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  const onSort = (column: string) => {
+    const next = nextSortState(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   useEffect(() => {
     void fetchSummary();
@@ -229,7 +244,7 @@ export default function LeaveSummaryPanel({
 
   const visibleRows = useMemo(() => {
     const searchLower = search.toLowerCase();
-    return leaveData.filter((row) => {
+    const filtered = leaveData.filter((row) => {
       const matchesSearch =
         !search ||
         row.employeeName.toLowerCase().includes(searchLower) ||
@@ -240,7 +255,39 @@ export default function LeaveSummaryPanel({
       if (!showZeroActivity && (Number(row.total) || 0) === 0) return false;
       return true;
     });
-  }, [leaveData, search, departmentFilter, showZeroActivity]);
+    if (!sortKey) return filtered;
+    return [...filtered].sort((a, b) => {
+      switch (sortKey) {
+        case "id":
+          return cmpNum(a.id, b.id, sortDir);
+        case "employee":
+          return cmpText(a.employeeName, b.employeeName, sortDir);
+        case "department":
+          return cmpText(a.department, b.department, sortDir);
+        case "total":
+          return cmpNum(a.total, b.total, sortDir);
+        case "approved":
+          return cmpNum(a.approved, b.approved, sortDir);
+        case "rejected":
+          return cmpNum(a.rejected, b.rejected, sortDir);
+        case "pending":
+          return cmpNum(a.pending, b.pending, sortDir);
+        case "leaveType":
+          return cmpText(
+            (a.leaveTypes || []).join(", "),
+            (b.leaveTypes || []).join(", "),
+            sortDir,
+          );
+        case "yearTrend": {
+          const sa = (a.yearTrend || []).reduce((n, v) => n + (Number(v) || 0), 0);
+          const sb = (b.yearTrend || []).reduce((n, v) => n + (Number(v) || 0), 0);
+          return cmpNum(sa, sb, sortDir);
+        }
+        default:
+          return 0;
+      }
+    });
+  }, [leaveData, search, departmentFilter, showZeroActivity, sortKey, sortDir]);
 
   return (
     <>
@@ -364,15 +411,15 @@ export default function LeaveSummaryPanel({
           <table className={`${leaveStyles.reqTable} ${leaveStyles.sumTable}`}>
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Employee</th>
-                <th>Department</th>
-                <th>Total</th>
-                <th>Approved</th>
-                <th>Rejected</th>
-                <th>Pending</th>
-                <th>Leave type</th>
-                <th>Year trend</th>
+                <SortableTh label="ID" column="id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Employee" column="employee" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Department" column="department" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Total" column="total" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Approved" column="approved" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Rejected" column="rejected" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Pending" column="pending" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Leave type" column="leaveType" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortableTh label="Year trend" column="yearTrend" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               </tr>
             </thead>
             <tbody>

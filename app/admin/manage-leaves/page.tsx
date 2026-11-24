@@ -24,6 +24,13 @@ import {
   formatLeaveCycleRangeLabel,
   leaveDateToYmd,
 } from "@/lib/leave-cycle";
+import {
+  SortableTh,
+  nextSortState,
+  cmpText,
+  cmpNum,
+  type SortDir,
+} from "./SortableTh";
 
 type LeaveDashTab = "balances" | "requests" | "summary";
 
@@ -151,6 +158,14 @@ function ManageLeavesPageInner() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [monthActiveIds, setMonthActiveIds] = useState<Set<string> | null>(null);
+  const [sortKey, setSortKey] = useState("");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const onSort = (column: string) => {
+    const next = nextSortState(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   const applyGlobalMonth = (monthKey: string) => {
     setGlobalMonth(monthKey);
@@ -601,7 +616,7 @@ function ManageLeavesPageInner() {
   const filteredEmployees = useMemo(() => {
     const deptFilter = String(selectedDepartment || "").trim();
     const term = deferredSearchName.trim().toLowerCase();
-    return employees.filter((emp) => {
+    const filtered = employees.filter((emp) => {
       if (deptFilter && !leaveDeptMatches(emp.department_name, deptFilter)) {
         return false;
       }
@@ -623,6 +638,44 @@ function ManageLeavesPageInner() {
       if (monthActiveIds && !monthActiveIds.has(String(emp.id))) return false;
       return true;
     });
+    if (!sortKey) return filtered;
+    return [...filtered].sort((a, b) => {
+      const balA = balanceFor(a);
+      const balB = balanceFor(b);
+      switch (sortKey) {
+        case "id":
+          return cmpNum(a.id, b.id, sortDir);
+        case "employee":
+          return cmpText(getFullName(a), getFullName(b), sortDir);
+        case "department":
+          return cmpText(a.department_name, b.department_name, sortDir);
+        case "status":
+          return cmpText(employmentStatusKey(a), employmentStatusKey(b), sortDir);
+        case "annual":
+          return cmpNum(balA.annualUsed, balB.annualUsed, sortDir);
+        case "bereavement":
+          return cmpNum(balA.berUsed, balB.berUsed, sortDir);
+        case "matPat": {
+          const va =
+            balA.gender === "female"
+              ? balA.matUsed
+              : balA.gender === "male"
+                ? balA.patUsed
+                : -1;
+          const vb =
+            balB.gender === "female"
+              ? balB.matUsed
+              : balB.gender === "male"
+                ? balB.patUsed
+                : -1;
+          return cmpNum(va, vb, sortDir);
+        }
+        case "available":
+          return cmpNum(balA.available, balB.available, sortDir);
+        default:
+          return 0;
+      }
+    });
   }, [
     employees,
     deferredSearchName,
@@ -630,6 +683,8 @@ function ManageLeavesPageInner() {
     employmentStatusFilter,
     lowBalanceOnly,
     monthActiveIds,
+    sortKey,
+    sortDir,
   ]);
 
   return (
@@ -800,14 +855,14 @@ function ManageLeavesPageInner() {
                     <table className={`${leaveStyles.reqTable} ${leaveStyles.balTable}`}>
                       <thead>
                         <tr>
-                          <th>ID</th>
-                          <th>Employee</th>
-                          <th>Department</th>
-                          <th>Status &amp; DOJ</th>
-                          <th>Annual</th>
-                          <th>Bereavement</th>
-                          <th>Maternity / Paternity</th>
-                          <th>Available</th>
+                          <SortableTh label="ID" column="id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                          <SortableTh label="Employee" column="employee" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                          <SortableTh label="Department" column="department" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                          <SortableTh label="Status & DOJ" column="status" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                          <SortableTh label="Annual" column="annual" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                          <SortableTh label="Bereavement" column="bereavement" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                          <SortableTh label="Maternity / Paternity" column="matPat" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                          <SortableTh label="Available" column="available" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                           {canEditBalances ? <th>Action</th> : null}
                         </tr>
                       </thead>
