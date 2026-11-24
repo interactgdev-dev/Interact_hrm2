@@ -258,11 +258,13 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Belong-to-range by start_date (not overlap) so a November filter does not
+    // pull prior-month leaves that merely spill into the window.
     if (fromDate && toDate) {
-      sql += " AND start_date <= ? AND end_date >= ?";
-      params.push(toDate, fromDate);
+      sql += " AND start_date >= ? AND start_date <= ?";
+      params.push(fromDate, toDate);
     } else if (fromDate) {
-      sql += " AND end_date >= ?";
+      sql += " AND start_date >= ?";
       params.push(fromDate);
     } else if (toDate) {
       sql += " AND start_date <= ?";

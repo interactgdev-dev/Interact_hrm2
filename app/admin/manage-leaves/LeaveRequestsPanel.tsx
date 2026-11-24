@@ -14,6 +14,7 @@ import { leaveDeptMatches } from "@/lib/leave-dept-filter";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { leaveStatusLabel, overallLeaveStatus } from "@/lib/leave-approval";
 import { displayLeaveReason } from "@/lib/leave-reason-display";
+import { canonicalLeaveCategoryKey, titleCaseLeaveCategory } from "@/lib/leave-categories";
 import { rowAllowedByScope, useViewerDataScope } from "@/lib/access-control/use-viewer-scope";
 import { toastError } from "@/lib/app-toast";
 import {
@@ -176,15 +177,49 @@ export default function LeaveRequestsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCategory]);
 
-  // From/To stay user-controlled — do not auto-fill from Month picker.
+  function monthBounds(monthKey: string): { from: string; to: string } | null {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(monthKey || "").trim());
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    if (!y || mo < 1 || mo > 12) return null;
+    const last = new Date(y, mo, 0).getDate();
+    return {
+      from: `${m[1]}-${m[2]}-01`,
+      to: `${m[1]}-${m[2]}-${String(last).padStart(2, "0")}`,
+    };
+  }
 
-  const leaveDayKey = (l: any) => {
-    const raw = l?.start_date || l?.end_date || l?.requested_at || l?.updated_at || "";
+  // Shared Month picker (YYYY-MM) drives From/To so November shows only that month.
+  useEffect(() => {
+    const bounds = monthBounds(externalMonth);
+    if (!bounds) return;
+    setFromDate(bounds.from);
+    setToDate(bounds.to);
+  }, [externalMonth]);
+
+  /** Leave calendar day from start_date only (never requested_at — that leaks other months). */
+  const leaveStartDayKey = (l: any) => {
+    const raw = l?.start_date || "";
     if (!raw) return "";
+    const ymd = String(raw).trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
     try {
       return getDateStringInTimeZone(raw, SERVER_TIMEZONE) || "";
     } catch {
-      return String(raw).slice(0, 10);
+      return ymd;
+    }
+  };
+
+  const leaveEndDayKey = (l: any) => {
+    const raw = l?.end_date || l?.start_date || "";
+    if (!raw) return "";
+    const ymd = String(raw).trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+    try {
+      return getDateStringInTimeZone(raw, SERVER_TIMEZONE) || "";
+    } catch {
+      return ymd;
     }
   };
 
@@ -198,6 +233,11 @@ export default function LeaveRequestsPanel({
       // TL / Manager: own department / team only (never company-wide dump).
       if (scope.mode !== "all" && scope.employeeIds.length) {
         params.set("employees", scope.employeeIds.join(","));
+      }
+      // Prefer server-side month window when From/To set (still re-filter client-side).
+      if (fromDate && toDate) {
+        params.set("fromDate", fromDate);
+        params.set("toDate", toDate);
       }
       const res = await fetch(`/api/leaves?${params.toString()}`, {
         cache: "no-store",
@@ -300,24 +340,20 @@ export default function LeaveRequestsPanel({
   useEffect(() => {
     if (!viewerScope.loaded) return;
     void fetchLeaves(viewerScope);
-    // Refetch when scope finishes loading / changes
+    // Refetch when scope finishes loading / changes, or month From/To change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     viewerScope.loaded,
     viewerScope.mode,
     viewerScope.employeeIds.join(","),
     viewerScope.orgRole,
+    fromDate,
+    toDate,
   ]);
 
   const leaveDateSpanKey = (l: any) => {
-    const start = leaveDayKey(l);
-    const endRaw = l?.end_date || l?.start_date || "";
-    let end = "";
-    try {
-      end = endRaw ? getDateStringInTimeZone(endRaw, SERVER_TIMEZONE) || "" : "";
-    } catch {
-      end = String(endRaw).slice(0, 10);
-    }
+    const start = leaveStartDayKey(l);
+    const end = leaveEndDayKey(l);
     return `${start}|${end || start}`;
   };
 
@@ -339,20 +375,16 @@ export default function LeaveRequestsPanel({
     });
   }, [leaves]);
 
-  const leaveOverlapsRange = (l: any, from: string, to: string) => {
+  /**
+   * Leave belongs to the selected window only if its start_date falls inside
+   * [from, to]. Prior-month leaves that merely overlap into the window are excluded
+   * (e.g. Oct 28–Nov 2 does not appear when filtering November).
+   */
+  const leaveBelongsToRange = (l: any, from: string, to: string) => {
     if (!from && !to) return true;
-    const start = leaveDayKey(l);
+    const start = leaveStartDayKey(l);
     if (!start) return false;
-    let end = "";
-    try {
-      end = l?.end_date
-        ? getDateStringInTimeZone(l.end_date, SERVER_TIMEZONE) || ""
-        : start;
-    } catch {
-      end = String(l?.end_date || start).slice(0, 10);
-    }
-    if (!end) end = start;
-    if (from && end < from) return false;
+    if (from && start < from) return false;
     if (to && start > to) return false;
     return true;
   };
@@ -379,7 +411,7 @@ export default function LeaveRequestsPanel({
     let duplicates = 0;
     let total = 0;
     leavesWithMeta.forEach((l) => {
-      if (!leaveOverlapsRange(l, fromDate, toDate)) return;
+      if (!leaveBelongsToRange(l, fromDate, toDate)) return;
       if (!leaveDeptMatches(l.department_name, departmentFilter)) return;
       total += 1;
       const s = overallLeaveStatus(l);
@@ -488,15 +520,13 @@ export default function LeaveRequestsPanel({
     const scoped = leavesWithMeta.filter((l) => {
       if (statusFilter && overallLeaveStatus(l) !== statusFilter) return false;
       if (categoryFilter) {
-        if (
-          String(l.leave_category || "").trim().toLowerCase() !==
-          categoryFilter.toLowerCase()
-        ) {
+        const cat = canonicalLeaveCategoryKey(String(l.leave_category || ""));
+        if (cat !== categoryFilter.toLowerCase()) {
           return false;
         }
       }
       if (duplicatesOnly && !l.is_duplicate) return false;
-      if (!leaveOverlapsRange(l, fromDate, toDate)) return false;
+      if (!leaveBelongsToRange(l, fromDate, toDate)) return false;
       if (!leaveDeptMatches(l.department_name, departmentFilter)) return false;
       if (q) {
         const name = String(l.employee_name || "").toLowerCase();
@@ -521,7 +551,7 @@ export default function LeaveRequestsPanel({
         case "category":
           return cmpText(a.leave_category, b.leave_category, sortDir);
         case "dates":
-          return cmpText(leaveDayKey(a), leaveDayKey(b), sortDir);
+          return cmpText(leaveStartDayKey(a), leaveStartDayKey(b), sortDir);
         case "days":
           return cmpNum(a.total_days, b.total_days, sortDir);
         case "status":
@@ -799,7 +829,9 @@ export default function LeaveRequestsPanel({
                       sortedLeaves.map((l, idx) => {
                         const status = overallLeaveStatus(l);
                         const showApprove = canApproveLeaveRow(l);
-                        const category = String(l.leave_category || "—");
+                        const category = l.leave_category
+                          ? titleCaseLeaveCategory(String(l.leave_category))
+                          : "—";
                         const statusBy = l.status_by as
                           | { name?: string; employee_id?: string | null; role?: string | null }
                           | null
@@ -939,7 +971,10 @@ export default function LeaveRequestsPanel({
                   <b>Employee ID:</b> {selectedLeave.employee_id}
                 </div>
                 <div className={styles.modalRow}>
-                  <b>Category:</b> {selectedLeave.leave_category}
+                  <b>Category:</b>{" "}
+                  {selectedLeave.leave_category
+                    ? titleCaseLeaveCategory(String(selectedLeave.leave_category))
+                    : "—"}
                 </div>
                 <div className={styles.modalRow}>
                   <b>Dates:</b> {formatDate(selectedLeave.start_date)} –{" "}

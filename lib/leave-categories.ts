@@ -50,10 +50,30 @@ export function leaveCategoriesForEmployeeGender(
   });
 }
 
-export function titleCaseLeaveCategory(raw: string): string {
+/**
+ * Legacy sick/casual tickets count as Annual for balance + summary display.
+ */
+export function canonicalLeaveCategoryKey(raw: string): LeaveCategoryValue | string {
   const s = String(raw || "").trim().toLowerCase();
-  const hit = LEAVE_CATEGORY_OPTIONS.find((c) => c.value === s);
-  if (hit) return hit.label;
   if (!s) return "";
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  if (s === "sick" || s === "casual" || s === "sick leave" || s === "casual leave") {
+    return "annual";
+  }
+  if (
+    s === "annual" ||
+    s === "bereavement" ||
+    s === "maternity" ||
+    s === "paternity"
+  ) {
+    return s;
+  }
+  return s;
+}
+
+export function titleCaseLeaveCategory(raw: string): string {
+  const key = canonicalLeaveCategoryKey(raw);
+  const hit = LEAVE_CATEGORY_OPTIONS.find((c) => c.value === key);
+  if (hit) return hit.label;
+  if (!key) return "";
+  return key.charAt(0).toUpperCase() + key.slice(1);
 }

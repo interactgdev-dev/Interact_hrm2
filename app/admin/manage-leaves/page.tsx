@@ -169,7 +169,7 @@ function ManageLeavesPageInner() {
 
   const applyGlobalMonth = (monthKey: string) => {
     setGlobalMonth(monthKey);
-    // Month is optional context only — never auto-fill From/To (user sets those).
+    // Requests + Summary panels sync From/To from externalMonth.
   };
   const [departments, setDepartments] = useState<{ id: number | string; name?: string; department_name?: string }[]>([]);
   const searchParams = useSearchParams();
@@ -306,9 +306,9 @@ function ManageLeavesPageInner() {
         const ids = new Set<string>();
         for (const l of data?.leaves || []) {
           const start = String(l?.start_date || "").slice(0, 10);
-          const end = String(l?.end_date || l?.start_date || "").slice(0, 10);
           if (!start) continue;
-          if (fromDate && (end || start) < fromDate) continue;
+          // Same rule as Requests: belong by start_date only (no prior-month spill).
+          if (fromDate && start < fromDate) continue;
           if (toDate && start > toDate) continue;
           const id = String(l?.employee_id ?? "").trim();
           if (id) ids.add(id);

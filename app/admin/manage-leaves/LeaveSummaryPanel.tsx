@@ -6,6 +6,7 @@ import { EmployeeTableNameCell } from "../../components/EmployeeTableNameCell";
 import { useEmployeeDetailPopup } from "../../components/use-employee-detail-popup";
 import { overallLeaveStatus } from "@/lib/leave-approval";
 import { leaveDeptMatches } from "@/lib/leave-dept-filter";
+import { titleCaseLeaveCategory } from "@/lib/leave-categories";
 import {
   SortableTh,
   nextSortState,
@@ -37,10 +38,22 @@ function leaveMonthIndex(dateStr: string): number | null {
   return m - 1;
 }
 
+/** Sick/Casual → Annual; other categories title-cased via shared helper. */
 function titleCaseType(raw: string) {
-  const s = String(raw || "").trim();
-  if (!s) return "";
-  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  return titleCaseLeaveCategory(raw);
+}
+
+function monthBounds(monthKey: string): { from: string; to: string } | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(monthKey || "").trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (!y || mo < 1 || mo > 12) return null;
+  const last = new Date(y, mo, 0).getDate();
+  return {
+    from: `${m[1]}-${m[2]}-01`,
+    to: `${m[1]}-${m[2]}-${String(last).padStart(2, "0")}`,
+  };
 }
 
 const MONTH_SHORT = [
@@ -95,8 +108,9 @@ export default function LeaveSummaryPanel({
 }: LeaveSummaryPanelProps) {
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
-  const [showZeroActivity, setShowZeroActivity] = useState(false);
-  /** From/To empty until user picks — never auto-fill current month. */
+  /** Always show every active employee (0/0 when no leaves). Optional hide. */
+  const [hideZeroActivity, setHideZeroActivity] = useState(false);
+  /** From/To empty until user/Month picker sets them. */
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [leaveData, setLeaveData] = useState<SummaryRow[]>([]);
@@ -111,6 +125,13 @@ export default function LeaveSummaryPanel({
     setSortKey(next.key);
     setSortDir(next.dir);
   };
+
+  useEffect(() => {
+    const bounds = monthBounds(externalMonth);
+    if (!bounds) return;
+    setFromDate(bounds.from);
+    setToDate(bounds.to);
+  }, [externalMonth]);
 
   useEffect(() => {
     void fetchSummary();
@@ -231,13 +252,13 @@ export default function LeaveSummaryPanel({
   }
 
   const summaryFiltersActive = Boolean(
-    search.trim() || departmentFilter || fromDate || toDate || showZeroActivity,
+    search.trim() || departmentFilter || fromDate || toDate || hideZeroActivity,
   );
 
   const clearSummaryFilters = () => {
     setSearch("");
     setDepartmentFilter("");
-    setShowZeroActivity(false);
+    setHideZeroActivity(false);
     setFromDate("");
     setToDate("");
   };
@@ -252,7 +273,7 @@ export default function LeaveSummaryPanel({
         (row.pseudonym || "").toLowerCase().includes(searchLower);
       const matchesDept = leaveDeptMatches(row.department, departmentFilter);
       if (!matchesSearch || !matchesDept) return false;
-      if (!showZeroActivity && (Number(row.total) || 0) === 0) return false;
+      if (hideZeroActivity && (Number(row.total) || 0) === 0) return false;
       return true;
     });
     if (!sortKey) return filtered;
@@ -287,14 +308,13 @@ export default function LeaveSummaryPanel({
           return 0;
       }
     });
-  }, [leaveData, search, departmentFilter, showZeroActivity, sortKey, sortDir]);
+  }, [leaveData, search, departmentFilter, hideZeroActivity, sortKey, sortDir]);
 
   return (
     <>
       <p className={leaveStyles.subtitle} style={{ marginTop: 0 }}>
-        Leave activity per employee for the selected date range. Employees with
-        zero activity are hidden by default so the table isn&apos;t dominated by
-        empty rows.
+        Leave activity for every active employee in the selected date range —
+        employees with no leaves still appear with 0s. Sick/Casual show as Annual.
       </p>
 
       <div className={leaveStyles.infoNote} role="status">
@@ -312,9 +332,8 @@ export default function LeaveSummaryPanel({
           <line x1="4" y1="22" x2="4" y2="15" />
         </svg>
         <span>
-          Rows with no leave activity and no pseudo name assigned are collapsed
-          out of the default view — toggle <b>Show zero-activity</b> to bring
-          them back.
+          All active employees are listed by default (including 0 total). Use{" "}
+          <b>Hide zero-activity</b> only if you want a shorter list.
         </span>
       </div>
 
@@ -386,14 +405,14 @@ export default function LeaveSummaryPanel({
           </select>
         </div>
         <label
-          className={`${leaveStyles.toggleChip}${showZeroActivity ? ` ${leaveStyles.toggleChipOn}` : ""}`}
+          className={`${leaveStyles.toggleChip}${hideZeroActivity ? ` ${leaveStyles.toggleChipOn}` : ""}`}
         >
           <input
             type="checkbox"
-            checked={showZeroActivity}
-            onChange={(e) => setShowZeroActivity(e.target.checked)}
+            checked={hideZeroActivity}
+            onChange={(e) => setHideZeroActivity(e.target.checked)}
           />
-          Show zero-activity
+          Hide zero-activity
         </label>
         {summaryFiltersActive ? (
           <button
