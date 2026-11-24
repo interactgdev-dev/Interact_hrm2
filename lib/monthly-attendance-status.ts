@@ -113,18 +113,35 @@ export function parseImportedTotalWorkSeconds(totalWH: string | unknown): number
   return 0;
 }
 
-/** HR imported: 2h–3h15m total work → Absent (e.g. 03h 01m), not Tardy. */
-export function isImportedShortShiftAbsent(workedSeconds: number): boolean {
+/** ~5h assigned (part-time) — not the standard 9h half-day / 3h–3.5h Absent band. */
+export function isShortHourShift(shiftSeconds: number): boolean {
+  return shiftSeconds >= 4.5 * 3600 && shiftSeconds <= 6.5 * 3600;
+}
+
+/**
+ * HR: on a full (~9h) shift, 2h–3h15m total work → Absent (e.g. 03h 01m), not Tardy.
+ * Do NOT apply this absolute band to 5h shifts — 3h / 3.5h there is normal work time.
+ */
+export function isImportedShortShiftAbsent(
+  workedSeconds: number,
+  shiftSeconds?: number,
+): boolean {
   if (workedSeconds <= 0) return false;
+  const effective = shiftSeconds && shiftSeconds > 0 ? shiftSeconds : 9 * 3600;
+  if (isShortHourShift(effective) || effective < 7 * 3600) return false;
   return workedSeconds >= 2 * 3600 && workedSeconds <= 3 * 3600 + 15 * 60;
 }
 
-/** Force Absent on sheet row when Total W.H is in 2h–3h15m band. */
+/** Force Absent on sheet row when Total W.H is in 2h–3h15m band (9h shifts only). */
 export function applyImportedAbsentIfShortShift(day: ImportedDayClockFields): boolean {
+  const shiftSeconds = shiftSecondsFromAssignedWH(day.assignedWH);
+  if (isShortHourShift(shiftSeconds) || isFiveHourAssignedShift(day.assignedWH)) {
+    return false;
+  }
   const fromTotal = parseImportedTotalWorkSeconds(day.totalWH);
-  if (fromTotal > 0 && isImportedShortShiftAbsent(fromTotal)) return true;
+  if (fromTotal > 0 && isImportedShortShiftAbsent(fromTotal, shiftSeconds)) return true;
   const worked = importedWorkedSecondsForDay(day);
-  return isImportedShortShiftAbsent(worked);
+  return isImportedShortShiftAbsent(worked, shiftSeconds);
 }
 
 /** Total W.H from sheet is primary for imported row classification. */
@@ -189,8 +206,9 @@ export function totalDeductionPercentForFiveHourDays(
 /** Absent from worked hours only (no shift start/end — for imported HRM rows). */
 export function isAbsentByWorkedHours(workedSeconds: number, shiftSeconds: number): boolean {
   if (workedSeconds <= 0) return false;
-  if (isImportedShortShiftAbsent(workedSeconds)) return true;
   const effective = shiftSeconds > 0 ? shiftSeconds : 9 * 3600;
+  // Absolute 3h / 3.5h Absent rules are for ~9h only.
+  if (isImportedShortShiftAbsent(workedSeconds, effective)) return true;
   if (workedSeconds < absentThresholdSeconds(effective)) return true;
   if (effective >= 7 * 3600 && workedSeconds < 3 * 3600) return true;
   return false;
@@ -324,12 +342,19 @@ function computeLate(
   };
 }
 
-/** Absent if worked hours are well below half-day threshold (scales with shift length). */
+/**
+ * Absent if worked hours are well below half-day threshold.
+ * Full (~9h): under ~3.5h. Short (~5h): under ~2h (3h / 3.5h is NOT Absent).
+ */
 export function absentThresholdSeconds(shiftSeconds: number): number {
   if (shiftSeconds <= 0) return 3 * 3600;
   const half = shiftSeconds / 2;
   if (shiftSeconds >= 7 * 3600) {
     return Math.min(3.5 * 3600, half * 0.78);
+  }
+  if (isShortHourShift(shiftSeconds)) {
+    // ~40% of 5h ≈ 2h — 3h / 3.5h on a 5h shift stays Present (On Time / Tardy).
+    return Math.min(2 * 3600, half * 0.8);
   }
   return Math.max(2 * 3600, half * 0.55);
 }
@@ -367,9 +392,15 @@ function minutesFromClockValue(dateKey: string, clock: string, addDays = 0): num
   return minutesFromDisplayClock(dateKey, clock, addDays);
 }
 
-/** HR: half day ~3.5h–5.5h on 9h shift (03h 48m, 04h 25m, etc.; scales with assigned shift). */
+/**
+ * HR: half day ~3.5h–5.5h on 9h shift (03h 48m, 04h 25m, etc.).
+ * Not used for ~5h shifts (no half-day status for short assigned hours).
+ */
 export function halfDayWorkedBandSeconds(shiftSeconds: number): { lower: number; upper: number } {
   const base = shiftSeconds > 0 ? shiftSeconds : 9 * 3600;
+  if (isShortHourShift(base)) {
+    return { lower: Number.POSITIVE_INFINITY, upper: Number.NEGATIVE_INFINITY };
+  }
   const scale = base / (9 * 3600);
   return {
     lower: 3.5 * 3600 * scale,
@@ -541,9 +572,15 @@ export function classifyDayAttendance(params: {
   }
 
   const late = computeLate(clockIn, shiftStart, grace);
+  const shiftSecondsEarly = shiftDurationSeconds(shiftStart, shiftEnd);
+  const shortShiftEarly =
+    shiftSecondsEarly > 0
+      ? isShortHourShift(shiftSecondsEarly)
+      : false;
 
   if (!clockOut) {
-    if (isLatePastHalfDayThreshold(late.lateMinutes)) {
+    // Half-day-from-late is a 9h rule — not for ~5h assigned shifts.
+    if (!shortShiftEarly && isLatePastHalfDayThreshold(late.lateMinutes)) {
       return {
         statusLabel: halfDayStatusForExcessiveLate({
           dateKey,
@@ -562,19 +599,32 @@ export function classifyDayAttendance(params: {
     };
   }
 
-  const shiftSeconds = shiftDurationSeconds(shiftStart, shiftEnd);
+  const shiftSeconds = shiftSecondsEarly;
   let worked = workedSecondsBetween(clockIn, clockOut);
   if (worked <= 0 && workedSecondsFromSheet && workedSecondsFromSheet > 0) {
     worked = workedSecondsFromSheet;
   }
 
   const effectiveShiftSeconds = shiftSeconds > 0 ? shiftSeconds : 9 * 3600;
+  const shortShift = shortShiftEarly || isShortHourShift(effectiveShiftSeconds);
 
   if (worked > 0 && isAbsentByWorkedHours(worked, effectiveShiftSeconds)) {
     return { statusLabel: "Absent", isLate: false, lateMinutes: 0 };
   }
 
-  // > 3h 30m late → Half Day (50%); 1st vs 2nd from shift timing / clock-in
+  // ~5h staff: no 3h/3.5h half-day band — On Time / Tardy / Absent only.
+  if (shortShift) {
+    if (late.isLate) {
+      return {
+        statusLabel: "Tardy",
+        isLate: true,
+        lateMinutes: late.excessLateMinutes,
+      };
+    }
+    return { statusLabel: "On Time", isLate: false, lateMinutes: 0 };
+  }
+
+  // > 3h 30m late → Half Day (50%); 1st vs 2nd from shift timing / clock-in (9h shifts)
   if (isLatePastHalfDayThreshold(late.lateMinutes)) {
     return {
       statusLabel: halfDayStatusForExcessiveLate({
@@ -727,16 +777,16 @@ export function resolveImportedDayStatus(params: {
   }
   const clockOutIso = parseDisplayClockToIso(params.day.dateKey, params.day.clockOut, clockOutAddDays);
 
-  // HR: 2h–3.5h (e.g. 03h 01m) → Absent, never Tardy from Excel
-  if (workedEffective > 0 && isImportedShortShiftAbsent(workedEffective)) {
-    return "Absent";
-  }
-
   const start = params.shiftStart;
   const end = params.shiftEnd;
   const durationFromTimes =
     start && end ? shiftDurationSeconds(start, end) : 0;
   const effectiveShift = durationFromTimes > 0 ? durationFromTimes : shiftSeconds;
+
+  // HR (9h only): 2h–3h15m (e.g. 03h 01m) → Absent, never Tardy from Excel
+  if (workedEffective > 0 && isImportedShortShiftAbsent(workedEffective, effectiveShift)) {
+    return "Absent";
+  }
   const grace = graceMinutesForGender(params.gender);
 
   const fullDayWorked =
