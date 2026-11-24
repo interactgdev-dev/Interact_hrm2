@@ -1,12 +1,18 @@
-export const MAX_PROFILE_IMAGE_BYTES = 50 * 1024 * 1024;
+export const MAX_PROFILE_IMAGE_BYTES = 100 * 1024 * 1024;
 export const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
 
-export const PROFILE_IMAGE_ACCEPT = "image/png,image/jpeg,image/jpg,image/webp";
+/** Any image the OS picker offers — client compresses to JPEG before upload. */
+export const PROFILE_IMAGE_ACCEPT = "image/*";
 export const PROFILE_IMAGE_MIMES = new Set([
   "image/png",
   "image/jpeg",
   "image/jpg",
   "image/webp",
+  "image/gif",
+  "image/bmp",
+  "image/heic",
+  "image/heif",
+  "image/avif",
 ]);
 
 export const DOCUMENT_UPLOAD_MIMES = new Set([

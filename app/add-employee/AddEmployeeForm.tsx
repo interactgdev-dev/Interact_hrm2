@@ -833,10 +833,11 @@ export default function AddEmployeeForm({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (file.size > 40 * 1024 * 1024) {
-      toastError("Image must be 40 MB or smaller.");
+    if (!String(file.type || "").startsWith("image/") && !/\.(jpe?g|png|gif|webp|bmp|heic|heif|avif)$/i.test(file.name)) {
+      toastError("Please choose an image file.");
       return;
     }
+    // Any size is fine — saveEmployeeAvatar compresses before upload.
     setProfileFile(file);
     setProfileImg(URL.createObjectURL(file));
   };

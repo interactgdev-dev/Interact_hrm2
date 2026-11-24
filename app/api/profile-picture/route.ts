@@ -12,13 +12,16 @@ import {
 } from "@/lib/profile-pictures-table";
 
 const PICTURE_DIR = "profile-pictures";
-const MAX_BYTES = 40 * 1024 * 1024; // 40 MB — plenty for HD photos
+/** Client always compresses DPs; keep a generous ceiling for logos / edge cases. */
+const MAX_BYTES = 5 * 1024 * 1024;
 const ALLOWED_MIMES = new Set([
   "image/png",
   "image/jpeg",
   "image/jpg",
   "image/webp",
   "image/gif",
+  "image/bmp",
+  "image/avif",
 ]);
 const EXT_BY_MIME: Record<string, string> = {
   "image/png": ".png",
@@ -26,6 +29,8 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/jpg": ".jpg",
   "image/webp": ".webp",
   "image/gif": ".gif",
+  "image/bmp": ".bmp",
+  "image/avif": ".avif",
 };
 
 function isSubjectType(v: unknown): v is ProfilePictureSubjectType {
@@ -68,16 +73,18 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    const mime = (file.type || "").toLowerCase();
-    if (!ALLOWED_MIMES.has(mime)) {
+    const mime = (file.type || "").toLowerCase() || "image/jpeg";
+    const mimeOk =
+      ALLOWED_MIMES.has(mime) || mime.startsWith("image/");
+    if (!mimeOk) {
       return NextResponse.json(
-        { success: false, error: "Please upload a PNG, JPG, WEBP or GIF image." },
+        { success: false, error: "Please upload an image file." },
         { status: 400 },
       );
     }
     if (file.size > MAX_BYTES) {
       return NextResponse.json(
-        { success: false, error: "Image must be 40 MB or smaller." },
+        { success: false, error: "Processed image is too large. Try another photo." },
         { status: 400 },
       );
     }
@@ -85,7 +92,9 @@ export async function POST(req: NextRequest) {
     const uploadRoot = path.join(process.cwd(), "public", "uploads", PICTURE_DIR);
     await fs.mkdir(uploadRoot, { recursive: true });
 
-    const ext = EXT_BY_MIME[mime] || path.extname(file.name) || ".img";
+    const ext =
+      EXT_BY_MIME[mime] ||
+      (mime.startsWith("image/") ? ".jpg" : path.extname(file.name) || ".jpg");
     const unique = `${uuidv4()}${ext}`;
     const relPath = `/uploads/${PICTURE_DIR}/${unique}`;
     const absPath = path.join(uploadRoot, unique);

@@ -21,14 +21,12 @@ export function readImageFileAsDataUrl(
   const { maxDim = 1024, forceJpeg = false, quality = 0.85 } = opts;
 
   return new Promise((resolve, reject) => {
-    const allowed = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
     const mime = (file.type || "").toLowerCase();
-    if (!allowed.has(mime)) {
-      reject(new Error("Please choose a PNG, JPG, or WEBP image."));
-      return;
-    }
-    if (file.size > 50 * 1024 * 1024) {
-      reject(new Error("Image must be 50 MB or smaller."));
+    const looksImage =
+      mime.startsWith("image/") ||
+      /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif)$/i.test(file.name || "");
+    if (!looksImage) {
+      reject(new Error("Please choose an image file."));
       return;
     }
 

@@ -1,4 +1,5 @@
 import { SHELL_SUBJECT_IDS } from "@/lib/shell-branding-constants";
+import { compressProfileImage } from "@/lib/compress-profile-image";
 import {
   clearOrgChartPhotosClientCache,
   fetchOrgChartPhotosBundle,
@@ -20,20 +21,19 @@ export async function fetchShellBranding(): Promise<ShellBranding> {
 }
 
 /**
- * Uploads the raw image FILE (multipart) so any HD image is stored on disk
- * (public/uploads/profile-pictures) and only its path goes to the DB — no
- * base64 / max_allowed_packet limits. Returns the served URL of the saved file.
+ * Compresses any browser-readable image to a small JPEG, then uploads multipart
+ * so the file lands on disk (public/uploads/profile-pictures) and only the path
+ * goes to the DB — no base64 / proxy body-limit failures for large phone photos.
  */
 async function readJsonSafe(res: Response): Promise<Record<string, unknown>> {
   const text = await res.text();
   try {
     return text ? (JSON.parse(text) as Record<string, unknown>) : {};
   } catch {
-    // Nginx / proxy often returns HTML (413/502) — surface a clear message.
     const snip = text.replace(/\s+/g, " ").slice(0, 80);
     throw new Error(
       res.status === 413 || /request entity too large/i.test(text)
-        ? "Image is too large for the server upload limit. Use a smaller photo (under ~8 MB)."
+        ? "Upload blocked by server size limit. Please try again."
         : `Upload failed (HTTP ${res.status}). Server returned non-JSON: ${snip || "(empty)"}`,
     );
   }
@@ -49,13 +49,12 @@ async function savePhoto(
   if (!(file instanceof File) || file.size <= 0) {
     throw new Error("Please choose a valid image file");
   }
-  if (file.size > 40 * 1024 * 1024) {
-    throw new Error("Image must be 40 MB or smaller.");
-  }
+  // Any source size is OK — we shrink in-browser before the network request.
+  const uploadFile = await compressProfileImage(file);
   const fd = new FormData();
   fd.append("subjectType", subjectType);
   fd.append("subjectId", id);
-  fd.append("file", file);
+  fd.append("file", uploadFile);
   const res = await fetch("/api/profile-picture", { method: "POST", body: fd });
   const data = await readJsonSafe(res);
   if (!res.ok || !data.success) {

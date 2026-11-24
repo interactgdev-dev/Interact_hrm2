@@ -181,7 +181,7 @@ export function ShellImageUpload({
         <input
           ref={inputRef}
           type="file"
-          accept={variant === "avatar" ? PROFILE_IMAGE_ACCEPT : "image/png,image/jpeg,image/jpg,image/webp"}
+          accept={PROFILE_IMAGE_ACCEPT}
           className={styles.input}
           onChange={handleChange}
         />
