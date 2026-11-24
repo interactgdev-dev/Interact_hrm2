@@ -6,6 +6,7 @@ import {
   calendarDay,
   employeeDisplayName,
   employeeIdValues,
+  flexibleDayRangeFilter,
   formatSqlDateTime,
   idFilter,
   idKey,
@@ -163,17 +164,32 @@ export async function mongoListAttendance(opts: {
   summaryOnly?: boolean;
 }) {
   const db = await getMongoDb();
-  const filter: Document = {};
-  if (opts.employeeId) filter.employee_id = { $in: employeeIdValues(opts.employeeId) };
-  if (opts.openOnly) {
-    filter.$or = [{ clock_out: null }, { clock_out: { $exists: false } }, { clock_out: "" }];
+  const and: Document[] = [];
+  if (opts.employeeId) {
+    and.push({ employee_id: { $in: employeeIdValues(opts.employeeId) } });
   }
-  // Do not filter `date` in Mongo — import stores BSON Date, new rows store YYYY-MM-DD strings.
-  let rows = await db.collection("employee_attendance").find(filter).sort({ clock_in: -1 }).toArray();
+  if (opts.openOnly) {
+    and.push({
+      $or: [{ clock_out: null }, { clock_out: { $exists: false } }, { clock_out: "" }],
+    });
+  }
+  const rangeFrom = opts.date || opts.fromDate || null;
+  const rangeTo = opts.date || opts.toDate || null;
+  // Broad Mongo pre-filter (string YYYY-MM-DD + BSON Date). Exact calendar filter still in JS.
+  if (!opts.openOnly && rangeFrom && rangeTo) {
+    and.push(flexibleDayRangeFilter(rangeFrom, rangeTo, ["date", "clock_in"]));
+  }
+  const filter: Document =
+    and.length === 0 ? {} : and.length === 1 ? and[0]! : { $and: and };
+  let rows = await db
+    .collection("employee_attendance")
+    .find(filter)
+    .sort({ clock_in: -1 })
+    .toArray();
   const before = rows.length;
-  if (!opts.openOnly && (opts.date || (opts.fromDate && opts.toDate))) {
-    const from = opts.date || opts.fromDate!;
-    const to = opts.date || opts.toDate!;
+  if (!opts.openOnly && rangeFrom && rangeTo) {
+    const from = rangeFrom;
+    const to = rangeTo;
     rows = rows.filter((row) => {
       const key = calendarDay(row.date) || calendarDay(row.clock_in) || calendarDay(row.clock_out);
       return key >= from && key <= to;

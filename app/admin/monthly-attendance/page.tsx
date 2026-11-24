@@ -65,9 +65,11 @@ import {
   buildEmployeeReportSessions,
   buildShiftPunchOnlySessions,
   employeeHasZkPunchesInRange,
+  employeeZkPins,
   hrmEmployeesFromList,
   loadTungstenPunchContext,
   monthlyDash,
+  zkPinsWithPunchesInRange,
   type EmployeeReportSession,
   type EmployeeShiftResolver,
   type HrmEmployeeRef,
@@ -463,20 +465,35 @@ export default function MonthlyAttendancePage() {
     });
   }
 
-  // Re-pair T.Punch out as new ZKBio punches sync (background only — never blocks first paint)
+  // Background ZK refresh — do not re-pair every employee on an interval (that froze the page).
   useEffect(() => {
     if (showingImported) return;
-    const refreshPairing = () => {
-      setPairingNow(Date.now());
-      // Do not pass HRM department — ZKBio dept_name often differs (e.g. CEst. vs CEst)
+    let cancelled = false;
+    const refreshCtx = () => {
       loadTungstenPunchContext(fromDate, toDate)
-        .then(setTungstenCtx)
+        .then((ctx) => {
+          if (!cancelled) setTungstenCtx(ctx);
+        })
         .catch(() => {});
     };
-    refreshPairing();
-    const id = setInterval(refreshPairing, 60_000);
-    return () => clearInterval(id);
+    refreshCtx();
+    const id = setInterval(refreshCtx, 120_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [fromDate, toDate, showingImported]);
+
+  // Refresh open-session "now" only while a table is visible (cheap when lazy-paired).
+  useEffect(() => {
+    if (showingImported) return;
+    const hasOpenTable =
+      Boolean(fullViewEmployeeId) ||
+      Object.values(expandedEmployeeIds).some(Boolean);
+    if (!hasOpenTable) return;
+    const id = setInterval(() => setPairingNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [showingImported, fullViewEmployeeId, expandedEmployeeIds]);
 
   useEffect(() => {
     fetch("/api/employee-list", { cache: "no-store" })
@@ -537,6 +554,8 @@ export default function MonthlyAttendancePage() {
     setLoading(true);
     let url = "/api/attendance";
     const params = new URLSearchParams();
+    // Lean payload — skips contacts / unused shift fields (still has clocks + dept + late).
+    params.append("summary", "1");
 
     const attFromDate = fromDate ? addDaysToDateKey(fromDate, -1) : "";
     const attToDate = toDate ? addDaysToDateKey(toDate, 1) : "";
@@ -779,13 +798,7 @@ export default function MonthlyAttendancePage() {
           }
         }
 
-        try {
-          const ctx = await loadTungstenPunchContext(fromDate, toDate);
-          if (gen !== fetchGenRef.current) return;
-          setTungstenCtx(ctx);
-        } catch (err) {
-          console.error("Tungsten context load failed:", err);
-        }
+        // Tungsten/ZK context is loaded by the dedicated effect (avoids double full punch fetch).
       })();
     } catch (err) {
       console.error("Error fetching attendance:", err);
@@ -2542,6 +2555,10 @@ export default function MonthlyAttendancePage() {
 
     const existing = new Set(enriched.map((e) => e.employeeId));
     const extra: MonthlyAttendanceEmployeeRow[] = [];
+    const zkPinsInRange =
+      tungstenCtx && fromDate && toDate
+        ? zkPinsWithPunchesInRange(tungstenCtx, fromDate, toDate)
+        : null;
 
     for (const hrm of allHrmEmployees) {
       if (existing.has(hrm.employeeId)) continue;
@@ -2571,25 +2588,35 @@ export default function MonthlyAttendancePage() {
         hrm.employeeId,
         hrm.employeeName,
       );
+      const matchKeys = {
+        employeeName: hrm.employeeName,
+        employeeCode:
+          hrm.employeeCode ||
+          (isRosterPunchOnly ? punchOnlyPinForId(String(hrm.employeeId)) || "" : ""),
+        employeeId: hrm.employeeId,
+        pseudonym: hrm.pseudonym,
+        departmentName: hrm.departmentName,
+      };
       // Active + ZK punches → card (status stays Absent until HRM clock-in).
-      const hasPunches =
-        Boolean(tungstenCtx) &&
-        Boolean(fromDate) &&
-        Boolean(toDate) &&
-        employeeHasZkPunchesInRange(
-          tungstenCtx as TungstenPunchContext,
-          {
-            employeeName: hrm.employeeName,
-            employeeCode:
-              hrm.employeeCode ||
-              (isRosterPunchOnly ? punchOnlyPinForId(String(hrm.employeeId)) || "" : ""),
-            employeeId: hrm.employeeId,
-            pseudonym: hrm.pseudonym,
-            departmentName: hrm.departmentName,
-          },
-          fromDate,
-          toDate,
-        );
+      let hasPunches = false;
+      if (tungstenCtx && fromDate && toDate) {
+        const pins = employeeZkPins(matchKeys);
+        if (zkPinsInRange && pins.size > 0) {
+          for (const pin of pins) {
+            if (zkPinsInRange.has(pin)) {
+              hasPunches = true;
+              break;
+            }
+          }
+        } else {
+          hasPunches = employeeHasZkPunchesInRange(
+            tungstenCtx,
+            matchKeys,
+            fromDate,
+            toDate,
+          );
+        }
+      }
 
       if (!hasPunches && !matchesSearch && !isRosterPunchOnly && !hasApprovedLeave) {
         continue;
@@ -2681,25 +2708,36 @@ export default function MonthlyAttendancePage() {
 
   const sessionsByEmployeeId = useMemo(() => {
     const out = new Map<string, EmployeeReportSession[]>();
-    if (showingImported) return out;
+    if (showingImported || !tungstenCtx || !fromDate || !toDate) return out;
+    // Only pair employees whose month table is open — pairing everyone froze the UI.
+    const needIds = new Set<string>();
+    if (fullViewEmployeeId) needIds.add(String(fullViewEmployeeId));
+    for (const [id, open] of Object.entries(expandedEmployeeIds)) {
+      if (open) needIds.add(String(id));
+    }
+    if (needIds.size === 0) return out;
+
     const todayKey = getDateStringInTimeZone(new Date(), SERVER_TIMEZONE);
-    const zkFrom = fromDate ? addDaysToDateKey(fromDate, -1) : "";
-    const zkTo = toDate ? addDaysToDateKey(toDate, 1) : "";
-    const recordsByEmployeeId = new Map<string, { clock_in?: string | null; clock_out?: string | null }[]>();
+    const zkFrom = addDaysToDateKey(fromDate, -1);
+    const zkTo = addDaysToDateKey(toDate, 1);
+    const recordsByEmployeeId = new Map<
+      string,
+      { clock_in?: string | null; clock_out?: string | null }[]
+    >();
     attendance.forEach((record: any) => {
       const id = String(record.employee_id || "");
-      if (!id) return;
+      if (!id || !needIds.has(id)) return;
       const list = recordsByEmployeeId.get(id) || [];
       list.push(record);
       recordsByEmployeeId.set(id, list);
     });
-    // Pair Tungsten for every employee so T.Punch shows without expanding the card.
-    attendanceByEmployeeAllMerged.forEach((emp) => {
+
+    for (const emp of attendanceByEmployeeAllMerged) {
       const empId = String(emp.employeeId);
-      if (!tungstenCtx || !fromDate || !toDate) return;
+      if (!needIds.has(empId)) continue;
       if (punchOnlyRosterApplies(empId, emp.employeeName)) {
         out.set(
-          String(emp.employeeId),
+          empId,
           buildShiftPunchOnlySessions(
             employeeMatchKeys(emp),
             tungstenCtx,
@@ -2708,15 +2746,13 @@ export default function MonthlyAttendancePage() {
             shiftResolverForEmployee(empId, emp.employeeName),
           ),
         );
-        return;
+        continue;
       }
-      const allRecords = recordsByEmployeeId.get(empId) || [];
       out.set(
-        String(emp.employeeId),
-        // ZK-only T.Punch rows OK; status stays Absent until HRM clock-in exists.
+        empId,
         buildEmployeeReportSessions(
           employeeMatchKeys(emp),
-          allRecords,
+          recordsByEmployeeId.get(empId) || [],
           tungstenCtx,
           todayKey,
           pairingNow,
@@ -2726,7 +2762,7 @@ export default function MonthlyAttendancePage() {
           true,
         ),
       );
-    });
+    }
     return out;
   }, [
     attendance,
@@ -2738,6 +2774,8 @@ export default function MonthlyAttendancePage() {
     pairingNow,
     shiftAssignments,
     hrmEmployeesList,
+    expandedEmployeeIds,
+    fullViewEmployeeId,
   ]);
 
   // Narrow search → auto-expand matched employees so results are one click less

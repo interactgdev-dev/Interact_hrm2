@@ -30,12 +30,49 @@ const ENTRY_BEFORE_SHIFT_START_MS = 4 * 60 * 60 * 1000;
 
 export type TungstenPunchContext = {
   zkRows: Record<string, unknown>[];
+  /** pin → rows — built once so pairing is O(pins) not O(all punches × employees). */
+  zkRowsByPin: Map<string, Record<string, unknown>[]>;
   batchPinProfiles: Map<string, PinProfile>;
   dbPinProfiles: Map<string, PinProfile>;
   hrmByCode: Map<string, HrmCodeProfile>;
   hrmById: Map<string, HrmCodeProfile>;
   hrmEmployees: HrmEmployeeRef[];
 };
+
+export function indexZkRowsByPin(
+  rows: Record<string, unknown>[],
+): Map<string, Record<string, unknown>[]> {
+  const map = new Map<string, Record<string, unknown>[]>();
+  for (const z of rows) {
+    const pin = String(z.pin ?? "").trim();
+    if (!pin) continue;
+    const list = map.get(pin);
+    if (list) list.push(z);
+    else map.set(pin, [z]);
+  }
+  return map;
+}
+
+/** Pins that have at least one punch in [dateFrom, dateTo] (Karachi calendar). */
+export function zkPinsWithPunchesInRange(
+  ctx: TungstenPunchContext,
+  dateFrom: string,
+  dateTo: string,
+): Set<string> {
+  const out = new Set<string>();
+  for (const z of ctx.zkRows) {
+    const pin = String(z.pin ?? "").trim();
+    if (!pin || out.has(pin)) continue;
+    const rawVal = z.event_time ?? z.imported_at;
+    if (rawVal == null || rawVal === "") continue;
+    const punchMs = parseZkbioDateTimeMs(z);
+    if (punchMs == null) continue;
+    const eventDate = getDateStringInTimeZone(punchMs, SERVER_TIMEZONE);
+    if (eventDate < dateFrom || eventDate > dateTo) continue;
+    out.add(pin);
+  }
+  return out;
+}
 
 export type HrmEmployeeRef = {
   employeeId: string;
@@ -256,18 +293,34 @@ export function punchMatchesEmployeePinOnly(
   return employeeZkPins(target).has(pin);
 }
 
+function zkRowsForTarget(
+  ctx: TungstenPunchContext,
+  target: EmployeeMatchKeys,
+): Record<string, unknown>[] {
+  const knownPins = employeeZkPins(target);
+  const byPin = ctx.zkRowsByPin;
+  if (knownPins.size > 0 && byPin && byPin.size > 0) {
+    const out: Record<string, unknown>[] = [];
+    for (const pin of knownPins) {
+      const rows = byPin.get(pin);
+      if (rows?.length) out.push(...rows);
+    }
+    return out;
+  }
+  return ctx.zkRows;
+}
+
 export function employeeHasZkPunchesInRange(
   ctx: TungstenPunchContext,
   target: EmployeeMatchKeys,
   dateFrom: string,
   dateTo: string,
 ): boolean {
-  for (const z of ctx.zkRows) {
+  const knownPins = employeeZkPins(target);
+  const candidates = zkRowsForTarget(ctx, target);
+  for (const z of candidates) {
     const pin = String(z.pin ?? "").trim();
-    const knownPins = employeeZkPins(target);
-    if (knownPins.size > 0) {
-      if (!knownPins.has(pin)) continue;
-    } else {
+    if (knownPins.size === 0) {
       const { employeeName: zkName, department: zkDept } = resolveZkIdentity(
         z,
         ctx.batchPinProfiles,
@@ -411,6 +464,7 @@ export async function loadTungstenPunchContext(
 
   return {
     zkRows: zkResult.rows,
+    zkRowsByPin: indexZkRowsByPin(zkResult.rows),
     batchPinProfiles: buildPinProfilesFromRows(zkResult.rows),
     dbPinProfiles: new Map(),
     hrmByCode:
@@ -435,12 +489,11 @@ function appendTungstenRows(
   zkDateFrom: string,
   zkDateTo: string,
 ) {
-  for (const z of ctx.zkRows) {
+  const knownPins = employeeZkPins(target);
+  const candidates = zkRowsForTarget(ctx, target);
+  for (const z of candidates) {
     const pin = String(z.pin ?? "").trim();
-    const knownPins = employeeZkPins(target);
-    if (knownPins.size > 0) {
-      if (!knownPins.has(pin)) continue;
-    } else {
+    if (knownPins.size === 0) {
       const { employeeName: zkName, department: zkDept } = resolveZkIdentity(
         z,
         ctx.batchPinProfiles,
