@@ -72,17 +72,6 @@ function YearTrend({ values }: { values: number[] }) {
   );
 }
 
-function defaultMonthRange() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
-  return {
-    from: `${y}-${m}-01`,
-    to: `${y}-${m}-${String(lastDay).padStart(2, "0")}`,
-  };
-}
-
 /** Account status on hrm_employees — inactive rows stay off Summary. */
 function isActiveEmployeeStatus(status?: string | null) {
   const s = String(status || "").toLowerCase().trim();
@@ -97,28 +86,18 @@ type LeaveSummaryPanelProps = {
 export default function LeaveSummaryPanel({
   externalMonth = "",
 }: LeaveSummaryPanelProps) {
-  const initialRange = defaultMonthRange();
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [showZeroActivity, setShowZeroActivity] = useState(false);
-  const [fromDate, setFromDate] = useState(initialRange.from);
-  const [toDate, setToDate] = useState(initialRange.to);
+  /** From/To empty until user picks — never auto-fill current month. */
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [leaveData, setLeaveData] = useState<SummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
 
   useEffect(() => {
-    const monthKey = String(externalMonth || "").trim();
-    if (!monthKey || !/^\d{4}-\d{2}$/.test(monthKey)) return;
-    const [year, monthNum] = monthKey.split("-");
-    const lastDay = new Date(Number(year), Number(monthNum), 0).getDate();
-    setFromDate(`${monthKey}-01`);
-    setToDate(`${monthKey}-${String(lastDay).padStart(2, "0")}`);
-  }, [externalMonth]);
-
-  useEffect(() => {
-    if (!fromDate && !toDate) return;
     void fetchSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromDate, toDate]);
@@ -152,13 +131,19 @@ export default function LeaveSummaryPanel({
 
       const rangeFrom = fromDate || toDate;
       const rangeTo = toDate || fromDate;
-      const year = String(rangeFrom || rangeTo || "").slice(0, 4) || String(new Date().getFullYear());
+      const year =
+        String(rangeFrom || rangeTo || "").slice(0, 4) ||
+        String(new Date().getFullYear());
       const yearStart = `${year}-01-01`;
       const yearEnd = `${year}-12-31`;
+      const periodQs =
+        rangeFrom && rangeTo
+          ? `fromDate=${encodeURIComponent(rangeFrom)}&toDate=${encodeURIComponent(rangeTo)}&`
+          : "";
 
       const [monthLeavesRes, yearLeavesRes] = await Promise.all([
         fetch(
-          `/api/leaves?fromDate=${encodeURIComponent(rangeFrom)}&toDate=${encodeURIComponent(rangeTo)}&ts=${Date.now()}${viewerQs}`,
+          `/api/leaves?${periodQs}ts=${Date.now()}${viewerQs}`,
           { cache: "no-store", headers: viewerHeaders },
         ),
         fetch(
@@ -238,9 +223,8 @@ export default function LeaveSummaryPanel({
     setSearch("");
     setDepartmentFilter("");
     setShowZeroActivity(false);
-    const range = defaultMonthRange();
-    setFromDate(range.from);
-    setToDate(range.to);
+    setFromDate("");
+    setToDate("");
   };
 
   const visibleRows = useMemo(() => {

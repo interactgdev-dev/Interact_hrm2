@@ -157,14 +157,7 @@ export default function LeaveRequestsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCategory]);
 
-  useEffect(() => {
-    const monthKey = String(externalMonth || "").trim();
-    if (!monthKey || !/^\d{4}-\d{2}$/.test(monthKey)) return;
-    const [year, monthNum] = monthKey.split("-");
-    const lastDay = new Date(Number(year), Number(monthNum), 0).getDate();
-    setFromDate(`${monthKey}-01`);
-    setToDate(`${monthKey}-${String(lastDay).padStart(2, "0")}`);
-  }, [externalMonth]);
+  // From/To stay user-controlled — do not auto-fill from Month picker.
 
   const leaveDayKey = (l: any) => {
     const raw = l?.start_date || l?.end_date || l?.requested_at || l?.updated_at || "";

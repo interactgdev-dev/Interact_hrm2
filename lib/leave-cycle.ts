@@ -103,26 +103,6 @@ export function shouldApplyLeaveAdjustment(
   return updatedYmd >= cycleStart;
 }
 
-const MONTH_SHORT = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
-function shortMonYy(year: number, month: number): string {
-  const mon = MONTH_SHORT[Math.max(0, Math.min(11, month - 1))] || "Jan";
-  return `${mon}${String(year).slice(-2)}`;
-}
-
 /**
  * Current leave-year end (next DOJ anniversary YMD).
  * e.g. DOJ 2025-08-25 → cycle 2025-08-25 … next anniv 2026-08-25.
@@ -141,7 +121,7 @@ export function getLeaveCycleEndYmd(
 }
 
 /**
- * Compact cycle label for Balances "STATUS & DOJ" (e.g. Aug25–Aug26).
+ * Leave-year label for Balances "STATUS & DOJ" (e.g. 2026 - 2027).
  */
 export function formatLeaveCycleRangeLabel(
   joinedDate: string | Date | null | undefined,
@@ -152,5 +132,5 @@ export function formatLeaveCycleRangeLabel(
   const startParts = parseYmd(start);
   if (!startParts) return null;
   const endYear = startParts.year + 1;
-  return `${shortMonYy(startParts.year, startParts.month)}–${shortMonYy(endYear, startParts.month)}`;
+  return `${startParts.year} - ${endYear}`;
 }

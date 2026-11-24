@@ -145,34 +145,16 @@ function ManageLeavesPageInner() {
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [employmentStatusFilter, setEmploymentStatusFilter] = useState("");
   const [lowBalanceOnly, setLowBalanceOnly] = useState(false);
-  /** Top month filter (parallel to tabs) — drives activity date range; default = current month */
-  const [globalMonth, setGlobalMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
-  /** From–To date range filters employees with leave activity in range */
-  const [fromDate, setFromDate] = useState(() => {
-    const now = new Date();
-    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    return `${key}-01`;
-  });
-  const [toDate, setToDate] = useState(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const mo = now.getMonth();
-    const key = `${y}-${String(mo + 1).padStart(2, "0")}`;
-    const lastDay = new Date(y, mo + 1, 0).getDate();
-    return `${key}-${String(lastDay).padStart(2, "0")}`;
-  });
+  /** Top month — empty by default; user sets when needed (does not auto-fill From/To). */
+  const [globalMonth, setGlobalMonth] = useState("");
+  /** From–To stay empty until the user picks dates. */
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [monthActiveIds, setMonthActiveIds] = useState<Set<string> | null>(null);
 
   const applyGlobalMonth = (monthKey: string) => {
     setGlobalMonth(monthKey);
-    if (!monthKey) return;
-    const [year, monthNum] = monthKey.split("-");
-    const lastDay = new Date(Number(year), Number(monthNum), 0).getDate();
-    setFromDate(`${monthKey}-01`);
-    setToDate(`${monthKey}-${String(lastDay).padStart(2, "0")}`);
+    // Month is optional context only — never auto-fill From/To (user sets those).
   };
   const [departments, setDepartments] = useState<{ id: number | string; name?: string; department_name?: string }[]>([]);
   const searchParams = useSearchParams();
