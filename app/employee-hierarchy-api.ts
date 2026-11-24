@@ -5,6 +5,7 @@ export type HierarchyPerson = {
   role: string;
   jobTitle: string | null;
   departmentName: string | null;
+  orgChip?: string | null;
   pseudonym: string | null;
   photo: string | null;
   status: string | null;
@@ -18,6 +19,8 @@ export type EmployeeHierarchy = {
   reportsTo: HierarchyPerson | null;
   teamMembers: HierarchyPerson[];
   isTeamLead: boolean;
+  ownedDepartments?: string[];
+  isDeptHeadCeo?: boolean;
 };
 
 const CACHE_TTL_MS = 2 * 60 * 1000;

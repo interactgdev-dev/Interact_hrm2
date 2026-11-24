@@ -1,7 +1,11 @@
 import { pool } from "@/lib/db";
 import { getAllOrgChartPhotos } from "@/lib/org-chart-photos-table";
 import { orgDeptChipLabel } from "@/app/admin/roles-permissions/system-control-data";
-import { DEPT_HEAD_NAME_HINT } from "@/lib/dept-heads";
+import {
+  chipsForDeptHeadHint,
+  DEPT_HEAD_NAME_HINT,
+  detectDeptHeadHint,
+} from "@/lib/dept-heads";
 
 export const HIERARCHY_TABLE = "hrm_employee_hierarchy";
 export const TEAM_MEMBERS_TABLE = "hrm_team_members";
@@ -13,6 +17,8 @@ export type HierarchyPerson = {
   role: string;
   jobTitle: string | null;
   departmentName: string | null;
+  /** Canonical org chip (IT, HIT, DM, …) for filtering My Team by department. */
+  orgChip: string | null;
   pseudonym: string | null;
   photo: string | null;
   status: string | null;
@@ -26,6 +32,9 @@ export type EmployeeHierarchyResult = {
   reportsTo: HierarchyPerson | null;
   teamMembers: HierarchyPerson[];
   isTeamLead: boolean;
+  /** Joe / Max / Mubeen: departments they head (shown as chips on My Team). */
+  ownedDepartments: string[];
+  isDeptHeadCeo: boolean;
 };
 
 type EmpRow = {
@@ -219,6 +228,7 @@ function toPerson(
     role: row.role || "Officer",
     jobTitle: row.job_title,
     departmentName: row.department_name,
+    orgChip: orgDeptChipLabel(row.department_name),
     pseudonym: row.pseudonym,
     photo: resolvePhoto(id, employeePhotos, shellAvatars),
     status: row.status,
@@ -396,23 +406,37 @@ export async function getEmployeeHierarchy(
       }
     }
 
+    const headHint = detectDeptHeadHint(emp.first_name, emp.last_name);
+    const ownedDepartments = chipsForDeptHeadHint(headHint);
+    const isDeptHeadCeo = ownedDepartments.length > 0;
+
     let teamRows: EmpRow[] = [];
-    const explicitMemberIds = await fetchTeamMemberIds(conn, targetId);
-    if (explicitMemberIds.length > 0) {
-      teamRows = explicitMemberIds
-        .map((id) => all.find((e) => e.id === id))
-        .filter((e): e is EmpRow => Boolean(e));
-      // Still include rest of org-dept family so My Team shows full department
-      const byId = new Set(teamRows.map((r) => r.id));
-      for (const e of deptEmployees) {
-        if (e.id !== emp.id && !byId.has(e.id)) {
-          teamRows.push(e);
-          byId.add(e.id);
-        }
-      }
+    if (isDeptHeadCeo) {
+      // Joe / Max / Mubeen: My Team = active employees across all owned departments
+      const ownedLower = new Set(ownedDepartments.map((c) => c.toLowerCase()));
+      teamRows = all.filter((e) => {
+        if (e.id === emp.id) return false;
+        const chip = orgDeptChipLabel(e.department_name);
+        return Boolean(chip && ownedLower.has(chip.toLowerCase()));
+      });
     } else {
-      // My Team = all employees in same org department family (excl. self)
-      teamRows = deptEmployees.filter((e) => e.id !== emp.id);
+      const explicitMemberIds = await fetchTeamMemberIds(conn, targetId);
+      if (explicitMemberIds.length > 0) {
+        teamRows = explicitMemberIds
+          .map((id) => all.find((e) => e.id === id))
+          .filter((e): e is EmpRow => Boolean(e));
+        // Still include rest of org-dept family so My Team shows full department
+        const byId = new Set(teamRows.map((r) => r.id));
+        for (const e of deptEmployees) {
+          if (e.id !== emp.id && !byId.has(e.id)) {
+            teamRows.push(e);
+            byId.add(e.id);
+          }
+        }
+      } else {
+        // My Team = all employees in same org department family (excl. self)
+        teamRows = deptEmployees.filter((e) => e.id !== emp.id);
+      }
     }
     // Hard guarantee: never emit the same person twice in My Team.
     teamRows = dedupeEmployeesById(teamRows).filter((e) => e.id !== emp.id);
@@ -427,6 +451,8 @@ export async function getEmployeeHierarchy(
       reportsTo: reportsToRow ? toPerson(reportsToRow, employeePhotos, shellAvatars) : null,
       teamMembers: teamRows.map((r) => toPerson(r, employeePhotos, shellAvatars)),
       isTeamLead,
+      ownedDepartments,
+      isDeptHeadCeo,
     };
   } finally {
     conn.release();

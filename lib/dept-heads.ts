@@ -2,7 +2,7 @@
  * Org dept heads / CEOs:
  * Max Miles → HIT + HR + Medical Billing + Finance
  * Mubeen → IT + Marketing + CEst.
- * Joe White → DM
+ * Joe White → DM (Data Mining)
  */
 
 import { orgDeptChipLabel } from "@/app/admin/roles-permissions/system-control-data";

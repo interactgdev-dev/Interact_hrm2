@@ -79,6 +79,58 @@
   white-space: nowrap;
 }
 
+.deptChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 20px;
+}
+
+.deptChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: #fff;
+  color: #0f172a;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.deptChip:hover {
+  border-color: rgba(14, 116, 144, 0.45);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+}
+
+.deptChipActive {
+  background: linear-gradient(135deg, #ecfeff 0%, #f0fdfa 100%);
+  border-color: #14b8a6;
+  color: #0f766e;
+  box-shadow: 0 8px 20px rgba(20, 184, 166, 0.12);
+}
+
+.deptChipLabel {
+  letter-spacing: -0.01em;
+}
+
+.deptChipCount {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.deptChipActive .deptChipCount {
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));

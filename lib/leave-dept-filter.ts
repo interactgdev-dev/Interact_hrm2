@@ -28,14 +28,14 @@ export function leaveDeptMatches(
   // Exact name only (case/whitespace insensitive). Marketing ≠ IT.
   if (normLeaveDept(rowRaw) === normLeaveDept(filterRaw)) return true;
 
-  // DM aliases only — never fold Marketing into IT.
+  // DM aliases only (Data Mining) — never fold Marketing into IT.
   const f = normLeaveDept(filterRaw);
   const r = normLeaveDept(rowRaw);
   const isDm = (n: string) =>
     n === "dm" ||
-    n === "digital marketing" ||
+    n === "data mining" ||
     n.startsWith("dm ") ||
-    n.includes("digital marketing");
+    n.includes("data mining");
   if (isDm(f) && isDm(r)) return true;
 
   return false;

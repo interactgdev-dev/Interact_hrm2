@@ -761,7 +761,7 @@ export const ORG_CEO_NAME_HINTS = ["Joe", "Max", "Mubeen"] as const;
 /**
  * Department manager map (display keys).
  * Marketing is folded under IT (not a separate manager chip bucket).
- * Mubeen → IT + Marketing + CEst. | Max → HIT + HR + Medical Billing + Finance | Joe → DM
+ * Mubeen → IT + Marketing + CEst. | Max → HIT + HR + Medical Billing + Finance | Joe → DM (Data Mining)
  */
 export const ORG_DEPT_MANAGER_NAME: Record<string, string> = {
   IT: "Mubeen",
@@ -782,24 +782,32 @@ function normDeptToken(raw: string): string {
 }
 
 /** Canonical chip label for an HRM department name.
- *  Marketing (standalone) → IT; Digital Marketing / DM / Analytics → DM.
+ *  Marketing (standalone) → IT; DM / Data Mining (+ Analytics) → DM.
+ *  Note: DM is Data Mining — not Digital Marketing (Digital Marketing folds to IT).
  */
 export function orgDeptChipLabel(departmentName: string | undefined | null): string | null {
   const t = normDeptToken(departmentName || "");
   if (!t) return null;
-  // DM must win before generic "marketing" → IT (Digital Marketing contains "marketing")
+  // DM = Data Mining (must win before generic marketing / analytics heuristics)
   if (
     t === "dm" ||
-    t === "digital marketing" ||
+    t === "data mining" ||
+    t.includes("data mining") ||
     t.startsWith("dm ") ||
-    t.includes("digital marketing") ||
-    (t.includes("analytics") && !t.includes("data mining")) ||
     t === "dm / analytics" ||
-    t.includes("dm /")
+    t.includes("dm /") ||
+    (t.includes("analytics") && t.includes("data"))
   ) {
     return "DM";
   }
-  if (t === "marketing") return "IT";
+  // Digital Marketing / Marketing → IT (Mubeen's org family)
+  if (
+    t === "marketing" ||
+    t === "digital marketing" ||
+    t.includes("digital marketing")
+  ) {
+    return "IT";
+  }
   if (t === "it" || t === "tech" || t.includes("technology")) return "IT";
   if (t === "cest" || t === "c est") return "CEst.";
   if (t === "hit") return "HIT";
@@ -834,9 +842,9 @@ export function employeeMatchesOrgDept(
   if (!empChip) return false;
   if (chipLabel === "IT") {
     const raw = normDeptToken(emp.departmentName || "");
-    // Marketing folds into IT; Digital Marketing is DM (handled by orgDeptChipLabel)
+    // Marketing / Digital Marketing fold into IT (DM = Data Mining is separate)
     if (empChip === "IT") return true;
-    if (raw === "marketing") return true;
+    if (raw === "marketing" || raw.includes("digital marketing")) return true;
     return false;
   }
   return empChip.toLowerCase() === chipLabel.toLowerCase();
