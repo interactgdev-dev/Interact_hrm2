@@ -149,8 +149,12 @@ export async function getEmployeeLeaveBalance(
     const paternityUsedDays = usedLeave.paternity || 0;
     const annualUsedDays =
       totalUsedDays - bereavementUsedDays - maternityUsedDays - paternityUsedDays;
-    const clampBal = (raw: number, max: number) =>
-      Math.min(max, Math.max(0, raw));
+    // Cap at policy max; allow negative when used exceeds allowance (over-limit).
+    const clampBal = (raw: number, max: number) => {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return 0;
+      return Math.round(Math.min(max, n) * 2) / 2;
+    };
     const annualBalance = clampBal(
       annualAllowance - annualUsedDays + annualBalanceAdjustment,
       annualAllowance,
@@ -212,40 +216,18 @@ export function remainingForCategory(
 }
 
 /**
- * Block new leave when balance is 0, or when requested days exceed remaining.
+ * Leave apply / generate-ticket must stay allowed at 0 or negative balance.
+ * Only reject invalid day counts (half-day 0.5 OK).
  */
 export function assertLeaveBalanceAllowsRequest(
-  balance: LeaveBalanceResult,
+  _balance: LeaveBalanceResult,
   opts: { leaveCategory?: string; totalDays?: number }
 ): { ok: true } | { ok: false; error: string } {
-  const cat = String(opts.leaveCategory || "annual").toLowerCase();
   const raw = Number(opts.totalDays);
   // Allow half-day (0.5); reject zero / NaN / negative.
   const days = Number.isFinite(raw) && raw > 0 ? raw : 0;
-  const remaining = remainingForCategory(balance, cat);
-
   if (days <= 0) {
     return { ok: false, error: "Please select type of leave." };
-  }
-  if (remaining <= 0) {
-    const label =
-      cat === "bereavement"
-        ? "Bereavement"
-        : cat === "maternity"
-          ? "Maternity"
-          : cat === "paternity"
-            ? "Paternity"
-            : "Leave";
-    return {
-      ok: false,
-      error: `${label} leave balance is 0. You cannot apply for leave.`,
-    };
-  }
-  if (days > remaining) {
-    return {
-      ok: false,
-      error: `Not enough leave balance. Remaining: ${remaining} day(s), requested: ${days}.`,
-    };
   }
   return { ok: true };
 }

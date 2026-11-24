@@ -79,34 +79,35 @@ interface Employee {
 }
 
 function isLeaveDaysInput(value: string): boolean {
-  return value === "" || /^\d*\.?\d{0,2}$/.test(value);
+  // Allow typing "-" / "-9.5" for over-limit remaining.
+  return value === "" || value === "-" || /^-?\d*\.?\d{0,2}$/.test(value);
 }
 
 function parseLeaveDays(value: string): number {
+  if (value === "" || value === "-") return 0;
   const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return 0;
+  if (!Number.isFinite(n)) return 0;
   return Math.round(n * 2) / 2;
 }
 
-/** Remaining balance shown/edited — never below 0 or above policy allowance. */
+/** Remaining balance — may be negative (over-limit); still capped at policy max. */
 function clampLeaveBalance(value: number, allowance: number): number {
   const max = Number.isFinite(allowance) && allowance > 0 ? allowance : 0;
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
-  return Math.round(Math.min(max, Math.max(0, n)) * 2) / 2;
+  return Math.round(Math.min(max, n) * 2) / 2;
 }
 
 function formatLeaveDays(value: number): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return "0";
-  const clamped = Math.max(0, n);
-  return Number.isInteger(clamped) ? String(clamped) : clamped.toFixed(1);
+  const rounded = Math.round(n * 2) / 2;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 function formatLeaveDelta(next: number, current: number): string {
-  // Ignore corrupt negative "current" from clone-inflated used (show delta vs 0+).
-  const cur = Math.max(0, Number(current) || 0);
-  const nxt = Math.max(0, Number(next) || 0);
+  const cur = Number(current) || 0;
+  const nxt = Number(next) || 0;
   const delta = Math.round((nxt - cur) * 2) / 2;
   if (delta === 0) return "";
   const abs = formatLeaveDays(Math.abs(delta));
@@ -509,61 +510,75 @@ function ManageLeavesPageInner() {
     const annualCurrent = Number.isFinite(Number(emp.annual_current_balance))
       ? Number(emp.annual_current_balance)
       : annualAllow;
-    // Used = allowance − remaining (includes approved leaves + HR balance edits).
-    // Never trust stale ticket-only annual_used=0 after a manual balance update.
-    const annualUsed = Math.round(Math.max(0, annualAllow - annualCurrent) * 2) / 2;
+    // Prefer API used; fallback = allowance − remaining (works for over-limit too).
+    const annualUsedRaw = Number(emp.annual_used);
+    const annualUsed = Number.isFinite(annualUsedRaw)
+      ? Math.round(Math.max(0, annualUsedRaw) * 2) / 2
+      : Math.round(Math.max(0, annualAllow - annualCurrent) * 2) / 2;
     const berAllow = Number(emp.bereavement_allowance) || 3;
     const berCurrent = Number.isFinite(Number(emp.bereavement_current_balance))
       ? Number(emp.bereavement_current_balance)
       : berAllow;
-    const berUsed = Math.round(Math.max(0, berAllow - berCurrent) * 2) / 2;
+    const berUsedRaw = Number(emp.bereavement_used);
+    const berUsed = Number.isFinite(berUsedRaw)
+      ? Math.round(Math.max(0, berUsedRaw) * 2) / 2
+      : Math.round(Math.max(0, berAllow - berCurrent) * 2) / 2;
     const gender = normalizeEmployeeGender(emp.gender);
     const matAllow = Number(emp.maternity_allowance) || 90;
     const matCurrent = Number.isFinite(Number(emp.maternity_current_balance))
       ? Number(emp.maternity_current_balance)
       : matAllow;
-    const matUsed = Math.round(Math.max(0, matAllow - matCurrent) * 2) / 2;
+    const matUsedRaw = Number(emp.maternity_used);
+    const matUsed = Number.isFinite(matUsedRaw)
+      ? Math.round(Math.max(0, matUsedRaw) * 2) / 2
+      : Math.round(Math.max(0, matAllow - matCurrent) * 2) / 2;
     const patAllow = Number(emp.paternity_allowance) || 5;
     const patCurrent = Number.isFinite(Number(emp.paternity_current_balance))
       ? Number(emp.paternity_current_balance)
       : patAllow;
-    const patUsed = Math.round(Math.max(0, patAllow - patCurrent) * 2) / 2;
-    const available = Math.round(Math.max(0, annualCurrent) * 2) / 2;
+    const patUsedRaw = Number(emp.paternity_used);
+    const patUsed = Number.isFinite(patUsedRaw)
+      ? Math.round(Math.max(0, patUsedRaw) * 2) / 2
+      : Math.round(Math.max(0, patAllow - patCurrent) * 2) / 2;
+    // Signed remaining — negative when over annual limit.
+    const available = Math.round(annualCurrent * 2) / 2;
+    const annualOver = annualCurrent < 0 || annualUsed > annualAllow;
+    const berOver = berCurrent < 0 || berUsed > berAllow;
+    const matOver = matCurrent < 0 || matUsed > matAllow;
+    const patOver = patCurrent < 0 || patUsed > patAllow;
     const annualPct =
       annualAllow > 0
-        ? Math.min(100, (Math.max(0, annualAllow - annualCurrent) / annualAllow) * 100)
+        ? Math.min(100, (annualUsed / annualAllow) * 100)
         : 0;
     const berPct =
-      berAllow > 0
-        ? Math.min(100, (Math.max(0, berAllow - berCurrent) / berAllow) * 100)
-        : 0;
+      berAllow > 0 ? Math.min(100, (berUsed / berAllow) * 100) : 0;
     const matPct =
-      matAllow > 0
-        ? Math.min(100, (Math.max(0, matAllow - matCurrent) / matAllow) * 100)
-        : 0;
+      matAllow > 0 ? Math.min(100, (matUsed / matAllow) * 100) : 0;
     const patPct =
-      patAllow > 0
-        ? Math.min(100, (Math.max(0, patAllow - patCurrent) / patAllow) * 100)
-        : 0;
+      patAllow > 0 ? Math.min(100, (patUsed / patAllow) * 100) : 0;
     return {
       annualAllow,
       annualCurrent,
       annualUsed,
+      annualOver,
       berAllow,
       berCurrent,
       berUsed,
+      berOver,
       gender,
       matAllow,
       matCurrent,
       matUsed,
+      matOver,
       patAllow,
       patCurrent,
       patUsed,
+      patOver,
       available,
-      annualPct,
-      berPct,
-      matPct,
-      patPct,
+      annualPct: annualOver ? 100 : annualPct,
+      berPct: berOver ? 100 : berPct,
+      matPct: matOver ? 100 : matPct,
+      patPct: patOver ? 100 : patPct,
     };
   };
 
@@ -833,11 +848,13 @@ function ManageLeavesPageInner() {
                             const statusKey = employmentStatusKey(emp);
                             const bal = balanceFor(emp);
                             const availClass =
-                              bal.available < 2
-                                ? styles.availLow
-                                : bal.available < 5
-                                  ? styles.availMid
-                                  : "";
+                              bal.available < 0
+                                ? styles.availNeg
+                                : bal.available < 2
+                                  ? styles.availLow
+                                  : bal.available < 5
+                                    ? styles.availMid
+                                    : "";
                             const showMat = bal.gender === "female";
                             const showPat = bal.gender === "male";
                             return (
@@ -882,14 +899,23 @@ function ManageLeavesPageInner() {
                                   <div className={styles.equity}>
                                     <div className={styles.equityBar}>
                                       <div
-                                        className={styles.segAnnual}
+                                        className={
+                                          bal.annualOver
+                                            ? styles.segAnnualOver
+                                            : styles.segAnnual
+                                        }
                                         style={{ width: `${bal.annualPct}%` }}
                                       />
                                     </div>
                                     <div className={styles.equityLabel}>
-                                      <span>
-                                        {formatLeaveDays(bal.annualCurrent)} /{" "}
-                                        {formatLeaveDays(bal.annualAllow)}
+                                      <span
+                                        className={
+                                          bal.annualOver ? styles.equityOverLabel : undefined
+                                        }
+                                      >
+                                        {bal.annualOver
+                                          ? `${formatLeaveDays(bal.annualUsed)} / ${formatLeaveDays(bal.annualAllow)}`
+                                          : `${formatLeaveDays(bal.annualCurrent)} / ${formatLeaveDays(bal.annualAllow)}`}
                                       </span>
                                       <b>
                                         {formatLeaveDays(bal.annualUsed)} used
@@ -901,14 +927,21 @@ function ManageLeavesPageInner() {
                                   <div className={styles.equity}>
                                     <div className={styles.equityBar}>
                                       <div
-                                        className={styles.segBer}
+                                        className={
+                                          bal.berOver ? styles.segBerOver : styles.segBer
+                                        }
                                         style={{ width: `${bal.berPct}%` }}
                                       />
                                     </div>
                                     <div className={styles.equityLabel}>
-                                      <span>
-                                        {formatLeaveDays(bal.berCurrent)} /{" "}
-                                        {formatLeaveDays(bal.berAllow)}
+                                      <span
+                                        className={
+                                          bal.berOver ? styles.equityOverLabel : undefined
+                                        }
+                                      >
+                                        {bal.berOver
+                                          ? `${formatLeaveDays(bal.berUsed)} / ${formatLeaveDays(bal.berAllow)}`
+                                          : `${formatLeaveDays(bal.berCurrent)} / ${formatLeaveDays(bal.berAllow)}`}
                                       </span>
                                       <b>
                                         {formatLeaveDays(bal.berUsed)} used
@@ -921,7 +954,11 @@ function ManageLeavesPageInner() {
                                     <div className={styles.equity}>
                                       <div className={styles.equityBar}>
                                         <div
-                                          className={styles.segAnnual}
+                                          className={
+                                            (showMat ? bal.matOver : bal.patOver)
+                                              ? styles.segAnnualOver
+                                              : styles.segAnnual
+                                          }
                                           style={{
                                             width: `${showMat ? bal.matPct : bal.patPct}%`,
                                             opacity: 0.55,
@@ -929,15 +966,17 @@ function ManageLeavesPageInner() {
                                         />
                                       </div>
                                       <div className={styles.equityLabel}>
-                                        <span>
+                                        <span
+                                          className={
+                                            (showMat ? bal.matOver : bal.patOver)
+                                              ? styles.equityOverLabel
+                                              : undefined
+                                          }
+                                        >
                                           {showMat ? "Mat " : "Pat "}
-                                          {formatLeaveDays(
-                                            showMat ? bal.matCurrent : bal.patCurrent,
-                                          )}{" "}
-                                          /{" "}
-                                          {formatLeaveDays(
-                                            showMat ? bal.matAllow : bal.patAllow,
-                                          )}
+                                          {(showMat ? bal.matOver : bal.patOver)
+                                            ? `${formatLeaveDays(showMat ? bal.matUsed : bal.patUsed)} / ${formatLeaveDays(showMat ? bal.matAllow : bal.patAllow)}`
+                                            : `${formatLeaveDays(showMat ? bal.matCurrent : bal.patCurrent)} / ${formatLeaveDays(showMat ? bal.matAllow : bal.patAllow)}`}
                                         </span>
                                         <b>
                                           {formatLeaveDays(

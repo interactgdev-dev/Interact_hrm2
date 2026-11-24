@@ -393,12 +393,10 @@ function GenerateTicketPageInner() {
         : leaveCategory === "paternity"
           ? paternityBalance
           : leaveBalance;
-  const leaveBalanceExhausted =
+  const leaveBalanceNegative =
+    formKind === "leave" && effectiveLeaveBalance < 0;
+  const leaveBalanceZeroOrLess =
     formKind === "leave" && effectiveLeaveBalance <= 0;
-  const leaveDaysExceedBalance =
-    formKind === "leave" &&
-    leaveDays > 0 &&
-    leaveDays > effectiveLeaveBalance;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -430,21 +428,8 @@ function GenerateTicketPageInner() {
       if (!effectiveEnd) throw new Error("Please select leave end date.");
       if (!description.trim()) throw new Error("Please enter a reason for leave.");
       const days = leaveDaysForDuration(leaveDuration, startDate, effectiveEnd);
-      const rem =
-        leaveCategory === "bereavement"
-          ? bereavementBalance
-          : leaveCategory === "maternity"
-            ? maternityBalance
-            : leaveCategory === "paternity"
-              ? paternityBalance
-              : leaveBalance;
-      if (rem <= 0) {
-        throw new Error("Leave balance is 0. You cannot apply for leave.");
-      }
-      if (days > rem) {
-        throw new Error(
-          `Not enough leave balance. Remaining: ${rem} day(s), requested: ${days}.`
-        );
+      if (!(days > 0)) {
+        throw new Error("Please select type of leave.");
       }
 
       let uploadedFilePaths: string[] = [];
@@ -694,9 +679,11 @@ function GenerateTicketPageInner() {
                     <span className={styles.leaveBalanceOf}> / {annualAllowance}</span>
                   </p>
                   <p className={styles.leaveBalanceSub}>
-                    {leaveBalance <= 0
-                      ? "Balance finished — leave ticket disabled"
-                      : "Days remaining this year"}
+                    {leaveBalance < 0
+                      ? "Over limit — negative balance (apply still allowed)"
+                      : leaveBalance === 0
+                        ? "Balance finished — apply still allowed"
+                        : "Days remaining this year"}
                   </p>
                 </div>
                 <div
@@ -764,14 +751,14 @@ function GenerateTicketPageInner() {
                   </div>
                 ) : null}
               </div>
-              {leaveBalanceExhausted ? (
-                <div className={styles.alertError} role="alert">
-                  Leave balance is 0. You cannot submit a leave ticket until balance is available.
+              {leaveBalanceNegative ? (
+                <div className={styles.alertError} role="status">
+                  Balance is negative ({effectiveLeaveBalance}). You can still
+                  submit; approved days will increase the over-limit.
                 </div>
-              ) : null}
-              {leaveDaysExceedBalance && !leaveBalanceExhausted ? (
-                <div className={styles.alertError} role="alert">
-                  Requested {leaveDays} day(s) exceeds remaining balance ({effectiveLeaveBalance}).
+              ) : leaveBalanceZeroOrLess ? (
+                <div className={styles.alertError} role="status">
+                  Leave balance is 0. You can still submit a leave ticket.
                 </div>
               ) : null}
               <div className={styles.field}>
@@ -810,7 +797,6 @@ function GenerateTicketPageInner() {
                         value={opt.value}
                         checked={leaveDuration === opt.value}
                         onChange={() => setLeaveDuration(opt.value)}
-                        disabled={leaveBalanceExhausted}
                       />
                       <span>{opt.label}</span>
                     </label>
@@ -836,7 +822,6 @@ function GenerateTicketPageInner() {
                       if (isHalfDayLeave) setEndDate(e.target.value);
                     }}
                     required
-                    disabled={leaveBalanceExhausted}
                   />
                 </div>
                 {!isHalfDayLeave ? (
@@ -848,7 +833,6 @@ function GenerateTicketPageInner() {
                       value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
                       required
-                      disabled={leaveBalanceExhausted}
                     />
                   </div>
                 ) : (
@@ -937,7 +921,6 @@ function GenerateTicketPageInner() {
                   : "Describe your request…"
               }
               required={formKind !== "salary_slip"}
-              disabled={leaveBalanceExhausted}
             />
           </div>
 
@@ -1029,8 +1012,6 @@ function GenerateTicketPageInner() {
               submitting ||
               !employeeId ||
               !showFormSection ||
-              leaveBalanceExhausted ||
-              leaveDaysExceedBalance ||
               (formKind === "leave" && !leaveDuration)
             }
           >

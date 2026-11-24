@@ -14,7 +14,8 @@ import { getDateStringInTimeZone } from "../../../lib/timezone";
 
 function parseLeaveDays(value: unknown): number {
   const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return 0;
+  if (!Number.isFinite(n)) return 0;
+  // Allow negative remaining (over-limit); round to half-days.
   return Math.round(n * 2) / 2;
 }
 
@@ -239,9 +240,9 @@ export async function GET(req: NextRequest) {
       const paternityAllowance = PATERNITY_ALLOWANCE;
       const genderNorm = normalizeEmployeeGender(emp.gender);
 
-      // Clamp remaining to [0, allowance] — clone-inflated "used" must not show −25/20.
+      // Cap at policy max; allow negative when used exceeds allowance.
       const clampBal = (raw: number, max: number) =>
-        roundLeaveDays(Math.min(max, Math.max(0, raw)));
+        roundLeaveDays(Math.min(max, raw));
 
       const annualCurrent = clampBal(
         annualAllowance - used.annual_used + annualAdjustment,
@@ -273,16 +274,11 @@ export async function GET(req: NextRequest) {
         bereavement_allowance: bereavementAllowance,
         maternity_allowance: genderNorm === "female" ? maternityAllowance : 0,
         paternity_allowance: genderNorm === "male" ? paternityAllowance : 0,
-        annual_used: roundLeaveDays(Math.max(0, annualAllowance - annualCurrent)),
-        bereavement_used: roundLeaveDays(
-          Math.max(0, bereavementAllowance - bereavementCurrent),
-        ),
-        maternity_used: roundLeaveDays(
-          Math.max(0, maternityAllowance - maternityCurrent),
-        ),
-        paternity_used: roundLeaveDays(
-          Math.max(0, paternityAllowance - paternityCurrent),
-        ),
+        // Actual approved days used (can exceed allowance when over-limit).
+        annual_used: roundLeaveDays(Math.max(0, used.annual_used)),
+        bereavement_used: roundLeaveDays(Math.max(0, used.bereavement_used)),
+        maternity_used: roundLeaveDays(Math.max(0, used.maternity_used)),
+        paternity_used: roundLeaveDays(Math.max(0, used.paternity_used)),
         annual_balance_adjustment: annualAdjustment,
         bereavement_balance_adjustment: bereavementAdjustment,
         maternity_balance_adjustment: maternityAdjustment,
@@ -426,8 +422,9 @@ export async function POST(req: NextRequest) {
     const bereavementAllowance = BEREAVEMENT_ALLOWANCE;
     const maternityAllowance = MATERNITY_ALLOWANCE;
     const paternityAllowance = PATERNITY_ALLOWANCE;
+    // Allow HR to set negative remaining (over-limit); still cap at policy max.
     const clampTarget = (raw: unknown, max: number) =>
-      Math.min(max, Math.max(0, parseLeaveDays(raw)));
+      Math.min(max, parseLeaveDays(raw));
     const annualTarget = clampTarget(annual_current_balance, annualAllowance);
     const bereavementTarget = clampTarget(
       bereavement_current_balance,

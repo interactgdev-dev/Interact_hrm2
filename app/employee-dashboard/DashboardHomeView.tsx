@@ -312,7 +312,7 @@ export default function DashboardHomeView(props: DashboardHomeViewProps) {
     todayClock,
   } = props;
 
-  const leaveLeftLabel = `${String(leaveBalance.annual).padStart(2, "0")}/${leaveBalance.annualAllowance}`;
+  const leaveLeftLabel = `${leaveBalance.annual}/${leaveBalance.annualAllowance}`;
   const statusChipClass =
     todayStatus.startsWith("Late")
       ? styles.chipWarn

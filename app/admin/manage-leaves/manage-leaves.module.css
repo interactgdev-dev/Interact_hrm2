@@ -95,9 +95,24 @@
   height: 100%;
 }
 
+.segAnnualOver {
+  background: #dc2626;
+  height: 100%;
+}
+
 .segBer {
   background: #ad7a2e;
   height: 100%;
+}
+
+.segBerOver {
+  background: #dc2626;
+  height: 100%;
+}
+
+.equityOverLabel {
+  color: #dc2626;
+  font-weight: 600;
 }
 
 .equityLabel {
@@ -121,6 +136,10 @@
   font-weight: 600;
   color: #1b2233;
   font-variant-numeric: tabular-nums;
+}
+
+.availNeg {
+  color: #dc2626 !important;
 }
 
 .availLow {

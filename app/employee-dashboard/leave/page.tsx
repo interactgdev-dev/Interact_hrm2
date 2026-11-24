@@ -237,21 +237,9 @@ export default function LeavePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const rem =
-      category === "bereavement"
-        ? bereavementBalance
-        : category === "maternity"
-          ? maternityBalance
-          : category === "paternity"
-            ? paternityBalance
-            : leaveBalance;
     const days = calcDays(startDate, endDate);
-    if (rem <= 0) {
-      setError("Leave balance is 0. You cannot apply for leave.");
-      return;
-    }
-    if (days > rem) {
-      setError(`Not enough leave balance. Remaining: ${rem}, requested: ${days}.`);
+    if (!(days > 0)) {
+      setError("Please select valid leave dates.");
       return;
     }
     setSubmitting(true);
@@ -329,7 +317,8 @@ export default function LeavePage() {
         : category === "paternity"
           ? paternityBalance
           : leaveBalance;
-  const leaveDisabled = effectiveBalance <= 0;
+  const balanceNegative = effectiveBalance < 0;
+  const balanceZeroOrLess = leaveBalance <= 0;
 
   return (
     <div className={styles.page}>
@@ -341,7 +330,7 @@ export default function LeavePage() {
           <div
             className={`${styles.statCard} ${styles.statCardPurple}`}
             style={
-              leaveBalance <= 0
+              balanceZeroOrLess
                 ? { outline: "2px solid #dc2626", background: "#fef2f2" }
                 : undefined
             }
@@ -349,7 +338,7 @@ export default function LeavePage() {
             <p className={styles.statLabel}>{balanceLabel}</p>
             <p
               className={styles.statValue}
-              style={leaveBalance <= 0 ? { color: "#dc2626" } : undefined}
+              style={balanceZeroOrLess ? { color: "#dc2626" } : undefined}
             >
               {leaveBalance}
               <span style={{ fontSize: "1rem", fontWeight: 600, color: "#94a3b8" }}>
@@ -358,9 +347,11 @@ export default function LeavePage() {
               </span>
             </p>
             <p className={styles.statSub}>
-              {leaveBalance <= 0
-                ? "Balance finished — leave apply disabled"
-                : "Days remaining this year"}
+              {leaveBalance < 0
+                ? "Over limit — negative balance (apply still allowed)"
+                : leaveBalance === 0
+                  ? "Balance finished — apply still allowed"
+                  : "Days remaining this year"}
             </p>
           </div>
           <div className={`${styles.statCard} ${styles.statCardGreen}`}>
@@ -401,9 +392,14 @@ export default function LeavePage() {
 
         <form className={styles.formCard} onSubmit={handleSubmit}>
           <h2 className={styles.formTitle}>Apply for leave</h2>
-          {leaveDisabled ? (
-            <div className={styles.alertError} role="alert" style={{ marginBottom: 12 }}>
-              Leave balance is 0. You cannot apply for leave.
+          {balanceNegative ? (
+            <div
+              className={styles.alertError}
+              role="status"
+              style={{ marginBottom: 12 }}
+            >
+              Balance is negative ({effectiveBalance}). You can still apply; used
+              days will increase the over-limit.
             </div>
           ) : null}
           <div className={styles.formGrid}>
@@ -435,7 +431,6 @@ export default function LeavePage() {
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
                 required
-                disabled={leaveDisabled}
               />
             </div>
             <div className={styles.field}>
@@ -449,7 +444,6 @@ export default function LeavePage() {
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 required
-                disabled={leaveDisabled}
               />
             </div>
           </div>
@@ -465,7 +459,6 @@ export default function LeavePage() {
               onChange={(e) => setReason(e.target.value)}
               required
               rows={3}
-              disabled={leaveDisabled}
             />
           </div>
 
@@ -501,9 +494,9 @@ export default function LeavePage() {
           <button
             type="submit"
             className={styles.submitBtn}
-            disabled={submitting || leaveDisabled}
+            disabled={submitting}
           >
-            {submitting ? "Submitting…" : leaveDisabled ? "Leave balance 0" : "Submit request"}
+            {submitting ? "Submitting…" : "Submit request"}
           </button>
           {error ? <div className={styles.alertError}>{error}</div> : null}
           {success ? <div className={styles.alertSuccess}>{success}</div> : null}
