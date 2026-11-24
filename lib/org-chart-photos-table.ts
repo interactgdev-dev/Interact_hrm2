@@ -96,17 +96,19 @@ export async function getAllOrgChartPhotos(): Promise<{
   ];
 
   for (const row of combined) {
+    const sid = String(row.subject_id ?? "").trim();
+    if (!sid) continue;
     if (row.subject_type === "employee") {
-      employeePhotos[row.subject_id] = row.photo_data;
+      employeePhotos[sid] = row.photo_data;
     } else if (row.subject_type === "role") {
-      rolePhotos[row.subject_id] = row.photo_data;
+      rolePhotos[sid] = row.photo_data;
     } else if (row.subject_type === "company_logo") {
       shellBranding.companyLogo = row.photo_data;
     } else if (row.subject_type === "shell_avatar") {
-      if (row.subject_id === SHELL_SUBJECT_IDS.adminAvatar) {
+      if (sid === SHELL_SUBJECT_IDS.adminAvatar) {
         shellBranding.adminAvatar = row.photo_data;
       } else {
-        shellBranding.employeeAvatars[row.subject_id] = row.photo_data;
+        shellBranding.employeeAvatars[sid] = row.photo_data;
       }
     }
   }

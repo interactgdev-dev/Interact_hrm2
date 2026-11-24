@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const subjectType = formData.get("subjectType");
+    // Always string — Mongo number vs string duplicates break refresh for some employees.
     const subjectId = String(formData.get("subjectId") ?? "").trim();
     const file = formData.get("file");
 

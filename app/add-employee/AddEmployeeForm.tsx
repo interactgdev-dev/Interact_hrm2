@@ -1,7 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 // ...existing code...
-import Image from "next/image";
 import styles from "./add-employee.module.css";
 import AttachmentsUploader from "./AttachmentsUploader";
 import { toastError, toastInfo, toastSuccess } from "@/lib/app-toast";
@@ -16,6 +15,8 @@ import {
   normalizeMedicalPackage,
   type MedicalPackageId,
 } from "@/lib/medical-package";
+import { saveEmployeeAvatar, fetchShellBranding } from "../shell-branding-api";
+import { PROFILE_IMAGE_ACCEPT } from "@/lib/document-constants";
 
 const employeeTabs = [
   { name: "Personal Details" },
@@ -487,6 +488,8 @@ export default function AddEmployeeForm({
   const [importSummary, setImportSummary] = useState("");
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [profileImg, setProfileImg] = useState<string | null>(null);
+  /** New DP file — uploaded via /api/profile-picture (not base64 in employee JSON). */
+  const [profileFile, setProfileFile] = useState<File | null>(null);
   const [username, setUsername] = useState("");
   const [status, setStatus] = useState("disabled");
   const [password, setPassword] = useState("");
@@ -647,7 +650,13 @@ export default function AddEmployeeForm({
                 ? String(data.employee.working_hours)
                 : ""
             );
-            setProfileImg(data.employee.profile_img || null);
+            setProfileFile(null);
+            setProfileImg(
+              data.employee.profile_img &&
+                String(data.employee.profile_img).startsWith("data:image")
+                ? String(data.employee.profile_img)
+                : null,
+            );
             setUsername(data.employee.username || "");
             setStatus("enabled");
             setRole(normalizeOrgRole(data.employee.role));
@@ -659,6 +668,13 @@ export default function AddEmployeeForm({
               }
             const eid = String(data.employee.id || editEmployeeId || "");
             if (eid) {
+              // Prefer file-based avatar (shell_avatar) — survives refresh.
+              void fetchShellBranding()
+                .then((b) => {
+                  const url = b.employeeAvatars?.[eid];
+                  if (url) setProfileImg(url);
+                })
+                .catch(() => {});
               fetch(`/api/employee-hierarchy?employeeId=${encodeURIComponent(eid)}`)
                 .then((r) => r.json())
                 .then((h) => {
@@ -814,18 +830,15 @@ export default function AddEmployeeForm({
   }, [employmentStatus]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (file.size <= 1024 * 1024) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          setProfileImg(ev.target?.result as string);
-        };
-        reader.readAsDataURL(file);
-      } else {
-        toastInfo("File size must be less than 1MB");
-      }
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 40 * 1024 * 1024) {
+      toastError("Image must be 40 MB or smaller.");
+      return;
     }
+    setProfileFile(file);
+    setProfileImg(URL.createObjectURL(file));
   };
 
   async function handleSave(e: React.FormEvent) {
@@ -873,7 +886,13 @@ export default function AddEmployeeForm({
           : employmentType === "Part Time"
             ? Number(workingHours) || null
             : null,
-      profile_img: profileImg || '',
+      // New photos go through /api/profile-picture (file). Keep legacy data: URLs only if still in state.
+      profile_img:
+        profileFile
+          ? ""
+          : profileImg && String(profileImg).startsWith("data:image")
+            ? profileImg
+            : "",
       username: createLogin ? username : '',
       password: createLogin ? password : '',
       status: createLogin ? 'active' : 'disabled',
@@ -916,6 +935,20 @@ export default function AddEmployeeForm({
     if (savedId && orgRoleNeedsDepartmentConfirm(role)) {
       const ok = await saveReportingManager(savedId);
       if (!ok) return;
+    }
+    if (profileFile && savedId) {
+      try {
+        const url = await saveEmployeeAvatar(savedId, profileFile);
+        setProfileImg(url);
+        setProfileFile(null);
+      } catch (err) {
+        toastError(
+          err instanceof Error
+            ? err.message
+            : "Employee saved, but profile photo failed to upload.",
+        );
+        return;
+      }
     }
     toastSuccess(updatingExisting ? "Employee updated." : "Employee saved.");
     setActiveTab("Contact Details");
@@ -1038,14 +1071,28 @@ export default function AddEmployeeForm({
             <form className={styles.form} onSubmit={handleSave}>
               <div className={styles.profileRow}>
                 <div className={styles.profileImg}>
-                  <Image src={profileImg || "/avatar.svg"} alt="Profile" width={90} height={90} />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={profileImg || "/avatar.svg"}
+                    alt="Profile"
+                    width={90}
+                    height={90}
+                    style={{ width: 90, height: 90, objectFit: "cover", borderRadius: "50%" }}
+                  />
                   <label htmlFor="profileImg" className={styles.uploadBtn}>
                     +
-                    <input id="profileImg" type="file" accept=".jpg,.png,.gif" style={{ display: "none" }} onChange={handleImageChange} />
+                    <input
+                      id="profileImg"
+                      type="file"
+                      accept={PROFILE_IMAGE_ACCEPT}
+                      style={{ display: "none" }}
+                      onChange={handleImageChange}
+                    />
                   </label>
                 </div>
                 <p className={styles.note}>
-                  Accepts jpg, png, gif up to 1MB.<br />Recommended dimensions: 200px × 200px
+                  Accepts jpg, png, webp, gif (saved as file, not in DB).<br />
+                  Recommended dimensions: 200px × 200px
                 </p>
               </div>
               <div className={styles.row}>
