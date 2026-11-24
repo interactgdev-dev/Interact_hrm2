@@ -1765,10 +1765,13 @@ export default function MonthlyAttendancePage() {
             meta?.statusLabel ||
             emptySessionFallback.statusLabel,
         );
-        const deduction =
+        const dayDeduction =
           leaveAttSession?.deduction ||
           meta?.deduction ||
           emptySessionFallback.deduction;
+        // Same-day multi clock-in: deduction once (first row); later rows "---".
+        const deduction =
+          sessionIndex === 0 ? dayDeduction : dayDeduction ? "---" : "";
         dataRows.push({
           cells: [
             day.weekday,
@@ -2105,11 +2108,19 @@ export default function MonthlyAttendancePage() {
         const tardyCount = meta?.runningLate ?? "";
         const sessionsToExport = getDaySessionRows(day.dateKey, dayRecords, daySessions);
 
-        sessionsToExport.forEach(({ session, record }) => {
-          pushDeductionSummaryRow(rows, employee, day.dateKey, exportStatus, deduction, tardyCount, {
-            session,
-            record,
-          });
+        sessionsToExport.forEach(({ session, record }, sessionIndex) => {
+          pushDeductionSummaryRow(
+            rows,
+            employee,
+            day.dateKey,
+            exportStatus,
+            sessionIndex === 0 ? deduction : deduction ? "---" : "",
+            tardyCount,
+            {
+              session,
+              record,
+            },
+          );
         });
       });
     }
@@ -2921,8 +2932,8 @@ export default function MonthlyAttendancePage() {
                                 : null;
                             const effectiveOverride = sessionOverride || dayLevelOverride;
                             const rowStatus = effectiveOverride || dayAutoStatus;
-                            // Approved leave always 0% (full / 1st / 2nd half) — overrides punch half-day 50%.
-                            const rowDeduction = leaveAttDay
+                            // Day deduction is computed once; show % only on first same-day row.
+                            const dayDeductionValue = leaveAttDay
                               ? leaveAttDay.deduction
                               : effectiveOverride
                                 ? deductionForAttendanceStatus(
@@ -2934,6 +2945,12 @@ export default function MonthlyAttendancePage() {
                                 : !workingDay
                                   ? ""
                                   : meta?.deduction || emptyFallback.deduction;
+                            const rowDeduction =
+                              index === 0
+                                ? dayDeductionValue
+                                : dayDeductionValue
+                                  ? "---"
+                                  : "";
                             const rowStatusColor =
                               leaveAttDay && !effectiveOverride
                                 ? leaveAttDay.statusColor
