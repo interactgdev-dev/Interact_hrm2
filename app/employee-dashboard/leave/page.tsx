@@ -67,11 +67,39 @@ function statusBadgeClass(status: string) {
   return styles.badgePending;
 }
 
-function calcDays(start: string, end: string) {
+/** Working days only — weekends + calendar offs skipped (server also recomputes). */
+function calcDays(
+  start: string,
+  end: string,
+  calendarOverrides?: Record<string, string> | null,
+) {
   if (!start || !end) return 0;
-  const s = new Date(start);
-  const e = new Date(end);
-  return Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+  // Inline same rules as lib/company-working-days (client-safe).
+  const out: string[] = [];
+  const [sy, sm, sd] = start.split("-").map(Number);
+  const [ey, em, ed] = end.split("-").map(Number);
+  const cur = new Date(sy, sm - 1, sd);
+  const last = new Date(ey, em - 1, ed);
+  while (cur <= last) {
+    const y = cur.getFullYear();
+    const m = String(cur.getMonth() + 1).padStart(2, "0");
+    const d = String(cur.getDate()).padStart(2, "0");
+    out.push(`${y}-${m}-${d}`);
+    cur.setDate(cur.getDate() + 1);
+  }
+  let n = 0;
+  for (const key of out) {
+    const ov = String(calendarOverrides?.[key] || "").toLowerCase();
+    if (ov === "working") {
+      n += 1;
+      continue;
+    }
+    if (ov === "off" || ov === "holiday") continue;
+    const [y, m, d] = key.split("-").map(Number);
+    const wd = new Date(y, m - 1, d).getDay();
+    if (wd !== 0 && wd !== 6) n += 1;
+  }
+  return n;
 }
 
 export default function LeavePage() {
@@ -97,11 +125,45 @@ export default function LeavePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [calendarOverrides, setCalendarOverrides] = useState<
+    Record<string, string>
+  >({});
 
   const leaveCategoryOptions = useMemo(
     () => leaveCategoriesForEmployeeGender(employeeGender),
     [employeeGender],
   );
+
+  // Load company calendar offs for selected leave range (working-day count).
+  useEffect(() => {
+    if (!startDate) {
+      setCalendarOverrides({});
+      return;
+    }
+    const to = endDate || startDate;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/calendar?from=${encodeURIComponent(startDate)}&to=${encodeURIComponent(to)}`,
+          { cache: "no-store" },
+        );
+        const data = await res.json();
+        if (cancelled || !data?.success) return;
+        const map: Record<string, string> = {};
+        for (const d of data.days || []) {
+          const key = String(d?.date || "").slice(0, 10);
+          if (key) map[key] = String(d?.status || "").toLowerCase();
+        }
+        setCalendarOverrides(map);
+      } catch {
+        if (!cancelled) setCalendarOverrides({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [startDate, endDate]);
 
   const closeModal = () => {
     setModalOpen(false);
@@ -241,9 +303,11 @@ export default function LeavePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const days = calcDays(startDate, endDate);
+    const days = calcDays(startDate, endDate, calendarOverrides);
     if (!(days > 0)) {
-      setError("Please select valid leave dates.");
+      setError(
+        "Selected dates have no working days (weekends / offs are skipped).",
+      );
       return;
     }
     setSubmitting(true);
@@ -280,7 +344,7 @@ export default function LeavePage() {
           leave_category: category,
           start_date: startDate,
           end_date: endDate,
-          total_days: calcDays(startDate, endDate),
+          total_days: calcDays(startDate, endDate, calendarOverrides),
           reason,
           document_paths: uploadedFilePaths.length > 0 ? uploadedFilePaths : [],
         }),

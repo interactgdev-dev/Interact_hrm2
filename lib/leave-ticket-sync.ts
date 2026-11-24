@@ -123,9 +123,11 @@ export async function syncLeaveRecordFromTicket(
   const leaveCategory = String(fd.leave_category || "annual").trim() || "annual";
   const {
     parseLeaveDuration,
-    leaveDaysForDuration,
     halfDayPartFromDuration,
   } = await import("@/lib/leave-duration");
+  const { leaveWorkingDaysAsync } = await import(
+    "@/lib/company-working-days-server"
+  );
   const duration =
     parseLeaveDuration(fd.leave_duration) ||
     parseLeaveDuration(
@@ -138,7 +140,8 @@ export async function syncLeaveRecordFromTicket(
     "full";
   const effectiveEnd =
     duration === "first_half" || duration === "second_half" ? startDate : endDate;
-  const totalDays = leaveDaysForDuration(duration, startDate, effectiveEnd);
+  // Working days only: skip Sat/Sun + company calendar offs.
+  const totalDays = await leaveWorkingDaysAsync(duration, startDate, effectiveEnd);
   const halfDayPart = halfDayPartFromDuration(duration);
   const reasonBody = String(fd.reason || ticket.description || "").trim();
   const marker = `[ticket:${ticket.id}]`;

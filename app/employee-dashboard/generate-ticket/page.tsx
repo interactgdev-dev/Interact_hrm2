@@ -100,6 +100,9 @@ function GenerateTicketPageInner() {
   const [leaveDuration, setLeaveDuration] = useState<LeaveDuration | "">("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [calendarOverrides, setCalendarOverrides] = useState<
+    Record<string, string>
+  >({});
   const [amount, setAmount] = useState("");
   const [installments, setInstallments] = useState("6");
   const [startMonth, setStartMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -361,6 +364,37 @@ function GenerateTicketPageInner() {
     }
   }, [leaveDuration, startDate]);
 
+  // Company calendar offs for working-day leave count.
+  useEffect(() => {
+    if (!startDate || formKind !== "leave") {
+      setCalendarOverrides({});
+      return;
+    }
+    const to = endDate || startDate;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/calendar?from=${encodeURIComponent(startDate)}&to=${encodeURIComponent(to)}`,
+          { cache: "no-store" },
+        );
+        const data = await res.json();
+        if (cancelled || !data?.success) return;
+        const map: Record<string, string> = {};
+        for (const d of data.days || []) {
+          const key = String(d?.date || "").slice(0, 10);
+          if (key) map[key] = String(d?.status || "").toLowerCase();
+        }
+        setCalendarOverrides(map);
+      } catch {
+        if (!cancelled) setCalendarOverrides({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [startDate, endDate, formKind]);
+
   const isHalfDayLeave =
     leaveDuration === "first_half" || leaveDuration === "second_half";
 
@@ -368,8 +402,13 @@ function GenerateTicketPageInner() {
     if (!leaveDuration || !startDate) return 0;
     const end = isHalfDayLeave ? startDate : endDate;
     if (!end) return 0;
-    return leaveDaysForDuration(leaveDuration, startDate, end);
-  }, [leaveDuration, startDate, endDate, isHalfDayLeave]);
+    return leaveDaysForDuration(
+      leaveDuration,
+      startDate,
+      end,
+      calendarOverrides,
+    );
+  }, [leaveDuration, startDate, endDate, isHalfDayLeave, calendarOverrides]);
 
   const detailsLabel = useMemo(() => {
     if (formKind === "custom") return "Your query";
@@ -427,9 +466,16 @@ function GenerateTicketPageInner() {
       const effectiveEnd = isHalfDayLeave ? startDate : endDate;
       if (!effectiveEnd) throw new Error("Please select leave end date.");
       if (!description.trim()) throw new Error("Please enter a reason for leave.");
-      const days = leaveDaysForDuration(leaveDuration, startDate, effectiveEnd);
+      const days = leaveDaysForDuration(
+        leaveDuration,
+        startDate,
+        effectiveEnd,
+        calendarOverrides,
+      );
       if (!(days > 0)) {
-        throw new Error("Please select type of leave.");
+        throw new Error(
+          "Selected dates have no working days (weekends / offs are skipped).",
+        );
       }
 
       let uploadedFilePaths: string[] = [];

@@ -1,9 +1,14 @@
 /**
  * Leave ticket duration: full day | 1st half | 2nd half.
- * Half day → 0.5 leave-balance days; full day → calendar days (usually 1+).
+ * Half day → 0.5 leave-balance days;
+ * full day → company working days only (skip Sat/Sun + calendar offs).
  */
 
 import { employeeIdKeys, lookupByEmployeeId } from "@/lib/employee-id-keys";
+import {
+  countCompanyWorkingDays,
+  type CalendarStatusMap,
+} from "@/lib/company-working-days";
 
 export type LeaveDuration = "full" | "first_half" | "second_half";
 
@@ -68,19 +73,20 @@ export function leaveDurationFromHalfDayPart(
   return "full";
 }
 
+/**
+ * Leave balance days for a duration.
+ * Pass `calendarOverrides` (date → off|working|holiday) when available so
+ * company offs are skipped; weekends are always skipped.
+ */
 export function leaveDaysForDuration(
   duration: LeaveDuration,
   startDate: string,
   endDate: string,
+  calendarOverrides?: CalendarStatusMap | null,
 ): number {
   if (duration === "first_half" || duration === "second_half") return 0.5;
   if (!startDate || !endDate) return 0;
-  const s = new Date(startDate);
-  const e = new Date(endDate);
-  return Math.max(
-    1,
-    Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1,
-  );
+  return countCompanyWorkingDays(startDate, endDate, calendarOverrides);
 }
 
 export function leaveDurationLabel(duration: LeaveDuration | null | undefined): string {
@@ -151,6 +157,8 @@ export function buildApprovedLeavesMap(
   opts: {
     normalizeDateKey: (raw: string) => string;
     addDays: (dateKey: string, days: number) => string;
+    /** When set, skip Sat/Sun + calendar offs (leave does not paint on non-working days). */
+    isWorkingDay?: (dateKey: string) => boolean;
   },
 ): ApprovedLeavesMap {
   const leavesMap: ApprovedLeavesMap = {};
@@ -173,11 +181,16 @@ export function buildApprovedLeavesMap(
     }
     let currentDateKey = startDateKey;
     while (currentDateKey <= endDateKey) {
-      // Full-day leave wins over half if both exist on same day.
-      for (const idKey of idKeys) {
-        const prev = leavesMap[idKey][currentDateKey];
-        if (prev !== "full") {
-          leavesMap[idKey][currentDateKey] = kind;
+      const working = opts.isWorkingDay
+        ? opts.isWorkingDay(currentDateKey)
+        : true;
+      if (working) {
+        // Full-day leave wins over half if both exist on same day.
+        for (const idKey of idKeys) {
+          const prev = leavesMap[idKey][currentDateKey];
+          if (prev !== "full") {
+            leavesMap[idKey][currentDateKey] = kind;
+          }
         }
       }
       currentDateKey = opts.addDays(currentDateKey, 1);

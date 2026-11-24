@@ -320,8 +320,9 @@ export async function POST(req: NextRequest) {
         form_data && typeof form_data === "object"
           ? (form_data as Record<string, unknown>)
           : {};
-      const { parseLeaveDuration, leaveDaysForDuration } = await import(
-        "@/lib/leave-duration"
+      const { parseLeaveDuration } = await import("@/lib/leave-duration");
+      const { leaveWorkingDaysAsync } = await import(
+        "@/lib/company-working-days-server"
       );
       const duration = parseLeaveDuration(fd.leave_duration);
       if (!duration) {
@@ -338,7 +339,17 @@ export async function POST(req: NextRequest) {
         fd.total_days = 0.5;
         fd.half_day_part = duration === "first_half" ? "first" : "second";
       } else {
-        const days = leaveDaysForDuration("full", startDate, endDate);
+        const days = await leaveWorkingDaysAsync("full", startDate, endDate);
+        if (!(days > 0)) {
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                "Selected dates have no working days (weekends / offs are skipped).",
+            },
+            { status: 400 },
+          );
+        }
         fd.total_days = days;
         fd.half_day_part = null;
       }

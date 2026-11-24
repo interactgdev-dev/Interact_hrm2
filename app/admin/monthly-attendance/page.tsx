@@ -812,6 +812,15 @@ export default function MonthlyAttendancePage() {
           buildApprovedLeavesMap(data.leaves as Array<Record<string, unknown>>, {
             normalizeDateKey: normalizeToDateKey,
             addDays: addDaysToDateKey,
+            // Do not paint Leave on Sat/Sun or company calendar offs.
+            isWorkingDay: (dateKey: string) => {
+              const override = calendarOverrides[dateKey];
+              if (override) return override.status === "working";
+              const [y, m, d] = dateKey.split("-").map(Number);
+              if (!y || !m || !d) return false;
+              const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+              return wd !== 0 && wd !== 6;
+            },
           }),
         );
       } else {
@@ -871,6 +880,13 @@ export default function MonthlyAttendancePage() {
       })
       .catch((err) => console.error("calendar fetch", err));
   }, [selectedMonth]);
+
+  // Rebuild leave paint after calendar loads so offs/weekends are skipped.
+  useEffect(() => {
+    if (!fromDate || !toDate) return;
+    void fetchApprovedLeaves(fromDate, toDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when calendar map changes
+  }, [calendarOverrides, fromDate, toDate]);
 
   function calculateTotalSeconds(clockIn: string | null, clockOut: string | null): number {
     if (!clockIn || !clockOut) return 0;

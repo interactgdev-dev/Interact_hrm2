@@ -127,15 +127,36 @@ export async function POST(req: NextRequest) {
       reason,
       document_paths,
     } = body;
-    if (!employee_id || !leave_category || !start_date || !end_date || !total_days) {
+    if (!employee_id || !leave_category || !start_date || !end_date) {
       return NextResponse.json({ success: false, error: "Missing required fields" });
+    }
+
+    // Always recompute: working days only (skip weekends + calendar offs).
+    const { leaveWorkingDaysAsync } = await import(
+      "@/lib/company-working-days-server"
+    );
+    const computedDays = await leaveWorkingDaysAsync(
+      "full",
+      String(start_date),
+      String(end_date),
+    );
+    const daysToStore =
+      Number(total_days) > 0 && Number(total_days) < 1
+        ? Number(total_days) // half-day from client
+        : computedDays;
+    if (!(daysToStore > 0)) {
+      return NextResponse.json({
+        success: false,
+        error:
+          "Selected dates have no working days (weekends / offs are skipped).",
+      });
     }
 
     const bal = await getEmployeeLeaveBalance(employee_id);
     if (bal.success) {
       const gate = assertLeaveBalanceAllowsRequest(bal, {
         leaveCategory: leave_category,
-        totalDays: Number(total_days) || 1,
+        totalDays: daysToStore,
       });
       if (!gate.ok) {
         return NextResponse.json({
@@ -161,7 +182,7 @@ export async function POST(req: NextRequest) {
           leave_category,
           start_date,
           end_date,
-          total_days,
+          daysToStore,
           reason || "",
           JSON.stringify(document_paths || []),
         ],
@@ -179,7 +200,7 @@ export async function POST(req: NextRequest) {
           leave_category,
           start_date,
           end_date,
-          total_days,
+          daysToStore,
           reason || "",
           JSON.stringify(document_paths || []),
         ],

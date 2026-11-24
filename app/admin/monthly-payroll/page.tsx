@@ -602,6 +602,14 @@ export default function MonthlyAttendancePage() {
               const next = new Date(Date.UTC(y, m - 1, d + days));
               return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
             },
+            isWorkingDay: (dateKey: string) => {
+              const override = calendarOverrides[dateKey];
+              if (override) return override.status === "working";
+              const [y, m, d] = dateKey.split("-").map(Number);
+              if (!y || !m || !d) return false;
+              const wd = new Date(y, m - 1, d).getDay();
+              return wd !== 0 && wd !== 6;
+            },
           }),
         );
       }
