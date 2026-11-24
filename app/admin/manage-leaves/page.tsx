@@ -20,6 +20,10 @@ import {
 import { permissionSetHas } from "@/lib/access-control/permission-scope";
 import { isAdminBrowserSession } from "@/lib/access-control/employee-shell";
 import { leaveDeptMatches } from "@/lib/leave-dept-filter";
+import {
+  formatLeaveCycleRangeLabel,
+  leaveDateToYmd,
+} from "@/lib/leave-cycle";
 
 type LeaveDashTab = "balances" | "requests" | "summary";
 
@@ -60,6 +64,8 @@ interface Employee {
   employee_code: string;
   employment_status: string;
   gender?: string | null;
+  joined_date?: string | null;
+  leave_cycle_start?: string | null;
   annual_allowance: number;
   bereavement_allowance: number;
   maternity_allowance?: number;
@@ -825,7 +831,7 @@ function ManageLeavesPageInner() {
                           <th>ID</th>
                           <th>Employee</th>
                           <th>Department</th>
-                          <th>Status</th>
+                          <th>Status &amp; DOJ</th>
                           <th>Annual</th>
                           <th>Bereavement</th>
                           <th>Maternity / Paternity</th>
@@ -847,6 +853,10 @@ function ManageLeavesPageInner() {
                           filteredEmployees.map((emp) => {
                             const statusKey = employmentStatusKey(emp);
                             const bal = balanceFor(emp);
+                            const dojYmd = leaveDateToYmd(emp.joined_date);
+                            const cycleLabel = formatLeaveCycleRangeLabel(
+                              emp.joined_date || null,
+                            );
                             const availClass =
                               bal.available < 0
                                 ? styles.availNeg
@@ -885,15 +895,25 @@ function ManageLeavesPageInner() {
                                   {emp.department_name || "—"}
                                 </td>
                                 <td>
-                                  <span
-                                    className={`${leaveStyles.badge} ${
-                                      statusKey === "Confirmed"
-                                        ? styles.badgeConfirmed
-                                        : styles.badgeProbation
-                                    }`}
-                                  >
-                                    {statusKey}
-                                  </span>
+                                  <div className={styles.statusDojCell}>
+                                    <span
+                                      className={`${leaveStyles.badge} ${
+                                        statusKey === "Confirmed"
+                                          ? styles.badgeConfirmed
+                                          : styles.badgeProbation
+                                      }`}
+                                    >
+                                      {statusKey}
+                                    </span>
+                                    {dojYmd ? (
+                                      <div className={styles.dojLine}>DOJ {dojYmd}</div>
+                                    ) : (
+                                      <div className={styles.dojLineMuted}>DOJ —</div>
+                                    )}
+                                    {cycleLabel ? (
+                                      <div className={styles.cycleLine}>{cycleLabel}</div>
+                                    ) : null}
+                                  </div>
                                 </td>
                                 <td>
                                   <div className={styles.equity}>

@@ -75,6 +75,35 @@
   text-transform: none;
 }
 
+.statusDojCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dojLine {
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dojLineMuted {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.cycleLine {
+  font-size: 11px;
+  font-weight: 500;
+  color: #8b93a6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .equity {
   width: 100%;
   max-width: 100%;

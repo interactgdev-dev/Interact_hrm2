@@ -270,6 +270,7 @@ export async function GET(req: NextRequest) {
       return {
         ...emp,
         gender: emp.gender || null,
+        joined_date: leaveDateToYmd(emp.joined_date) || null,
         annual_allowance: annualAllowance,
         bereavement_allowance: bereavementAllowance,
         maternity_allowance: genderNorm === "female" ? maternityAllowance : 0,
