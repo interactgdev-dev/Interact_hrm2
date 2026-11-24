@@ -1407,6 +1407,11 @@ export default function MonthlyAttendancePage() {
       };
     }
 
+    // Calendar Off / weekend: never paint Leave (leave balance also skips these days).
+    if (!workingDay) {
+      return { statusLabel: "Off", deduction: "", isManual: false };
+    }
+
     if (leaveAtt) {
       return {
         statusLabel: leaveAtt.statusLabel,
@@ -2960,29 +2965,19 @@ export default function MonthlyAttendancePage() {
                               normalizeAttendanceStatus(dayLevelOverrideEarly) === "Off");
 
                           if (offDayHidePunches) {
-                            const leaveKindOff = approvedLeaveOnDay(
-                              approvedLeavesMap,
-                              employee.employeeId,
-                              day.dateKey,
-                            );
-                            const leaveAttOff = leaveKindOff
-                              ? attendanceFromApprovedLeaveDay(leaveKindOff)
-                              : null;
                             const resolvedOff = dayStatusAndDeductionForEmployee(
                               employee,
                               day.dateKey,
                               dayRecords,
                             );
+                            // Off days stay Off — approved leave range must not override calendar offs.
                             const statusLabel = resolvedOff.isManual
                               ? resolvedOff.statusLabel
-                              : leaveAttOff?.statusLabel || "Off";
+                              : "Off";
                             const deduction = resolvedOff.isManual
                               ? resolvedOff.deduction
-                              : leaveAttOff?.deduction || "";
-                            const offColor =
-                              leaveAttOff && !resolvedOff.isManual
-                                ? leaveAttOff.statusColor
-                                : uiStatusTextColor(statusLabel);
+                              : "";
+                            const offColor = uiStatusTextColor(statusLabel);
                             return (
                               <tr key={`${employee.employeeId}-${day.dateKey}-off`}>
                                 <td>{day.weekday}</td>
@@ -3001,10 +2996,7 @@ export default function MonthlyAttendancePage() {
                                     dateKey: day.dateKey,
                                     displayStatus: statusLabel,
                                     isManual: resolvedOff.isManual,
-                                    statusColorOverride:
-                                      leaveAttOff && !resolvedOff.isManual
-                                        ? leaveAttOff.statusColor
-                                        : null,
+                                    statusColorOverride: null,
                                   })}
                                 </td>
                                 <td style={{ whiteSpace: "normal", minWidth: 160, maxWidth: 280, lineHeight: 1.35, wordBreak: "break-word" }}>
@@ -3107,11 +3099,11 @@ export default function MonthlyAttendancePage() {
                             day.dateKey,
                             dayRecords,
                           );
-                          // Status: leave → calendar Off → HRM meta → Absent. Punches never invent status.
-                          const dayAutoStatus = leaveAttDay
-                            ? leaveAttDay.statusLabel
-                            : !workingDay
-                              ? "Off"
+                          // Status: calendar Off → leave → HRM meta → Absent. Punches never invent status.
+                          const dayAutoStatus = !workingDay
+                            ? "Off"
+                            : leaveAttDay
+                              ? leaveAttDay.statusLabel
                               : meta?.autoStatusLabel || meta?.statusLabel
                                 ? normalizeAttendanceStatus(
                                     meta.autoStatusLabel || meta.statusLabel || "-",
@@ -3145,7 +3137,7 @@ export default function MonthlyAttendancePage() {
                                   ? "---"
                                   : "";
                             const rowStatusColor =
-                              leaveAttDay && !effectiveOverride
+                              leaveAttDay && workingDay && !effectiveOverride
                                 ? leaveAttDay.statusColor
                                 : uiStatusTextColor(rowStatus);
                             const statusIsManual = Boolean(effectiveOverride);
@@ -3213,7 +3205,7 @@ export default function MonthlyAttendancePage() {
                                     isManual: statusIsManual,
                                     attendanceId: attId > 0 ? attId : null,
                                     statusColorOverride:
-                                      leaveAttDay && !effectiveOverride
+                                      leaveAttDay && workingDay && !effectiveOverride
                                         ? leaveAttDay.statusColor
                                         : null,
                                   })}
