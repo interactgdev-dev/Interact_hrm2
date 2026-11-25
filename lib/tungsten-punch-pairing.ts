@@ -770,14 +770,22 @@ function firstLastPunchForShiftDay(
   );
   if (shiftStartMs == null || shiftEndMs == null) return { punchIn: "-", punchOut: "-" };
 
-  const crossesMidnight = shiftEndMs <= shiftStartMs;
+  // Wall-clock overnight (e.g. 14:00→00:00). Do NOT use shiftEndMs<=shiftStartMs —
+  // computeShiftEndEpochMs already rolls end to the next calendar day, so epoch
+  // compare is always false and Admin T.Out wrongly stops at shiftEnd+2h (~1–2 AM).
+  const startHms = parseShiftTimeToHms(shift.startTime);
+  const endHms = parseShiftTimeToHms(shift.endTime);
+  const crossesMidnight =
+    !!startHms &&
+    !!endHms &&
+    endHms.h * 60 + endHms.m <= startHms.h * 60 + startHms.m;
   const entryFromMs = entryFloorMsForShiftDay(
     sessionDate,
     shiftStartMs,
     crossesMidnight,
   );
 
-  // Pervaiz midnight: last punch after shift end until morning — not 10am–noon returns.
+  // Admin / Pervaiz midnight: last punch after shift end until morning — not 10am returns.
   if (options?.midnightExitLastPunch === true && crossesMidnight) {
     const nextStartMs = wallClockToEpochMs(
       addDaysToDateKey(sessionDate, 1),
