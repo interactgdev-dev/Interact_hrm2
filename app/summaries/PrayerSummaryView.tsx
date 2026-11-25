@@ -28,6 +28,13 @@ import {
   exceedSecondsOverAllowance,
   resolveAllowanceSeconds,
 } from "@/lib/break-prayer-allowance";
+import {
+  SortableTh,
+  nextSortState,
+  cmpText,
+  cmpNum,
+  type SortDir,
+} from "../admin/manage-leaves/SortableTh";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
@@ -67,7 +74,15 @@ export default function PrayerSummaryView() {
   const [now, setNow] = useState(Date.now());
   const importInputRef = useRef<HTMLInputElement>(null);
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
+  const [sortKey, setSortKey] = useState("");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const { getPhoto } = useEmployeePhotoMap();
+
+  const onSort = (column: string) => {
+    const next = nextSortState(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   const scopedDepartments = useMemo(
     () => filterDepartmentsByScope(departments, viewerScope),
@@ -186,34 +201,85 @@ export default function PrayerSummaryView() {
       liveTotals.set(key, (liveTotals.get(key) || 0) + Math.max(0, seconds));
     }
 
-    return filteredPrayerBreaks
-      .map((p) => {
-        const isRunning = p.prayer_break_start && !p.prayer_break_end;
-        const start = p.prayer_break_start ? new Date(p.prayer_break_start).getTime() : 0;
-        const end = p.prayer_break_end ? new Date(p.prayer_break_end).getTime() : now;
-        const sessionSeconds = p.prayer_break_start ? Math.floor((end - start) / 1000) : 0;
-        const key = getSessionGroupingKey(p);
-        const dailySeconds = liveTotals.get(key) || sessionSeconds;
-        const sessionDate = breakSessionDate(p);
-        const allowance = resolveAllowanceSeconds(prayerAllowanceMap, {
-          employeeId: p.employee_id,
-          sessionDate,
-          attendanceSessionId: p.attendance_session_id,
-          kind: "prayer",
-        });
-        const exceedToday = exceedSecondsOverAllowance(dailySeconds, allowance);
-        return {
-          ...p,
-          date_display: sessionDate,
-          prayer_start_display: p.prayer_break_start ? getTimeStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE) : "",
-          prayer_end_display: p.prayer_break_end ? getTimeStringInTimeZone(p.prayer_break_end, SERVER_TIMEZONE) : (isRunning ? "Running..." : ""),
-          total_prayer_time: formatDuration(sessionSeconds),
-          total_prayer_time_today: formatDuration(dailySeconds),
-          exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
-        };
-      })
-      .sort((a, b) => new Date(b.prayer_break_start || 0).getTime() - new Date(a.prayer_break_start || 0).getTime());
-  }, [filteredPrayerBreaks, staticTotals, now, prayerAllowanceMap]);
+    const mapped = filteredPrayerBreaks.map((p) => {
+      const isRunning = p.prayer_break_start && !p.prayer_break_end;
+      const start = p.prayer_break_start ? new Date(p.prayer_break_start).getTime() : 0;
+      const end = p.prayer_break_end ? new Date(p.prayer_break_end).getTime() : now;
+      const sessionSeconds = p.prayer_break_start ? Math.floor((end - start) / 1000) : 0;
+      const key = getSessionGroupingKey(p);
+      const dailySeconds = liveTotals.get(key) || sessionSeconds;
+      const sessionDate = breakSessionDate(p);
+      const allowance = resolveAllowanceSeconds(prayerAllowanceMap, {
+        employeeId: p.employee_id,
+        sessionDate,
+        attendanceSessionId: p.attendance_session_id,
+        kind: "prayer",
+      });
+      const exceedToday = exceedSecondsOverAllowance(dailySeconds, allowance);
+      return {
+        ...p,
+        date_display: sessionDate,
+        prayer_start_display: p.prayer_break_start
+          ? getTimeStringInTimeZone(p.prayer_break_start, SERVER_TIMEZONE)
+          : "",
+        prayer_end_display: p.prayer_break_end
+          ? getTimeStringInTimeZone(p.prayer_break_end, SERVER_TIMEZONE)
+          : isRunning
+          ? "Running..."
+          : "",
+        total_prayer_time: formatDuration(sessionSeconds),
+        total_prayer_time_today: formatDuration(dailySeconds),
+        exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
+      };
+    });
+
+    if (!sortKey) {
+      return mapped.sort(
+        (a, b) =>
+          new Date(b.prayer_break_start || 0).getTime() -
+          new Date(a.prayer_break_start || 0).getTime(),
+      );
+    }
+
+    return mapped.sort((a, b) => {
+      switch (sortKey) {
+        case "id":
+          return cmpNum(a.employee_id, b.employee_id, sortDir);
+        case "name":
+          return cmpText(a.employee_name, b.employee_name, sortDir);
+        case "pname":
+          return cmpText(a.pseudonym, b.pseudonym, sortDir);
+        case "dept":
+          return cmpText(a.department_name, b.department_name, sortDir);
+        case "date":
+          return cmpText(a.date_display, b.date_display, sortDir);
+        case "start":
+          return cmpText(a.prayer_break_start, b.prayer_break_start, sortDir);
+        case "end":
+          return cmpText(a.prayer_end_display, b.prayer_end_display, sortDir);
+        case "session":
+          return cmpText(a.total_prayer_time, b.total_prayer_time, sortDir);
+        case "total":
+          return cmpText(a.total_prayer_time_today, b.total_prayer_time_today, sortDir);
+        case "exceed":
+          return cmpText(a.exceed_today, b.exceed_today, sortDir);
+        default:
+          return 0;
+      }
+    });
+  }, [filteredPrayerBreaks, staticTotals, now, prayerAllowanceMap, sortKey, sortDir]);
+
+  const totalCount = rows.length;
+  const runningOnPrayer = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of rows) {
+      if (p.prayer_break_start && !p.prayer_break_end) {
+        ids.add(String(p.employee_id ?? p.id ?? ""));
+      }
+    }
+    ids.delete("");
+    return ids.size;
+  }, [rows]);
 
   const downloadPrayerCSV = () => {
     const headers = [
@@ -370,6 +436,19 @@ export default function PrayerSummaryView() {
           />
         </div>
 
+        <div className={styles.summaryStatRow}>
+          <div className={styles.summaryStatCard}>
+            <p className={styles.summaryStatLabel}>Total</p>
+            <p className={styles.summaryStatValue}>{totalCount}</p>
+            <p className={styles.summaryStatSub}>records in view</p>
+          </div>
+          <div className={`${styles.summaryStatCard} ${styles.summaryStatCardRunning}`}>
+            <p className={styles.summaryStatLabel}>On prayer</p>
+            <p className={styles.summaryStatValue}>{runningOnPrayer}</p>
+            <p className={styles.summaryStatSub}>running now</p>
+          </div>
+        </div>
+
         <div className={leaveStyles.reqTableShell}>
           <div className={leaveStyles.reqTableScroll}>
             {loading ? (
@@ -378,16 +457,16 @@ export default function PrayerSummaryView() {
               <table className={`${leaveStyles.reqTable} ${styles.breakSumTableFit}`}>
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Full Name</th>
-                    <th>P.Name</th>
-                    <th>Department</th>
-                    <th>Date</th>
-                    <th>Prayer Start</th>
-                    <th>Prayer End</th>
-                    <th>Total Prayer Time</th>
-                    <th>Total Prayer</th>
-                    <th>Exceed</th>
+                    <SortableTh label="ID" column="id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Full Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="P.Name" column="pname" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Department" column="dept" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Date" column="date" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Prayer Start" column="start" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Prayer End" column="end" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Total Prayer Time" column="session" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Total Prayer" column="total" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Exceed" column="exceed" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   </tr>
                 </thead>
                 <tbody>

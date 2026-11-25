@@ -1688,3 +1688,48 @@
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
 }
+
+/* Summary pages: total + running counts under toolbar */
+.summaryStatRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.summaryStatCard {
+  min-width: 140px;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.04);
+  border-top: 3px solid #2e3f6e;
+}
+
+.summaryStatCardRunning {
+  border-top-color: #bc3a3a;
+}
+
+.summaryStatLabel {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8b93a6;
+}
+
+.summaryStatValue {
+  margin: 4px 0 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #1b2233;
+  font-variant-numeric: tabular-nums;
+}
+
+.summaryStatSub {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: #8b93a6;
+}

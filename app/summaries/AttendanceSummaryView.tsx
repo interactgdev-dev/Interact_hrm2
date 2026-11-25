@@ -28,6 +28,13 @@ import {
   filterAttendanceByClockInSessionDate,
   overnightFetchRange,
 } from "@/lib/break-session-date";
+import {
+  SortableTh,
+  nextSortState,
+  cmpText,
+  cmpNum,
+  type SortDir,
+} from "../admin/manage-leaves/SortableTh";
 
 function getLocalDateString(date: Date = new Date()) {
   return getDateStringInTimeZone(date, SERVER_TIMEZONE);
@@ -112,8 +119,16 @@ export default function AttendanceSummaryView() {
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [importedSnapshot, setImportedSnapshot] = useState<ImportedAttendanceSummarySnapshot | null>(null);
+  const [sortKey, setSortKey] = useState("");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const importInputRef = useRef<HTMLInputElement>(null);
   const { openFromRow, popup, getPhoto } = useEmployeeDetailPopup();
+
+  const onSort = (column: string) => {
+    const next = nextSortState(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   const filterMonth = fromDate.slice(0, 7);
   const showingImported = Boolean(
@@ -218,10 +233,79 @@ export default function AttendanceSummaryView() {
   }, [filteredLive]);
 
   const rows = useMemo(() => {
-    if (showingImported && importedSnapshot) {
-      return filterImportedRows(importedSnapshot, fromDate, toDate, deferredSearch, department);
-    }
-    return filteredLive;
+    const base =
+      showingImported && importedSnapshot
+        ? filterImportedRows(importedSnapshot, fromDate, toDate, deferredSearch, department)
+        : filteredLive;
+    if (!sortKey) return base;
+    const sorted = [...base];
+    sorted.sort((a: any, b: any) => {
+      if (showingImported) {
+        switch (sortKey) {
+          case "id":
+            return cmpNum(a.employeeId, b.employeeId, sortDir);
+          case "name":
+            return cmpText(a.employeeName, b.employeeName, sortDir);
+          case "pname":
+            return cmpText(a.pseudonym, b.pseudonym, sortDir);
+          case "dept":
+            return cmpText(a.departmentName, b.departmentName, sortDir);
+          case "date":
+            return cmpText(a.dateDisplay, b.dateDisplay, sortDir);
+          case "clockIn":
+            return cmpText(a.clockIn, b.clockIn, sortDir);
+          case "clockOut":
+            return cmpText(a.clockOut, b.clockOut, sortDir);
+          case "hours":
+            return cmpText(a.totalHours, b.totalHours, sortDir);
+          case "late":
+            return cmpText(a.late, b.late, sortDir);
+          default:
+            return 0;
+        }
+      }
+      switch (sortKey) {
+        case "id":
+          return cmpNum(a.employee_id, b.employee_id, sortDir);
+        case "name":
+          return cmpText(a.employee_name, b.employee_name, sortDir);
+        case "pname":
+          return cmpText(a.pseudonym, b.pseudonym, sortDir);
+        case "dept":
+          return cmpText(a.department_name, b.department_name, sortDir);
+        case "date":
+          return cmpText(
+            attendanceSessionDate(a) || formatDateOnly(a.clock_in || a.clock_out || a.date),
+            attendanceSessionDate(b) || formatDateOnly(b.clock_in || b.clock_out || b.date),
+            sortDir,
+          );
+        case "clockIn":
+          return cmpText(a.clock_in, b.clock_in, sortDir);
+        case "clockOut":
+          return cmpText(a.clock_out || "Running...", b.clock_out || "Running...", sortDir);
+        case "hours": {
+          const keyA = a.id ?? `${a.employee_id}-${a.clock_in}`;
+          const keyB = b.id ?? `${b.employee_id}-${b.clock_in}`;
+          const hoursA =
+            a.clock_in && !a.clock_out
+              ? formatTotalHours(a.clock_in, "", now)
+              : closedDisplay.get(keyA) || formatTotalHours(a.clock_in, a.clock_out);
+          const hoursB =
+            b.clock_in && !b.clock_out
+              ? formatTotalHours(b.clock_in, "", now)
+              : closedDisplay.get(keyB) || formatTotalHours(b.clock_in, b.clock_out);
+          return cmpText(hoursA, hoursB, sortDir);
+        }
+        case "late": {
+          const lateA = a.is_late ? `Late ${formatLateTime(a.late_minutes || 0)}` : "On Time";
+          const lateB = b.is_late ? `Late ${formatLateTime(b.late_minutes || 0)}` : "On Time";
+          return cmpText(lateA, lateB, sortDir);
+        }
+        default:
+          return 0;
+      }
+    });
+    return sorted;
   }, [
     showingImported,
     importedSnapshot,
@@ -230,7 +314,28 @@ export default function AttendanceSummaryView() {
     deferredSearch,
     department,
     filteredLive,
+    sortKey,
+    sortDir,
+    closedDisplay,
+    now,
   ]);
+
+  const totalCount = rows.length;
+  const runningClockedIn = useMemo(() => {
+    const ids = new Set<string>();
+    for (const a of rows) {
+      if (showingImported) {
+        const out = String(a.clockOut || "").toLowerCase();
+        if (!a.clockOut || out === "running..." || out === "running") {
+          ids.add(String(a.employeeId ?? a.id ?? ""));
+        }
+      } else if (a.clock_in && !a.clock_out) {
+        ids.add(String(a.employee_id ?? a.id ?? ""));
+      }
+    }
+    ids.delete("");
+    return ids.size;
+  }, [rows, showingImported]);
 
   const downloadAttendanceCSV = () => {
     const headers = ["Id", "Full Name", "P.Name", "Department", "Date", "Clock In", "Clock Out", "Total Hours", "Late"];
@@ -398,6 +503,19 @@ export default function AttendanceSummaryView() {
           />
         </div>
 
+        <div className={styles.summaryStatRow}>
+          <div className={styles.summaryStatCard}>
+            <p className={styles.summaryStatLabel}>Total</p>
+            <p className={styles.summaryStatValue}>{totalCount}</p>
+            <p className={styles.summaryStatSub}>records in view</p>
+          </div>
+          <div className={`${styles.summaryStatCard} ${styles.summaryStatCardRunning}`}>
+            <p className={styles.summaryStatLabel}>Clocked in</p>
+            <p className={styles.summaryStatValue}>{runningClockedIn}</p>
+            <p className={styles.summaryStatSub}>running now</p>
+          </div>
+        </div>
+
         <div className={leaveStyles.reqTableShell}>
           <div className={`${leaveStyles.reqTableScroll} ${styles.attTableScroll}`}>
             {loading && !showingImported ? (
@@ -406,15 +524,15 @@ export default function AttendanceSummaryView() {
               <table className={`${leaveStyles.reqTable} ${styles.attTableFit}`}>
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Full Name</th>
-                    <th>P.Name</th>
-                    <th>Department</th>
-                    <th>Date</th>
-                    <th>Clock In</th>
-                    <th>Clock Out</th>
-                    <th>Total Hours</th>
-                    <th>Late</th>
+                    <SortableTh label="ID" column="id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Full Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="P.Name" column="pname" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Department" column="dept" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Date" column="date" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Clock In" column="clockIn" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Clock Out" column="clockOut" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Total Hours" column="hours" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Late" column="late" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   </tr>
                 </thead>
                 <tbody>

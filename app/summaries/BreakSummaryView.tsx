@@ -30,6 +30,13 @@ import {
   exceedSecondsOverAllowance,
   resolveAllowanceSeconds,
 } from "@/lib/break-prayer-allowance";
+import {
+  SortableTh,
+  nextSortState,
+  cmpText,
+  cmpNum,
+  type SortDir,
+} from "../admin/manage-leaves/SortableTh";
 
 function formatDuration(seconds: number) {
   const h = Math.floor(seconds / 3600).toString().padStart(2, "0");
@@ -84,8 +91,16 @@ export default function BreakSummaryView() {
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
+  const [sortKey, setSortKey] = useState("");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const importInputRef = useRef<HTMLInputElement>(null);
   const { getPhoto } = useEmployeePhotoMap();
+
+  const onSort = (column: string) => {
+    const next = nextSortState(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   const scopedDepartments = useMemo(
     () => filterDepartmentsByScope(departments, viewerScope),
@@ -204,38 +219,81 @@ export default function BreakSummaryView() {
       liveTotals.set(key, (liveTotals.get(key) || 0) + Math.max(0, seconds));
     }
 
-    return filteredBreaks
-      .map((b) => {
-        const isRunning = b.break_start && !b.break_end;
-        const start = b.break_start ? new Date(b.break_start).getTime() : 0;
-        const end = b.break_end ? new Date(b.break_end).getTime() : now;
-        const sessionSeconds = b.break_start ? Math.floor((end - start) / 1000) : 0;
-        const key = getSessionGroupingKey(b);
-        const dailySeconds = liveTotals.get(key) || sessionSeconds;
-        const sessionDate = breakSessionDate(b);
-        const allowance = resolveAllowanceSeconds(breakAllowanceMap, {
-          employeeId: b.employee_id,
-          sessionDate,
-          attendanceSessionId: b.attendance_session_id,
-          kind: "break",
-        });
-        const exceedToday = exceedSecondsOverAllowance(dailySeconds, allowance);
-        return {
-          ...b,
-          date_display: sessionDate,
-          break_start_display: b.break_start ? getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE) : "",
-          break_end_display: b.break_end
-            ? getTimeStringInTimeZone(b.break_end, SERVER_TIMEZONE)
-            : isRunning
-            ? "Running..."
-            : "",
-          total_break_time: formatDuration(sessionSeconds),
-          total_break_time_today: formatDuration(dailySeconds),
-          exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
-        };
-      })
-      .sort((a, b) => new Date(b.break_start || 0).getTime() - new Date(a.break_start || 0).getTime());
-  }, [filteredBreaks, staticTotals, now, breakAllowanceMap]);
+    const mapped = filteredBreaks.map((b) => {
+      const isRunning = b.break_start && !b.break_end;
+      const start = b.break_start ? new Date(b.break_start).getTime() : 0;
+      const end = b.break_end ? new Date(b.break_end).getTime() : now;
+      const sessionSeconds = b.break_start ? Math.floor((end - start) / 1000) : 0;
+      const key = getSessionGroupingKey(b);
+      const dailySeconds = liveTotals.get(key) || sessionSeconds;
+      const sessionDate = breakSessionDate(b);
+      const allowance = resolveAllowanceSeconds(breakAllowanceMap, {
+        employeeId: b.employee_id,
+        sessionDate,
+        attendanceSessionId: b.attendance_session_id,
+        kind: "break",
+      });
+      const exceedToday = exceedSecondsOverAllowance(dailySeconds, allowance);
+      return {
+        ...b,
+        date_display: sessionDate,
+        break_start_display: b.break_start ? getTimeStringInTimeZone(b.break_start, SERVER_TIMEZONE) : "",
+        break_end_display: b.break_end
+          ? getTimeStringInTimeZone(b.break_end, SERVER_TIMEZONE)
+          : isRunning
+          ? "Running..."
+          : "",
+        total_break_time: formatDuration(sessionSeconds),
+        total_break_time_today: formatDuration(dailySeconds),
+        exceed_today: exceedToday > 0 ? formatDuration(exceedToday) : "",
+      };
+    });
+
+    if (!sortKey) {
+      return mapped.sort(
+        (a, b) => new Date(b.break_start || 0).getTime() - new Date(a.break_start || 0).getTime(),
+      );
+    }
+
+    return mapped.sort((a, b) => {
+      switch (sortKey) {
+        case "id":
+          return cmpNum(a.employee_id, b.employee_id, sortDir);
+        case "name":
+          return cmpText(a.employee_name, b.employee_name, sortDir);
+        case "pname":
+          return cmpText(a.pseudonym, b.pseudonym, sortDir);
+        case "dept":
+          return cmpText(a.department_name, b.department_name, sortDir);
+        case "date":
+          return cmpText(a.date_display, b.date_display, sortDir);
+        case "start":
+          return cmpText(a.break_start, b.break_start, sortDir);
+        case "end":
+          return cmpText(a.break_end_display, b.break_end_display, sortDir);
+        case "session":
+          return cmpText(a.total_break_time, b.total_break_time, sortDir);
+        case "total":
+          return cmpText(a.total_break_time_today, b.total_break_time_today, sortDir);
+        case "exceed":
+          return cmpText(a.exceed_today, b.exceed_today, sortDir);
+        default:
+          return 0;
+      }
+    });
+  }, [filteredBreaks, staticTotals, now, breakAllowanceMap, sortKey, sortDir]);
+
+  const totalCount = rows.length;
+  const runningOnBreak = useMemo(() => {
+    const ids = new Set<string>();
+    for (const b of rows) {
+      if (b.break_start && !b.break_end) {
+        ids.add(String(b.employee_id ?? b.id ?? ""));
+      }
+    }
+    ids.delete("");
+    return ids.size;
+  }, [rows]);
 
   const downloadBreakCSV = () => {
     const headers = [
@@ -392,6 +450,19 @@ export default function BreakSummaryView() {
           />
         </div>
 
+        <div className={styles.summaryStatRow}>
+          <div className={styles.summaryStatCard}>
+            <p className={styles.summaryStatLabel}>Total</p>
+            <p className={styles.summaryStatValue}>{totalCount}</p>
+            <p className={styles.summaryStatSub}>records in view</p>
+          </div>
+          <div className={`${styles.summaryStatCard} ${styles.summaryStatCardRunning}`}>
+            <p className={styles.summaryStatLabel}>On break</p>
+            <p className={styles.summaryStatValue}>{runningOnBreak}</p>
+            <p className={styles.summaryStatSub}>running now</p>
+          </div>
+        </div>
+
         <div className={leaveStyles.reqTableShell}>
           <div className={leaveStyles.reqTableScroll}>
             {loading ? (
@@ -400,16 +471,16 @@ export default function BreakSummaryView() {
               <table className={`${leaveStyles.reqTable} ${styles.breakSumTableFit}`}>
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Full Name</th>
-                    <th>P.Name</th>
-                    <th>Department</th>
-                    <th>Date</th>
-                    <th>Break Start</th>
-                    <th>Break End</th>
-                    <th>Total Break Time</th>
-                    <th>Total Break</th>
-                    <th>Exceed</th>
+                    <SortableTh label="ID" column="id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Full Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="P.Name" column="pname" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Department" column="dept" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Date" column="date" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Break Start" column="start" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Break End" column="end" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Total Break Time" column="session" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Total Break" column="total" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                    <SortableTh label="Exceed" column="exceed" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   </tr>
                 </thead>
                 <tbody>
