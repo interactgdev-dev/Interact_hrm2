@@ -27,11 +27,35 @@
 }
 
 .pageTitle {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: 1.25rem;
   font-weight: 750;
   color: var(--color-text);
   letter-spacing: -0.02em;
+}
+
+.pageTitleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+}
+
+.pageTitleMeta {
+  margin: 0;
+  margin-left: auto;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pageTitleMetaStrong {
+  color: var(--color-text);
+  font-weight: 750;
 }
 
 /* Employee Time & Attendance page shell */
@@ -1689,47 +1713,3 @@
   background: #f8fafc;
 }
 
-/* Summary pages: total + running counts under toolbar */
-.summaryStatRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 0 0 12px;
-}
-
-.summaryStatCard {
-  min-width: 140px;
-  background: #fff;
-  border: 1px solid #e4e7ec;
-  border-radius: 10px;
-  padding: 10px 14px;
-  box-shadow: 0 1px 2px rgba(27, 34, 51, 0.04);
-  border-top: 3px solid #2e3f6e;
-}
-
-.summaryStatCardRunning {
-  border-top-color: #bc3a3a;
-}
-
-.summaryStatLabel {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #8b93a6;
-}
-
-.summaryStatValue {
-  margin: 4px 0 0;
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: #1b2233;
-  font-variant-numeric: tabular-nums;
-}
-
-.summaryStatSub {
-  margin: 2px 0 0;
-  font-size: 11.5px;
-  color: #8b93a6;
-}

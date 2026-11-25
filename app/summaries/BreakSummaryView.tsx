@@ -283,7 +283,6 @@ export default function BreakSummaryView() {
     });
   }, [filteredBreaks, staticTotals, now, breakAllowanceMap, sortKey, sortDir]);
 
-  const totalCount = rows.length;
   const runningOnBreak = useMemo(() => {
     const ids = new Set<string>();
     for (const b of rows) {
@@ -376,7 +375,12 @@ export default function BreakSummaryView() {
   return (
     <>
       <div className={styles.breakSummaryContainer}>
-        <h1 className={styles.pageTitle}>Break Summary</h1>
+        <div className={styles.pageTitleRow}>
+          <h1 className={styles.pageTitle}>Break Summary</h1>
+          <p className={styles.pageTitleMeta}>
+            Total On Break: <span className={styles.pageTitleMetaStrong}>{runningOnBreak}</span>
+          </p>
+        </div>
         <div className={leaveStyles.toolbar}>
           <div className={leaveStyles.searchWrap}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
@@ -448,19 +452,6 @@ export default function BreakSummaryView() {
             onChange={handleImportFile}
             style={{ display: "none" }}
           />
-        </div>
-
-        <div className={styles.summaryStatRow}>
-          <div className={styles.summaryStatCard}>
-            <p className={styles.summaryStatLabel}>Total</p>
-            <p className={styles.summaryStatValue}>{totalCount}</p>
-            <p className={styles.summaryStatSub}>records in view</p>
-          </div>
-          <div className={`${styles.summaryStatCard} ${styles.summaryStatCardRunning}`}>
-            <p className={styles.summaryStatLabel}>On break</p>
-            <p className={styles.summaryStatValue}>{runningOnBreak}</p>
-            <p className={styles.summaryStatSub}>running now</p>
-          </div>
         </div>
 
         <div className={leaveStyles.reqTableShell}>

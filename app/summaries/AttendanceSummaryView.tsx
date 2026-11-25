@@ -320,7 +320,6 @@ export default function AttendanceSummaryView() {
     now,
   ]);
 
-  const totalCount = rows.length;
   const runningClockedIn = useMemo(() => {
     const ids = new Set<string>();
     for (const a of rows) {
@@ -424,7 +423,12 @@ export default function AttendanceSummaryView() {
   return (
     <>
       <div className={styles.breakSummaryContainer}>
-        <h1 className={styles.pageTitle}>Attendance Summary</h1>
+        <div className={styles.pageTitleRow}>
+          <h1 className={styles.pageTitle}>Attendance Summary</h1>
+          <p className={styles.pageTitleMeta}>
+            Total Clocked In: <span className={styles.pageTitleMetaStrong}>{runningClockedIn}</span>
+          </p>
+        </div>
         {showingImported && (
           <p className={leaveStyles.subtitle} style={{ color: "#611f69", fontWeight: 600, marginBottom: 12 }}>
             Showing imported Excel data for {filterMonth} (sheet values as-is)
@@ -501,19 +505,6 @@ export default function AttendanceSummaryView() {
             onChange={handleImportFile}
             style={{ display: "none" }}
           />
-        </div>
-
-        <div className={styles.summaryStatRow}>
-          <div className={styles.summaryStatCard}>
-            <p className={styles.summaryStatLabel}>Total</p>
-            <p className={styles.summaryStatValue}>{totalCount}</p>
-            <p className={styles.summaryStatSub}>records in view</p>
-          </div>
-          <div className={`${styles.summaryStatCard} ${styles.summaryStatCardRunning}`}>
-            <p className={styles.summaryStatLabel}>Clocked in</p>
-            <p className={styles.summaryStatValue}>{runningClockedIn}</p>
-            <p className={styles.summaryStatSub}>running now</p>
-          </div>
         </div>
 
         <div className={leaveStyles.reqTableShell}>
