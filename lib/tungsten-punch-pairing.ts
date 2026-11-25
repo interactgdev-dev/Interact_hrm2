@@ -1002,7 +1002,11 @@ function collectEmployeeTungstenEvents(
 ): TungstenEvent[] {
   const tungsten: TungstenEvent[] = [];
   const knownPins = employeeZkPins(target);
-  for (const z of ctx.zkRows) {
+  const candidates =
+    knownPins.size > 0 && ctx.zkRowsByPin?.size
+      ? zkRowsForTarget(ctx, target)
+      : ctx.zkRows;
+  for (const z of candidates) {
     const pin = String(z.pin ?? "").trim();
     if (knownPins.size > 0 || pinOnly) {
       if (!punchMatchesEmployeePinOnly(pin, target)) continue;
@@ -1045,11 +1049,11 @@ function collectEmployeeTungstenEvents(
 }
 
 /**
- * Punch-only employees (no HRM clock in/out): per shift day,
- * T.Punch In = first punch at/after shift start; T.Punch Out = last punch in shift window
- * (overnight exits on next calendar morning count for the previous shift day).
- * Overnight Admin punch-only (Khalid logic): T.Out = last punch until next shift start (noon-capped).
- * Day shifts (e.g. Dawood 2–10, Zahid 11–10): T.Out uses shift-end exit window — not next-day arrivals.
+ * Punch-only Admin Staff (no HRM clock in/out): per shift day,
+ * T.Punch In = day-first punch in entry window,
+ * T.Punch Out = midnight-last punch (after shift-end/midnight until morning cap).
+ * Day-assigned rows (e.g. Zahid 11:00–22:00) are coerced to overnight end 00:00
+ * so midnight-last still applies on production.
  */
 export function buildShiftPunchOnlySessions(
   target: EmployeeMatchKeys,
@@ -1075,19 +1079,23 @@ export function buildShiftPunchOnlySessions(
   const sessions: EmployeeReportSession[] = [];
   let day = dateFrom;
   while (day <= dateTo) {
-    const shift = resolveShift(day);
-    if (shift) {
-      // Overnight = end clock <= start clock (crosses midnight). Day shifts use exit window.
-      const [sh = 0, sm = 0] = String(shift.startTime).split(":").map(Number);
-      const [eh = 0, em = 0] = String(shift.endTime).split(":").map(Number);
-      const crossesMidnight = eh * 60 + em <= sh * 60 + sm;
-      // Pervaiz: dedicated midnight last-out. Others: Khalid last-span (noon-capped).
+    const rawShift = resolveShift(day);
+    if (rawShift) {
+      const [sh = 0, sm = 0] = String(rawShift.startTime).split(":").map(Number);
+      const [eh = 0, em = 0] = String(rawShift.endTime).split(":").map(Number);
+      let crossesMidnight = eh * 60 + em <= sh * 60 + sm;
+      let shift = rawShift;
+      // Admin punch-only must always get day-first + midnight-last, even if HRM
+      // assignment is a same-calendar-day window (11:00–22:00).
+      if ((midnightExit || allowLastSpanOut) && !crossesMidnight) {
+        shift = { startTime: rawShift.startTime, endTime: "00:00:00" };
+        crossesMidnight = true;
+      }
       const useMidnightExit = midnightExit && crossesMidnight;
       const lastAnyPunchInSpan =
         !useMidnightExit && allowLastSpanOut && crossesMidnight;
 
       const { punchIn, punchOut } = firstLastPunchForShiftDay(tungsten, day, shift, {
-        // Day shifts: allow exit window from 1h before shift end (not only after end).
         requireOutAfterShiftEnd: false,
         lastAnyPunchInSpan,
         midnightExitLastPunch: useMidnightExit,

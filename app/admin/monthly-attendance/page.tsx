@@ -2709,11 +2709,17 @@ export default function MonthlyAttendancePage() {
   const sessionsByEmployeeId = useMemo(() => {
     const out = new Map<string, EmployeeReportSession[]>();
     if (showingImported || !tungstenCtx || !fromDate || !toDate) return out;
-    // Only pair employees whose month table is open — pairing everyone froze the UI.
+    // Pair only open tables (avoids UI freeze) — always include Admin punch-only
+    // so day-first / midnight-last T.Punch is ready when the card opens.
     const needIds = new Set<string>();
     if (fullViewEmployeeId) needIds.add(String(fullViewEmployeeId));
     for (const [id, open] of Object.entries(expandedEmployeeIds)) {
       if (open) needIds.add(String(id));
+    }
+    for (const emp of attendanceByEmployeeAllMerged) {
+      if (punchOnlyRosterApplies(emp.employeeId, emp.employeeName)) {
+        needIds.add(String(emp.employeeId));
+      }
     }
     if (needIds.size === 0) return out;
 

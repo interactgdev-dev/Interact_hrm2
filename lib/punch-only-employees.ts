@@ -55,9 +55,11 @@ export function punchOnlyUsesLastSpanOut(employeeId: string): boolean {
 /**
  * Midnight-shift exit: T.Out = last punch after midnight (shift end) until morning
  * cap — not next-day late-morning / midday return punches.
- * Only Pervaiz for now; other Admin punch-only keep Khalid noon-span logic.
+ * All Admin punch-only staff: day-first T.In + midnight-last T.Out.
  */
-export const PUNCH_ONLY_MIDNIGHT_EXIT_IDS = new Set(["84"]);
+export const PUNCH_ONLY_MIDNIGHT_EXIT_IDS = new Set(
+  PUNCH_ONLY_EMPLOYEES.map((e) => e.id),
+);
 
 export function punchOnlyUsesMidnightExitLastOut(employeeId: string): boolean {
   return PUNCH_ONLY_MIDNIGHT_EXIT_IDS.has(String(employeeId));
